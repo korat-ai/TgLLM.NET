@@ -101,8 +101,8 @@ and reply appears, tap acknowledged; stale press after restart → ack no-op, no
 
 ### F# façade + MVP acceptance (test-first)
 
-- [ ] T027 [US1] Implement F# façade in `src/TgLLM.FSharp/TgBot.fs`: `Button.on`, `Keyboard`, `TgBotConfig`, `TgBot.startPolling` (wires core + `InMemoryHookStore` + `PerChatChannelDispatcher` + `TelegramBotApiClient` + `UpdateProcessor`), `SendKeyboard`/`SendText`
-- [ ] T028 [US1] [test] F# façade acceptance over long polling (US1 scenarios 1–4): two-button keyboard; tap Yes → Yes-hook + reply (not No); ack clears spinner; tap No → No-hook independently; stale press after restart → ack no-op, no error (FR-004/006/007/008/010); assert `AnswerCallback` is issued BEFORE the hook runs and is NOT awaited behind it — the ordering guarantee behind SC-003/SC-004 (a slow/blocking hook must not delay the ack on a deterministic fake transport) in `tests/TgLLM.Integration.Tests/FSharpPollingAcceptanceTests.fs`
+- [X] T027 [US1] Implement F# façade in `src/TgLLM.FSharp/TgBot.fs`: `Button.on`, `Keyboard`, `TgBotConfig`, `TgBot.startPolling` (wires core + `InMemoryHookStore` + `PerChatChannelDispatcher` + `TelegramBotApiClient` + `UpdateProcessor`), `SendKeyboard`/`SendText`
+- [X] T028 [US1] [test] F# façade acceptance over long polling (US1 scenarios 1–4): two-button keyboard; tap Yes → Yes-hook + reply (not No); ack clears spinner; tap No → No-hook independently; stale press after restart → ack no-op, no error (FR-004/006/007/008/010); assert `AnswerCallback` is issued BEFORE the hook runs and is NOT awaited behind it — the ordering guarantee behind SC-003/SC-004 (a slow/blocking hook must not delay the ack on a deterministic fake transport) in `tests/TgLLM.Integration.Tests/FSharpPollingAcceptanceTests.fs`
 
 **MVP Checkpoint**: F# + long polling works end-to-end and passes US1 acceptance. Deployable/demoable.
 

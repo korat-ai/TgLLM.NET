@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Idiomatic F# public façade for TgLLM.NET (skeleton — implemented in a later phase).</Description>
+    <Description>Idiomatic F# public façade for TgLLM.NET.</Description>
     <PackageId>TgLLM.FSharp</PackageId>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Placeholder.fs" />
+    <Compile Include="TgBot.fs" />
   </ItemGroup>
 
   <ItemGroup>
