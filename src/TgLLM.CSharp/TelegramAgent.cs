@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using TgLLM.FSharp;
 using TgLLM.Webhooks;
 
@@ -20,6 +21,9 @@ public sealed class TelegramAgentOptions
 
     /// <summary>Override the Bot API endpoint (tests / local Bot API server / test environment).</summary>
     public string? BaseUrl { get; init; }
+
+    /// <summary>Surface hook failures / unknown presses through this logger (FR-009).</summary>
+    public ILogger? Logger { get; init; }
 }
 
 /// <summary>
@@ -42,6 +46,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithBaseUrl(options.BaseUrl);
         }
 
+        if (options.Logger is not null)
+        {
+            config = config.WithLogger(options.Logger);
+        }
+
         var bot = await TgBot.startPolling(config);
         return new TelegramAgent(bot);
     }
@@ -55,6 +64,11 @@ public sealed class TelegramAgent : IAsyncDisposable
         if (!string.IsNullOrEmpty(options.BaseUrl))
         {
             config = config.WithBaseUrl(options.BaseUrl);
+        }
+
+        if (options.Logger is not null)
+        {
+            config = config.WithLogger(options.Logger);
         }
 
         var bot = await TgBot.startWebhook(config);

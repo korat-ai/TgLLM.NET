@@ -32,23 +32,36 @@ See [`docs/quickstart.md`](docs/quickstart.md) for a full walkthrough. In short:
 
 ```fsharp
 // F#
-let keyboard =
-    Keyboard.rows [
-        [ Button.on "Yes" (fun ctx -> ctx.ReplyTextAsync "You said yes!") ]
-        [ Button.on "No"  (fun ctx -> ctx.ReplyTextAsync "You said no.") ]
-    ]
+open TgLLM.Core
+open TgLLM.FSharp
 
-TgBot.startPolling config
+let keyboard =
+    Keyboard.create [
+        [ Button.on "Yes" (fun ctx -> ctx.ReplyTextAsync "You said yes!")
+          Button.on "No"  (fun ctx -> ctx.ReplyTextAsync "You said no.") ]
+    ]   // : Result<KeyboardSpec, KeyboardError>
+
+task {
+    use! bot = TgBot.startPolling (TgBotConfig.create botToken)   // or TgBot.startWebhook
+    match keyboard with
+    | Ok spec -> let! _ = bot.SendKeyboard(chatId, MessageText.unsafe "Deploy?", spec) in ()
+    | Error e -> eprintfn "invalid keyboard: %A" e
+}
 ```
 
 ```csharp
 // C#
+using TgLLM.CSharp;
+
 var keyboard = new KeyboardBuilder()
-    .Row(row => row.Button("Yes", ctx => ctx.ReplyTextAsync("You said yes!")))
-    .Row(row => row.Button("No",  ctx => ctx.ReplyTextAsync("You said no.")))
+    .Row(row => row
+        .Button("Yes", ctx => ctx.ReplyTextAsync("You said yes!"))
+        .Button("No",  ctx => ctx.ReplyTextAsync("You said no.")))
     .Build();
 
-await agent.StartPollingAsync();
+await using var agent = await TelegramAgent.StartPollingAsync(   // or StartWebhookAsync
+    new TelegramAgentOptions { BotToken = botToken });
+await agent.SendKeyboardAsync(chatId, "Deploy?", keyboard);
 ```
 
 ## Project layout

@@ -163,12 +163,12 @@ each invokes only its own hook; two users tapping near-simultaneously → correc
 
 **Purpose**: Documentation, observability wiring, packaging, and final verification.
 
-- [ ] T043 [P] Finalize user documentation: complete `README.md` (features, install, quickstart, badges) and place the adapted `quickstart.md` under `docs/` (Principle VII/VIII)
-- [ ] T044 [P] Bridge `IHookObserver` → `ILogger` in both façades so hook failures/unknown tokens are surfaced (FR-009) in `src/TgLLM.FSharp/` and `src/TgLLM.CSharp/`
-- [ ] T045 [P] NuGet package metadata (PackageId, description, MIT license, repo URL, README-in-package, symbols) on `src/TgLLM.FSharp` and `src/TgLLM.CSharp`
-- [ ] T046 [P] XML doc comments on the public surface of both façades (English; cite Bot API where relevant) in `src/TgLLM.FSharp/` and `src/TgLLM.CSharp/`
-- [ ] T047 Full verification: run the whole suite on `net8.0` AND `net10.0`; confirm the idiom-leak canary is green and every Success Criterion is met — SC-002/005/006/007/008 by their tests, SC-003/SC-004 by the ack-before-hook ordering assertion (T028), SC-001 by a manual quickstart walkthrough; update `CHANGELOG.md`
-- [ ] T048 [P] Principle V gate: verify every Bot API fact in research D7 (`callback_data` 1–64 bytes; `answerCallbackQuery` semantics + `text` 0–200 chars; message-text 4096 limit; `X-Telegram-Bot-Api-Secret-Token` header; `getUpdates` offset/allowed_updates; inline-keyboard row/button limits; `message_id` width) against core.telegram.org and reconcile any deviation in code/docs
+- [X] T043 [P] Finalize user documentation: complete `README.md` (features, install, quickstart, badges) and place the adapted `quickstart.md` under `docs/` (Principle VII/VIII)
+- [X] T044 [P] Bridge `IHookObserver` → `ILogger` in both façades so hook failures/unknown tokens are surfaced (FR-009) in `src/TgLLM.FSharp/` and `src/TgLLM.CSharp/`
+- [X] T045 [P] NuGet package metadata (PackageId, description, MIT license, repo URL, README-in-package, symbols) on `src/TgLLM.FSharp` and `src/TgLLM.CSharp`
+- [X] T046 [P] XML doc comments on the public surface of both façades (English; cite Bot API where relevant) in `src/TgLLM.FSharp/` and `src/TgLLM.CSharp/`
+- [X] T047 Full verification: run the whole suite on `net8.0` AND `net10.0`; confirm the idiom-leak canary is green and every Success Criterion is met — SC-002/005/006/007/008 by their tests, SC-003/SC-004 by the ack-before-hook ordering assertion (T028), SC-001 by a manual quickstart walkthrough; update `CHANGELOG.md`
+- [X] T048 [P] Principle V gate: verify every Bot API fact in research D7 (`callback_data` 1–64 bytes; `answerCallbackQuery` semantics + `text` 0–200 chars; message-text 4096 limit; `X-Telegram-Bot-Api-Secret-Token` header; `getUpdates` offset/allowed_updates; inline-keyboard row/button limits; `message_id` width) against core.telegram.org and reconcile any deviation in code/docs
 
 ---
 

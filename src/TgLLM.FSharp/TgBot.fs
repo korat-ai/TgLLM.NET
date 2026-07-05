@@ -8,9 +8,28 @@ open System
 open System.Threading
 open System.Threading.Tasks
 open Telegram.Bot
+open Microsoft.Extensions.Logging
+open FSharp.UMX
 open TgLLM.Core
 open TgLLM.BotApi
 open TgLLM.Webhooks
+
+/// Bridges the core observability seam to an `ILogger` (FR-009): hook failures and unknown/stale
+/// presses are surfaced, never swallowed.
+type LoggingHookObserver(logger: ILogger) =
+    interface IHookObserver with
+        member _.OnHookFailed(press: ButtonPress, error: exn) =
+            logger.LogError(
+                error,
+                "Hook for button {Button} in chat {Chat} failed",
+                [| ButtonLabel.value press.ButtonLabel :> obj; UMX.untag press.Chat :> obj |]
+            )
+
+        member _.OnUnknownToken(press: ButtonPress) =
+            logger.LogWarning(
+                "Received a callback for an unknown or stale button in chat {Chat}",
+                [| UMX.untag press.Chat :> obj |]
+            )
 
 /// A button being described by the agent: a raw (unvalidated) label plus the handler to run when it
 /// is tapped. Labels are validated by `Keyboard.create`, so an invalid label surfaces as an
@@ -38,29 +57,38 @@ module Keyboard =
 
 /// Long-polling bot configuration. `WithBaseUrl` overrides the Bot API endpoint — for a local Bot
 /// API server, Telegram's test environment, or pointing tests at a fake server.
+[<NoComparison>]
 type TgBotConfig =
     { BotToken: string
-      BaseUrl: string option }
+      BaseUrl: string option
+      Logger: ILogger option }
 
-    static member create(botToken: string) = { BotToken = botToken; BaseUrl = None }
+    static member create(botToken: string) = { BotToken = botToken; BaseUrl = None; Logger = None }
     member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
+    /// Surface hook failures / unknown presses through this logger (FR-009).
+    member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
 
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
 /// `WithBaseUrl` overrides the Bot API endpoint (tests / local Bot API server).
+[<NoComparison>]
 type TgWebhookConfig =
     { BotToken: string
       PublicUrl: string
       SecretToken: string
-      BaseUrl: string option }
+      BaseUrl: string option
+      Logger: ILogger option }
 
     static member create(botToken: string, publicUrl: string, secretToken: string) =
         { BotToken = botToken
           PublicUrl = publicUrl
           SecretToken = secretToken
-          BaseUrl = None }
+          BaseUrl = None
+          Logger = None }
 
     member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
+    /// Surface hook failures / unknown presses through this logger (FR-009).
+    member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
 
 /// A running bot: ingests updates in the background and lets the agent send keyboards/messages.
 /// Dispose (`use!`/`IAsyncDisposable`) to stop ingestion and release the per-chat dispatcher.
@@ -130,7 +158,10 @@ type TgBot
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
-            let observer = NoopHookObserver() :> IHookObserver
+            let observer =
+                match config.Logger with
+                | Some logger -> LoggingHookObserver logger :> IHookObserver
+                | None -> NoopHookObserver() :> IHookObserver
             let source = LongPollingUpdateSource(client) :> IUpdateSource
             let processor = UpdateProcessor(source, store, api, dispatcher, observer)
             let cts = new CancellationTokenSource()
@@ -149,7 +180,10 @@ type TgBot
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
-            let observer = NoopHookObserver() :> IHookObserver
+            let observer =
+                match config.Logger with
+                | Some logger -> LoggingHookObserver logger :> IHookObserver
+                | None -> NoopHookObserver() :> IHookObserver
             let webhookSource = WebhookUpdateSource()
             let processor = UpdateProcessor(webhookSource :> IUpdateSource, store, api, dispatcher, observer)
             let cts = new CancellationTokenSource()

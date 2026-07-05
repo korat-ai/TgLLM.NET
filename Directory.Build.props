@@ -16,7 +16,10 @@
     <LangVersion>latest</LangVersion>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);CS1591</NoWarn> <!-- missing XML doc comments: relaxed for the Foundational slice; tightened in T046 -->
+    <!-- CS1591 (missing XML doc on a public member) stays relaxed solution-wide: the public façade
+         API (TgLLM.FSharp / TgLLM.CSharp) is documented, but enforcing per-member docs across the
+         internal-by-intent public surface of the core and transport adapters is deferred. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>

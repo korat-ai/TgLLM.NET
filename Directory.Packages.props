@@ -19,6 +19,9 @@
          Version pinned centrally now so later phases (T023+) restore a known-good version. -->
     <PackageVersion Include="Telegram.Bot" Version="22.10.1" />
 
+    <!-- Observability bridge (TgLLM.FSharp façade): IHookObserver -> ILogger (FR-009, T044). -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+
     <!-- F# test stack: Expecto + FsCheck (Principle I — property-based tests are mandatory
          for the pure kernel).
          NOTE (deviation, disclosed): Expecto 11.1.0 / Expecto.FsCheck 11.1.0 were the originally
