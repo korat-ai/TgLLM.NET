@@ -11,6 +11,7 @@
     <Compile Include="LongPollingTests.fs" />
     <Compile Include="FSharpPollingAcceptanceTests.fs" />
     <Compile Include="WebhookTests.fs" />
+    <Compile Include="BothTransportsTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

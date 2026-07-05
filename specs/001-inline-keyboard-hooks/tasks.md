@@ -110,7 +110,7 @@ and reply appears, tap acknowledged; stale press after restart → ack no-op, no
 
 - [X] T029 [US1] [test] Failing tests for webhook ingress: `X-Telegram-Bot-Api-Secret-Token` mismatch → rejected (401) before body read; valid Update parsed and enqueued (SingleReader channel); endpoint returns 200 immediately in `tests/TgLLM.Integration.Tests/WebhookTests.fs`
 - [X] T030 [US1] Implement `WebhookUpdateSource : IUpdateSource` (Channel-backed) + pure secret-token verification + Telegram.Bot Update parsing in `src/TgLLM.Webhooks/WebhookUpdateSource.fs` to green T029
-- [ ] T031 [US1] Implement `MapTelegramWebhook` minimal-API endpoint glue (sealed `IEndpointConventionBuilder`) in `src/TgLLM.AspNetCore/EndpointExtensions.fs` and `TgBot.startWebhook` (calls `setWebhook`) in `src/TgLLM.FSharp/TgBot.fs`
+- [X] T031 [US1] Implement `MapTelegramWebhook` minimal-API endpoint glue (sealed `IEndpointConventionBuilder`) in `src/TgLLM.AspNetCore/EndpointExtensions.fs` and `TgBot.startWebhook` (calls `setWebhook`) in `src/TgLLM.FSharp/TgBot.fs`
 
 ### C# façade (test-first)
 
@@ -119,7 +119,7 @@ and reply appears, tap acknowledged; stale press after restart → ack no-op, no
 
 ### Both-transports acceptance
 
-- [ ] T034 [US1] [test] SC-008 acceptance: run the US1 scenario over BOTH long polling and webhook and assert identical behavior; hook bodies unchanged across transports (FR-013) in `tests/TgLLM.Integration.Tests/BothTransportsTests.fs`
+- [X] T034 [US1] [test] SC-008 acceptance: run the US1 scenario over BOTH long polling and webhook and assert identical behavior; hook bodies unchanged across transports (FR-013) in `tests/TgLLM.Integration.Tests/BothTransportsTests.fs`
 
 **Checkpoint**: US1 complete — both transports, both façades, all US1/SC-008 tests green.
 
