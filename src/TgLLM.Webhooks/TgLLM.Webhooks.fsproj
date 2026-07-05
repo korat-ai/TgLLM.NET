@@ -1,15 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Host-agnostic webhook update source (skeleton — implemented in a later phase).</Description>
+    <Description>Host-agnostic webhook update source (Channel-backed IUpdateSource, secret-token verification, Update parsing).</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Placeholder.fs" />
+    <Compile Include="WebhookUpdateSource.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Telegram.Bot" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\TgLLM.Core\TgLLM.Core.fsproj" />
+    <!-- Reuses the shared Telegram.Bot Update -> domain Mapping (identical across transports, FR-013). -->
+    <ProjectReference Include="..\TgLLM.BotApi\TgLLM.BotApi.fsproj" />
   </ItemGroup>
 
 </Project>

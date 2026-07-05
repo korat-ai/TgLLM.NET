@@ -1,11 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>ASP.NET Core minimal-API endpoint glue for the webhook transport (skeleton — implemented in a later phase).</Description>
+    <Description>ASP.NET Core minimal-API endpoint glue for the webhook transport (MapTelegramWebhook).</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Placeholder.fs" />
+    <Compile Include="EndpointExtensions.fs" />
   </ItemGroup>
 
   <ItemGroup>
