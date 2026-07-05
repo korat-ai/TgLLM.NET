@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <Compile Include="TelegramBotApiClient.fs" />
+    <Compile Include="LongPollingUpdateSource.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -94,10 +94,10 @@ and reply appears, tap acknowledged; stale press after restart → ack no-op, no
 
 ### Outbound Bot API + long polling (test-first)
 
-- [ ] T023 [P] [US1] [test] Failing tests for `TelegramBotApiClient`: `RegisteredKeyboard` → Telegram.Bot `InlineKeyboardMarkup`; `SendKeyboard`/`SendText`/`AnswerCallback` issue the correct Bot API calls (against a fake Telegram HTTP handler) in `tests/TgLLM.Integration.Tests/BotApiClientTests.fs`
-- [ ] T024 [US1] Implement `TelegramBotApiClient : IBotApiClient` and the pure Telegram.Bot `CallbackQuery` → `ButtonPress`/`AgentEvent` mapping (handle absent `message`) in `src/TgLLM.BotApi/TelegramBotApiClient.fs`; while implementing, verify against core.telegram.org the Bot API facts this code relies on (`callback_data` 1–64 bytes, `answerCallbackQuery` semantics, message-text 4096 limit) per research D7 (Principle V)
-- [ ] T025 [US1] [test] Failing tests for `LongPollingUpdateSource`: confirm-by-offset (`offset = max(update_id)+1`); yields events in batch order; calls `deleteWebhook` before polling; graceful cancellation (against fake Bot API) in `tests/TgLLM.Integration.Tests/LongPollingTests.fs`
-- [ ] T026 [US1] Implement `LongPollingUpdateSource : IUpdateSource` in `src/TgLLM.BotApi/LongPollingUpdateSource.fs` to green T025
+- [X] T023 [P] [US1] [test] Failing tests for `TelegramBotApiClient`: `RegisteredKeyboard` → Telegram.Bot `InlineKeyboardMarkup`; `SendKeyboard`/`SendText`/`AnswerCallback` issue the correct Bot API calls (against a fake Telegram HTTP handler) in `tests/TgLLM.Integration.Tests/BotApiClientTests.fs`
+- [X] T024 [US1] Implement `TelegramBotApiClient : IBotApiClient` and the pure Telegram.Bot `CallbackQuery` → `ButtonPress`/`AgentEvent` mapping (handle absent `message`) in `src/TgLLM.BotApi/TelegramBotApiClient.fs`; while implementing, verify against core.telegram.org the Bot API facts this code relies on (`callback_data` 1–64 bytes, `answerCallbackQuery` semantics, message-text 4096 limit) per research D7 (Principle V)
+- [X] T025 [US1] [test] Failing tests for `LongPollingUpdateSource`: confirm-by-offset (`offset = max(update_id)+1`); yields events in batch order; calls `deleteWebhook` before polling; graceful cancellation (against fake Bot API) in `tests/TgLLM.Integration.Tests/LongPollingTests.fs`
+- [X] T026 [US1] Implement `LongPollingUpdateSource : IUpdateSource` in `src/TgLLM.BotApi/LongPollingUpdateSource.fs` to green T025
 
 ### F# façade + MVP acceptance (test-first)
 
