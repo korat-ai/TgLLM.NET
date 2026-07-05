@@ -12,6 +12,7 @@
     <Compile Include="FSharpPollingAcceptanceTests.fs" />
     <Compile Include="WebhookTests.fs" />
     <Compile Include="BothTransportsTests.fs" />
+    <Compile Include="ProactiveSendTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

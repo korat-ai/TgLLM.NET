@@ -133,9 +133,9 @@ message); buttons route to hooks identically.
 **Independent Test**: With no prior message from the target chat, an external trigger sends a
 keyboard; its buttons route to hooks exactly as in US1.
 
-- [ ] T035 [US2] [test] Failing integration test (US2 scenarios 1–2, SC-005): external trigger (stand-in for an external event) sends a keyboard to a chat with no preceding message; delivered; buttons route to hooks identically to a reply-sent keyboard in `tests/TgLLM.Integration.Tests/ProactiveSendTests.fs`
-- [ ] T036 [US2] Confirm/adjust the send path to target any chat id without a preceding update (add config for arbitrary target chat if missing) in `src/TgLLM.FSharp/TgBot.fs` and `src/TgLLM.CSharp/TelegramAgent.cs`
-- [ ] T037 [P] [US2] Example apps `examples/PollingFSharp` and `examples/PollingCSharp`: proactive keyboard fired from a timer (Principle VIII)
+- [X] T035 [US2] [test] Failing integration test (US2 scenarios 1–2, SC-005): external trigger (stand-in for an external event) sends a keyboard to a chat with no preceding message; delivered; buttons route to hooks identically to a reply-sent keyboard in `tests/TgLLM.Integration.Tests/ProactiveSendTests.fs`
+- [X] T036 [US2] Confirm/adjust the send path to target any chat id without a preceding update (add config for arbitrary target chat if missing) in `src/TgLLM.FSharp/TgBot.fs` and `src/TgLLM.CSharp/TelegramAgent.cs`
+- [X] T037 [P] [US2] Example apps `examples/PollingFSharp` and `examples/PollingCSharp`: proactive keyboard fired from a timer (Principle VIII)
 
 **Checkpoint**: US1 and US2 both independently pass.
 
