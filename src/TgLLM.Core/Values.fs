@@ -63,3 +63,13 @@ module MessageText =
         else Ok(MessageText trimmed)
 
     let value (MessageText s) = s
+
+    /// Fail-fast constructor for trusted literals (contracts/fsharp-facade.md, quickstart.md:
+    /// `MessageText.unsafe "Deploy?"`). An invalid `raw` is a programmer error by the caller
+    /// (Always-Rule 6) — the caller controls the literal, so this is not a business error to
+    /// route through `Result`. Mirrors the fail-fast pattern already used by
+    /// `UpdateProcessor.fs`'s `makeReplyTextAsync`.
+    let unsafe (raw: string) : MessageText =
+        match create raw with
+        | Ok m -> m
+        | Error e -> invalidArg (nameof raw) $"MessageText.unsafe: invalid text ({e})"

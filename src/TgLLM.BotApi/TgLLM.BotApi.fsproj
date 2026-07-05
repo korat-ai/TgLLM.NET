@@ -1,11 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Telegram.Bot-backed IBotApiClient and LongPollingUpdateSource (skeleton — implemented in a later phase).</Description>
+    <Description>Telegram.Bot-backed IBotApiClient and LongPollingUpdateSource.</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Placeholder.fs" />
+    <Compile Include="TelegramBotApiClient.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Telegram.Bot" />
   </ItemGroup>
 
   <ItemGroup>
