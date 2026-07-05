@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Transport-agnostic F# core (domain, pure kernel, ports, default implementations) for TgLLM.NET.</Description>
+  </PropertyGroup>
+
+  <!--
+    Compile order deviates from the file list in tasks.md (Domain.fs first) on purpose:
+    `Hook = PressContext -> Task` is used by `ButtonSpec` (Keyboard.fs) and `HookBinding`
+    (referenced from Ports.fs), both of which must compile before UpdateProcessor.fs where
+    tasks.md originally placed `PressContext`. F# compiles top-to-bottom with no forward
+    references across files, so `PressContext`/`Hook`/`HookBinding`/`ButtonPress`/`AgentEvent`
+    were moved into Domain.fs, and Domain.fs itself was moved after Values.fs (needs
+    `ButtonLabel`) and CallbackToken.fs (needs `CallbackToken`). For the same reason,
+    `KeyboardError` (data-model.md lists it under Domain.fs) lives in Values.fs instead: both
+    `ButtonLabel.create` and `MessageText.create` return `Result<_, KeyboardError>`, and Values.fs
+    is the first file to compile. See the file-level comments in Domain.fs and Values.fs.
+  -->
+  <ItemGroup>
+    <Compile Include="Values.fs" />
+    <Compile Include="CallbackToken.fs" />
+    <Compile Include="Domain.fs" />
+    <Compile Include="Keyboard.fs" />
+    <Compile Include="Routing.fs" />
+    <Compile Include="Ports.fs" />
+    <Compile Include="InMemoryHookStore.fs" />
+    <Compile Include="Dispatcher.fs" />
+    <Compile Include="UpdateProcessor.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.UMX" />
+  </ItemGroup>
+
+</Project>

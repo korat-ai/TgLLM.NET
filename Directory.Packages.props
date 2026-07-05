@@ -1,0 +1,44 @@
+<Project>
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core domain / F#.
+         FSharp.Core is pinned explicitly: the SDK implicitly references it for every F# project,
+         but FSharp.UMX's own (much older) minimum-version dependency ("4.3.4") otherwise wins
+         under central package management, silently downgrading every F# project to an FSharp.Core
+         that predates `voption`/`ValueOption`. 10.1.201 matches what the net10.0 F# SDK resolves
+         by default for a plain (non-CPM) project. -->
+    <PackageVersion Include="FSharp.Core" Version="10.1.201" />
+    <PackageVersion Include="FSharp.UMX" Version="1.1.0" />
+
+    <!-- Transport (TgLLM.BotApi / TgLLM.Webhooks) — not consumed by TgLLM.Core.
+         Version pinned centrally now so later phases (T023+) restore a known-good version. -->
+    <PackageVersion Include="Telegram.Bot" Version="22.10.1" />
+
+    <!-- F# test stack: Expecto + FsCheck (Principle I — property-based tests are mandatory
+         for the pure kernel).
+         NOTE (deviation, disclosed): Expecto 11.1.0 / Expecto.FsCheck 11.1.0 were the originally
+         requested versions (research.md D3), but the only maintained `dotnet test` VSTest-bridge
+         adapter for Expecto — YoloDev.Expecto.TestSdk — caps Expecto at "< 11.0.0" (no released
+         version supports Expecto 11.x yet). Pinned to Expecto 10.2.3 (latest compatible) with the
+         "-fscheck3" build of Expecto.FsCheck so the FsCheck major version (3.x) still matches the
+         C# side's FsCheck.Xunit.v3, keeping one FsCheck major version across the whole solution.
+         `dotnet test` is a hard functional deliverable for this phase; revisit the Expecto 11 pin
+         once an adapter supports it. -->
+    <PackageVersion Include="Expecto" Version="10.2.3" />
+    <PackageVersion Include="Expecto.FsCheck" Version="10.2.3-fscheck3" />
+    <PackageVersion Include="FsCheck" Version="3.3.3" />
+    <PackageVersion Include="YoloDev.Expecto.TestSdk" Version="0.15.6" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+
+    <!-- C# test stack: xUnit v3 + FsCheck.Xunit.v3 -->
+    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <PackageVersion Include="FsCheck.Xunit.v3" Version="3.3.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateProgramFile>false</GenerateProgramFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="PlaceholderTests.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="YoloDev.Expecto.TestSdk" />
+    <PackageReference Include="Expecto" />
+    <PackageReference Include="Expecto.FsCheck" />
+    <PackageReference Include="FsCheck" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TgLLM.Core\TgLLM.Core.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.BotApi\TgLLM.BotApi.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.Webhooks\TgLLM.Webhooks.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.AspNetCore\TgLLM.AspNetCore.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.FSharp\TgLLM.FSharp.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.CSharp\TgLLM.CSharp.csproj" />
+  </ItemGroup>
+
+</Project>

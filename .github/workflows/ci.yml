@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOTE: the shipping TFM matrix is `net8.0;net10.0` (plan.md, research D5). This workflow
+      # currently builds/tests net10.0 only, matching Directory.Build.props (single-TFM decision
+      # for this development phase — see the comment there). Once the net8.0 SDK/runtime is
+      # available again, re-enable multi-targeting here and in Directory.Build.props by:
+      #   1. Setting up both SDKs via a matrix (`dotnet-version: ['8.0.x', '10.0.x']`) or the
+      #      `actions/setup-dotnet` multi-version input.
+      #   2. Restoring/building/testing with `--framework net8.0` in addition to net10.0.
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore TgLLM.NET.sln
+
+      - name: Build
+        run: dotnet build TgLLM.NET.sln --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test TgLLM.NET.sln --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: "**/*.trx"

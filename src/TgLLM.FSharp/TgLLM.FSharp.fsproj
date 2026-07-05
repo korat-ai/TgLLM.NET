@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Idiomatic F# public façade for TgLLM.NET (skeleton — implemented in a later phase).</Description>
+    <PackageId>TgLLM.FSharp</PackageId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Placeholder.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TgLLM.Core\TgLLM.Core.fsproj" />
+    <ProjectReference Include="..\TgLLM.BotApi\TgLLM.BotApi.fsproj" />
+    <ProjectReference Include="..\TgLLM.Webhooks\TgLLM.Webhooks.fsproj" />
+  </ItemGroup>
+
+</Project>

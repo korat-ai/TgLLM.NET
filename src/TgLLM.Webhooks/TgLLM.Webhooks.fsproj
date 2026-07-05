@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Host-agnostic webhook update source (skeleton — implemented in a later phase).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Placeholder.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TgLLM.Core\TgLLM.Core.fsproj" />
+  </ItemGroup>
+
+</Project>

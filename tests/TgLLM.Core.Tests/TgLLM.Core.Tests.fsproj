@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <GenerateProgramFile>false</GenerateProgramFile>
+    <NoWarn>$(NoWarn);FS3559;FS0025</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="ValueObjectsTests.fs" />
+    <Compile Include="CallbackTokenTests.fs" />
+    <Compile Include="KeyboardTests.fs" />
+    <Compile Include="KeyboardPlanTests.fs" />
+    <Compile Include="RoutingTests.fs" />
+    <Compile Include="InMemoryHookStoreTests.fs" />
+    <Compile Include="DispatcherTests.fs" />
+    <Compile Include="UpdateProcessorTests.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="YoloDev.Expecto.TestSdk" />
+    <PackageReference Include="Expecto" />
+    <PackageReference Include="Expecto.FsCheck" />
+    <PackageReference Include="FsCheck" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TgLLM.Core\TgLLM.Core.fsproj" />
+  </ItemGroup>
+
+</Project>

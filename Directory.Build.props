@@ -1,0 +1,29 @@
+<Project>
+
+  <!--
+    Target framework decision (feature 001-inline-keyboard-hooks, Phase 1/2 implementation):
+    Only the .NET 10 SDK/runtime (10.0.201 / 10.0.5) is available in this environment. The shipping
+    matrix documented in plan.md (research D5) is `net8.0;net10.0`. Multi-targeting net8.0 here would
+    produce test binaries that cannot run without the net8 runtime installed, breaking the Red/Green
+    TDD loop. We single-target `net10.0` for this slice; the `net8.0` leg is deferred to CI, which
+    runs on an image with both SDKs installed (see .github/workflows/ci.yml).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <WarningLevel>5</WarningLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn> <!-- missing XML doc comments: relaxed for the Foundational slice; tightened in T046 -->
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Authors>TgLLM.NET contributors</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/TgLLM-NET/TgLLM.NET</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/TgLLM-NET/TgLLM.NET</PackageProjectUrl>
+  </PropertyGroup>
+
+</Project>
