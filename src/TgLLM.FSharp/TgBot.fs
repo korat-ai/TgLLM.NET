@@ -81,6 +81,14 @@ type TgBot
 
     member _.SendText(chat: ChatId, text: MessageText) : Task<MessageId> = api.SendText(chat, text, cts.Token)
 
+    /// C#-friendly overloads that accept a raw string (validated with `MessageText.unsafe`), so the
+    /// C# façade never touches the F# `MessageText` type.
+    member this.SendKeyboard(chat: ChatId, text: string, keyboard: KeyboardSpec) : Task<MessageId> =
+        this.SendKeyboard(chat, MessageText.unsafe text, keyboard)
+
+    member this.SendText(chat: ChatId, text: string) : Task<MessageId> =
+        this.SendText(chat, MessageText.unsafe text)
+
     /// The webhook ingress to hand to `MapTelegramWebhook`. Meaningful only for a bot started with
     /// `startWebhook`; a long-polling bot has no HTTP ingress and this raises.
     member _.WebhookSource: WebhookUpdateSource =

@@ -114,8 +114,8 @@ and reply appears, tap acknowledged; stale press after restart → ack no-op, no
 
 ### C# façade (test-first)
 
-- [ ] T032 [US1] Implement C# façade in `src/TgLLM.CSharp/`: `KeyboardBuilder`/`RowBuilder`, `TgKeyboardException`, `TelegramAgentOptions`, `TelegramAgent` (`StartPollingAsync`/`StartWebhookAsync`/`SendKeyboardAsync`/`SendTextAsync`), reusing the Core `PressContext`
-- [ ] T033 [US1] [test] C# façade behavior tests + idiom-leak canary: reflection over the public surface asserts NO `FSharp.Core` type (`FSharpFunc`/`FSharpOption`/`FSharpValueOption`) appears; builder throws `TgKeyboardException` on invalid layout (xUnit v3 + FsCheck.Xunit.v3) in `tests/TgLLM.CSharp.Tests/` (depends on T032 — the C# façade must exist first)
+- [X] T032 [US1] Implement C# façade in `src/TgLLM.CSharp/`: `KeyboardBuilder`/`RowBuilder`, `TgKeyboardException`, `TelegramAgentOptions`, `TelegramAgent` (`StartPollingAsync`/`StartWebhookAsync`/`SendKeyboardAsync`/`SendTextAsync`), reusing the Core `PressContext`
+- [X] T033 [US1] [test] C# façade behavior tests + idiom-leak canary: reflection over the public surface asserts NO `FSharp.Core` type (`FSharpFunc`/`FSharpOption`/`FSharpValueOption`) appears; builder throws `TgKeyboardException` on invalid layout (xUnit v3 + FsCheck.Xunit.v3) in `tests/TgLLM.CSharp.Tests/` (depends on T032 — the C# façade must exist first)
 
 ### Both-transports acceptance
 
