@@ -149,11 +149,11 @@ hook; per-chat order preserved and cross-chat concurrent; hook failures isolated
 **Independent Test**: Two keyboards each with several distinctly-hooked buttons, interleaved taps →
 each invokes only its own hook; two users tapping near-simultaneously → correct per-user context.
 
-- [ ] T038 [US3] [test] Failing test (US3 scenario 1, SC-002): two keyboards × several distinctly-hooked buttons, interleaved taps ≥100 → each invokes only its own hook, zero cross-invocation in `tests/TgLLM.Integration.Tests/RoutingAtScaleTests.fs`
-- [ ] T039 [US3] [test] Failing test (US3 scenario 2, SC-007): near-simultaneous taps across two chats → per-chat arrival order preserved while chats progress concurrently in `tests/TgLLM.Integration.Tests/ConcurrencyOrderingTests.fs`
-- [ ] T040 [US3] [test] Failing test (SC-006): an intentionally throwing hook is isolated and reported via `IHookObserver`; subsequent presses still invoke their hooks in `tests/TgLLM.Integration.Tests/HookFailureIsolationTests.fs`
-- [ ] T041 [US3] Harden `PerChatChannelDispatcher` / `UpdateProcessor` for any gaps surfaced by T038–T040 in `src/TgLLM.Core/Dispatcher.fs` and `src/TgLLM.Core/UpdateProcessor.fs`
-- [ ] T042 [P] [US3] Example apps `examples/WebhookFSharp` and `examples/WebhookCSharp` (Principle VIII)
+- [X] T038 [US3] [test] Failing test (US3 scenario 1, SC-002): two keyboards × several distinctly-hooked buttons, interleaved taps ≥100 → each invokes only its own hook, zero cross-invocation in `tests/TgLLM.Integration.Tests/RoutingAtScaleTests.fs`
+- [X] T039 [US3] [test] Failing test (US3 scenario 2, SC-007): near-simultaneous taps across two chats → per-chat arrival order preserved while chats progress concurrently in `tests/TgLLM.Integration.Tests/ConcurrencyOrderingTests.fs`
+- [X] T040 [US3] [test] Failing test (SC-006): an intentionally throwing hook is isolated and reported via `IHookObserver`; subsequent presses still invoke their hooks in `tests/TgLLM.Integration.Tests/HookFailureIsolationTests.fs`
+- [X] T041 [US3] Harden `PerChatChannelDispatcher` / `UpdateProcessor` for any gaps surfaced by T038–T040 in `src/TgLLM.Core/Dispatcher.fs` and `src/TgLLM.Core/UpdateProcessor.fs`
+- [X] T042 [P] [US3] Example apps `examples/WebhookFSharp` and `examples/WebhookCSharp` (Principle VIII)
 
 **Checkpoint**: All user stories independently functional; Success Criteria covered by tests (SC-002/005/006/007/008), by the ack-before-hook ordering guarantee (SC-003/004), or by manual walkthrough (SC-001).
 

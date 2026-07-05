@@ -13,6 +13,7 @@
     <Compile Include="WebhookTests.fs" />
     <Compile Include="BothTransportsTests.fs" />
     <Compile Include="ProactiveSendTests.fs" />
+    <Compile Include="RoutingAtScaleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
