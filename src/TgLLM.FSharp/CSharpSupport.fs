@@ -26,9 +26,9 @@ module CSharpSupport =
     /// The tapped button's visible label as a plain string (unwraps the F# `ButtonLabel`).
     let buttonLabelText (ctx: PressContext) : string = ButtonLabel.value ctx.ButtonLabel
 
-/// C#-facing bridge for Tool Router registration (feature 002-llm-tool-router, T019): keeps F#
-/// curried functions and `ToolName`'s smart constructor OUT of the C# call site, mirroring
-/// `Keyboards.Build`'s role for slice-1's keyboard builder.
+/// C#-facing bridge for Tool Router registration: keeps F# curried functions and `ToolName`'s
+/// smart constructor OUT of the C# call site, mirroring `Keyboards.Build`'s role for slice-1's
+/// keyboard builder.
 type ToolRegistrations =
 
     /// A fresh in-memory `IToolRegistry`, for callers that want the raw core port directly
@@ -44,7 +44,7 @@ type ToolRegistrations =
         | Ok toolName -> registry.Register(toolName, fun ctx -> handler.Invoke ctx)
         | Error e -> invalidArg (nameof name) $"invalid tool name ({e})"
 
-/// C#-facing bridge for building a neutral Tool Router plan (T019): the C# façade's
+/// C#-facing bridge for building a neutral Tool Router plan: the C# façade's
 /// `PlanRowBuilder.Tool`/`.Url` call `Plan.tool`/`Plan.toolWithArg`/`Plan.url` directly (plain
 /// strings in, a `PlanButton` out — no bridge needed for those), then `PlanBuilder.Build` calls
 /// this to turn C#-shaped rows into the validated `ToolKeyboard`.

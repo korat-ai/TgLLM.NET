@@ -5,8 +5,8 @@ open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 
-/// Default `IHookStore` (contracts/core-ports.md): a `ConcurrentDictionary` keyed by
-/// `CallbackToken`. All operations complete synchronously — hence `ValueTask` throughout.
+/// Default `IHookStore`: a `ConcurrentDictionary` keyed by `CallbackToken`. All operations
+/// complete synchronously — hence `ValueTask` throughout.
 type InMemoryHookStore() =
     let hooks = ConcurrentDictionary<CallbackToken, Hook>()
 

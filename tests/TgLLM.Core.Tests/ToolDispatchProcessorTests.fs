@@ -345,7 +345,7 @@ let toolDispatchProcessorTests =
             | ValueSome _ -> ()
             | ValueNone -> failwith "the LATEST keyboard's binding must still resolve"
 
-        testCase "EditTextAsync/EditKeyboardAsync are documented no-ops on the slice-1 closure (ack-first) path" <| fun _ ->
+        testCase "ctx.EditTextAsync/EditKeyboardAsync fail fast on the slice-1 closure (ack-first) path — caught and reported like any other hook exception" <| fun _ ->
             let token = CallbackToken.generate ()
             let press = samplePress token 1L
             let plan: ToolKeyboard = { Rows = [ [ ToolButton("x", "x", None) ] ] }
@@ -371,8 +371,37 @@ let toolDispatchProcessorTests =
             | [ (_, work) ] -> (work CancellationToken.None).GetAwaiter().GetResult()
             | other -> failwithf "expected exactly one enqueued item, got %d" (List.length other)
 
-            Expect.isEmpty api.Edits "Edit* is a documented no-op on the closure path — no edit call reached the wire"
-            Expect.isEmpty observer.Failed "the no-op didn't throw"
+            Expect.isEmpty api.Edits "the closure-path fail-fast prevented any edit from reaching the wire"
+
+            match observer.Failed with
+            | [ (failedPress, (:? InvalidOperationException as ex)) ] ->
+                Expect.equal failedPress press "the observer attributes the failure to the pressed button"
+                Expect.stringContains ex.Message "EditTextAsync" "the exception names the offending member"
+            | other -> failwithf "expected exactly one InvalidOperationException reported, got %A" other
+
+        testCase "ctx.Answer/EditTextAsync/EditKeyboardAsync throw InvalidOperationException with a clear message when called directly on a closure-path PressContext" <| fun _ ->
+            let ctx =
+                PressContext(
+                    validLabel,
+                    UMX.tag<chatId> 1L,
+                    { Id = UMX.tag<userId> 1L; FirstName = "Alice"; Username = null },
+                    UMX.tag<messageId> 1L,
+                    CancellationToken.None,
+                    (fun _ -> Task.FromResult(UMX.tag<messageId> 0L))
+                )
+
+            let assertThrows (memberName: string) (call: unit -> unit) =
+                try
+                    call ()
+                    failwithf "expected %s to throw on the closure path, but it completed silently" memberName
+                with
+                | :? InvalidOperationException as ex ->
+                    Expect.stringContains ex.Message memberName $"{memberName}'s exception names the offending member"
+                | ex -> failwithf "expected %s to throw InvalidOperationException, got %A" memberName ex
+
+            assertThrows "Answer" (fun () -> ctx.Answer("x"))
+            assertThrows "EditTextAsync" (fun () -> ctx.EditTextAsync("x") |> ignore)
+            assertThrows "EditKeyboardAsync" (fun () -> ctx.EditKeyboardAsync({ Rows = [] }) |> ignore)
 
         testCase "the slice-1 closure path stays ack-first when toolDispatch is absent" <| fun _ ->
             let token = CallbackToken.generate ()

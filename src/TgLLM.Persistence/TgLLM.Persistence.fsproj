@@ -4,7 +4,7 @@
     <Description>Durable (file-based) IBindingStore implementation for TgLLM.NET's Tool Router (US3). Core stays IO-agnostic (Principle III); this leaf project does the IO.</Description>
   </PropertyGroup>
 
-  <!-- T026 (US3): the real `FileBindingStore : IBindingStore` (System.Text.Json on disk). -->
+  <!-- The durable `FileBindingStore : IBindingStore` (System.Text.Json on disk). -->
   <ItemGroup>
     <Compile Include="FileBindingStore.fs" />
   </ItemGroup>

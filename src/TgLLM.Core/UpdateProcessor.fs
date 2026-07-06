@@ -4,16 +4,44 @@ open System
 open System.Threading
 open System.Threading.Tasks
 
-/// T022 (contracts/core-ports.md "UpdateProcessor", data-model.md "Inbound: a press —
-/// ack-first"). `PressContext` itself lives in Domain.fs — see the compile-order comment in
+/// The ack timing a resolved press requires. `AckFirst` acks immediately, before any hook/tool
+/// runs — the slice-1 `IHookStore` resolver's policy (including its "unknown/stale token"
+/// outcome). `Deferred` acks after the tool runs, or a watchdog fires, whichever is first — the
+/// Tool Router resolver's policy, carried out by `UpdateProcessor`'s own `buildToolWork`/
+/// `sendAckOnce`.
+type AckPolicy =
+    | AckFirst
+    | Deferred
+
+/// Which resolver a press's token matched, carrying whatever that resolver needs to run the
+/// press's work. The Tool Router's resolver (`ToolDispatch`) takes priority; a miss there — or no
+/// `ToolDispatch` at all — falls back to the slice-1 `IHookStore` resolver, represented here as
+/// `HookStoreResolution` regardless of whether IT then finds a hook (an unknown/stale token is
+/// still acked, just with no hook to run — `processHookStorePress` decides that on its own).
+[<NoComparison; NoEquality>]
+type PressResolution =
+    | ToolResolution of tool: Tool * binding: ToolBinding * dispatch: ToolDispatch
+    | HookStoreResolution
+
+module PressResolution =
+    /// The single, pure statement of "which resolver ⇒ which ack policy" — kept separate from the
+    /// async resolve step (`UpdateProcessor`'s own `resolvePress`) so the mapping is testable in
+    /// isolation and can't silently drift out of sync with `processPress`'s branches.
+    let ackPolicy (resolution: PressResolution) : AckPolicy =
+        match resolution with
+        | ToolResolution _ -> Deferred
+        | HookStoreResolution -> AckFirst
+
+/// The engine that turns an inbound button press into ack + hook/tool execution.
+/// `PressContext` itself lives in Domain.fs — see the compile-order comment in
 /// TgLLM.Core.fsproj for why.
 ///
-/// Feature 002-llm-tool-router (T016, research.md D6): gains an OPTIONAL `?toolDispatch`
-/// collaborator. When present and it resolves a press's token, the press takes the deferred-ack
-/// TOOL path (D2) instead of the slice-1 ack-first `IHookStore` path. Slice-1 callers construct this
-/// type WITHOUT `toolDispatch` (F# optional parameter), so their behavior is byte-identical to
-/// before (FR-012) — `?toolDispatch` defaults to `None`, and every branch below that matters for
-/// slice-1 callers is exactly the original `processPress` body, just renamed `processHookStorePress`.
+/// Takes an OPTIONAL `?toolDispatch` collaborator. When present and it resolves a press's token,
+/// the press takes the deferred-ack TOOL path instead of the slice-1 ack-first `IHookStore` path.
+/// Slice-1 callers construct this type WITHOUT `toolDispatch` (F# optional parameter), so their
+/// behavior is byte-identical to before — `?toolDispatch` defaults to `None`, and every branch
+/// below that matters for slice-1 callers is exactly the original `processPress` body, just
+/// renamed `processHookStorePress`.
 [<Sealed>]
 type UpdateProcessor
     (
@@ -26,8 +54,8 @@ type UpdateProcessor
         ?watchdogBudget: TimeSpan
     ) =
 
-    /// Default ~2s (research.md D2): safely under Telegram's unpublished answer-callback deadline,
-    /// long enough for ordinary tool work. Tests override it to keep the watchdog path fast.
+    /// Default ~2s: safely under Telegram's unpublished answer-callback deadline, long enough for
+    /// ordinary tool work. Tests override it to keep the watchdog path fast.
     let watchdogBudget = defaultArg watchdogBudget (TimeSpan.FromSeconds 2.0)
 
     /// Builds `PressContext.ReplyTextAsync`'s backing closure. An invalid `text` is a programmer
@@ -39,8 +67,8 @@ type UpdateProcessor
         | Error error -> invalidArg (nameof text) $"PressContext.ReplyTextAsync: invalid reply text ({error})"
 
     /// The work handed to `IPressDispatcher.Enqueue`: constructs this press's `PressContext` and
-    /// runs the hook, catching and reporting any exception (FR-009) so the dispatcher's own
-    /// per-chat loop — which has no `ButtonPress` to attribute a failure to — never has to.
+    /// runs the hook, catching and reporting any exception so the dispatcher's own per-chat loop
+    /// — which has no `ButtonPress` to attribute a failure to — never has to.
     let buildWork (press: ButtonPress) (hook: Hook) : CancellationToken -> Task =
         fun workCt ->
             task {
@@ -53,48 +81,42 @@ type UpdateProcessor
                     observer.OnHookFailed(press, ex)
             }
 
-    /// The deferred-ack TOOL path (feature 002-llm-tool-router, research.md D2/D6): the tool runs
-    /// first; the processor answers the callback query EXACTLY ONCE afterwards — the tool's own
-    /// directive (via `ctx.Answer`), or an empty default. A watchdog races the tool so a slow tool
-    /// can't blow the client's spinner budget (SC-003); it does NOT cancel the tool — only the ack
-    /// is defaulted, the tool keeps running to completion regardless. An `Interlocked` guard makes
-    /// "exactly one ack" true by construction; the try/with around the actual API call is a
-    /// defensive backstop for the real Bot API rejecting a stale/duplicate answer server-side
-    /// (`"query ID is invalid"`), which this in-process guard already makes practically unreachable.
-    /// `PressContext.EditTextAsync`'s backing closure on the deferred-ack tool path (feature
-    /// 002-llm-tool-router, T022): edits the PRESSED message's text, leaving its current keyboard
-    /// untouched (`None`, research.md D1). An invalid `text` is a programmer error by the tool
-    /// author (Always-Rule 6), same fail-fast convention as `makeReplyTextAsync`.
+    /// The deferred-ack TOOL path: the tool runs first; the processor answers the callback query
+    /// EXACTLY ONCE afterwards — the tool's own directive (via `ctx.Answer`), or an empty default.
+    /// A watchdog races the tool so a slow tool can't blow the client's spinner budget; it does
+    /// NOT cancel the tool — only the ack is defaulted, the tool keeps running to completion
+    /// regardless. An `Interlocked` guard makes "exactly one ack" true by construction; the
+    /// try/with around the actual API call is a defensive backstop for the real Bot API rejecting
+    /// a stale/duplicate answer server-side (`"query ID is invalid"`), which this in-process guard
+    /// already makes practically unreachable.
+    /// `PressContext.EditTextAsync`'s backing closure on the deferred-ack tool path: edits the
+    /// PRESSED message's text, leaving its current keyboard untouched (`None`). An invalid `text`
+    /// is a programmer error by the tool author (Always-Rule 6), same fail-fast convention as
+    /// `makeReplyTextAsync`.
     let makeEditTextAction (press: ButtonPress) (workCt: CancellationToken) (text: string) : Task =
         match MessageText.create text with
         | Ok messageText -> api.EditMessageText(press.Chat, press.MessageId, messageText, None, workCt)
         | Error error -> invalidArg (nameof text) $"PressContext.EditTextAsync: invalid text ({error})"
 
-    /// `PressContext.EditKeyboardAsync`'s backing closure (T022): re-plans the replacement layout
-    /// via `ToolPlan.plan` (fresh tokens) and saves its bindings into the SAME `bindingStore` this
-    /// press's `ToolDispatch` resolves against, BEFORE the edit reaches Telegram — same
-    /// before-the-wire ordering guarantee as `SendKeyboardPlan`/`AgentOps.sendKeyboard`. An invalid
-    /// plan is a programmer error by the tool author (Always-Rule 6), same convention as
-    /// `TgBot.SendKeyboardPlan`.
-    ///
-    /// Also removes the PRESSED message's previously-recorded bindings (`dispatch.Tracker`) so a
-    /// tool that re-renders its own keyboard (a paginator/counter) doesn't leak one row per edit
-    /// (finding: unbounded binding-store growth). The old tokens are looked up and removed BEFORE
-    /// the new ones are saved; the tracker's record is updated only AFTER the edit reaches the wire,
-    /// matching `Record`'s own "reflects past sends only" contract.
+    /// `PressContext.EditKeyboardAsync`'s backing closure: re-plans the replacement layout and
+    /// saves/tracks its bindings via the shared `ToolKeyboardOps.deliver` (Tools.fs) — same
+    /// before-the-wire ordering guarantee, and the same stale-binding cleanup, as
+    /// `TgBot.SendKeyboardPlan` uses for a fresh send.
     let makeEditKeyboardAction (press: ButtonPress) (dispatch: ToolDispatch) (workCt: CancellationToken) (plan: ToolKeyboard) : Task =
-        task {
-            match ToolPlan.plan (Seq.initInfinite (fun _ -> CallbackToken.generate ())) plan with
-            | Error e -> invalidArg (nameof plan) $"PressContext.EditKeyboardAsync: invalid plan ({e})"
-            | Ok(registeredKeyboard, bindings) ->
-                match dispatch.Tracker.TryGetPrevious press.MessageId with
-                | Some staleTokens -> do! dispatch.Store.Remove(staleTokens, workCt)
-                | None -> ()
-
-                do! dispatch.Store.Save(bindings, workCt)
-                do! api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
-                dispatch.Tracker.Record(press.MessageId, bindings |> List.map (fun b -> b.Token))
-        }
+        ToolKeyboardOps.deliver
+            "PressContext.EditKeyboardAsync"
+            CallbackToken.generate
+            dispatch.Store
+            dispatch.Tracker
+            (Some press.MessageId)
+            (fun registeredKeyboard ->
+                task {
+                    do! api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
+                    return press.MessageId
+                })
+            workCt
+            plan
+        :> Task
 
     let buildToolWork (press: ButtonPress) (tool: Tool) (binding: ToolBinding) (dispatch: ToolDispatch) : CancellationToken -> Task =
         fun workCt ->
@@ -109,7 +131,7 @@ type UpdateProcessor
                             try
                                 do! api.AnswerCallback(press.QueryId, ackText, ackAlert, workCt)
                             with _ ->
-                                () // a losing/late ack call can legitimately fail server-side; swallow (D2).
+                                () // a losing/late ack call can legitimately fail server-side; swallow.
                     }
 
                 let answerAction (text: string) (alert: bool) =
@@ -163,12 +185,11 @@ type UpdateProcessor
                     ()
             }
 
-    /// Ack-first (SC-003): resolve, then `AnswerCallback` immediately regardless of outcome,
-    /// THEN — only if a hook was found — enqueue it. Unknown/stale/malformed tokens are acked
-    /// with no hook and no error (FR-010); the observer just hears about it (FR-009). This is
-    /// slice-1's original `processPress` body, unchanged (FR-012) — used both when `toolDispatch`
-    /// is absent, and as the fallback when it misses (unknown token, or a binding whose tool is no
-    /// longer registered).
+    /// Ack-first: resolve, then `AnswerCallback` immediately regardless of outcome, THEN — only if
+    /// a hook was found — enqueue it. Unknown/stale/malformed tokens are acked with no hook and no
+    /// error; the observer just hears about it. This is slice-1's original `processPress` body,
+    /// unchanged — used both when `toolDispatch` is absent, and as the fallback when it misses
+    /// (unknown token, or a binding whose tool is no longer registered).
     let processHookStorePress (ct: CancellationToken) (press: ButtonPress) : Task =
         task {
             let! hookOption = store.TryResolve(press.Token, ct)
@@ -180,21 +201,32 @@ type UpdateProcessor
             | AcknowledgeOnly -> observer.OnUnknownToken(press)
         }
 
-    let processPress (ct: CancellationToken) (press: ButtonPress) : Task =
+    /// The single place that decides which resolver a press's token routes through: the Tool
+    /// Router's resolver (if `toolDispatch` is wired in) takes priority over the slice-1
+    /// `IHookStore` resolver. See `PressResolution.ackPolicy` for the ack policy each outcome
+    /// implies — `processPress` below carries it out via whichever branch it dispatches to.
+    let resolvePress (ct: CancellationToken) (press: ButtonPress) : Task<PressResolution> =
         task {
             match toolDispatch with
-            | None -> do! processHookStorePress ct press
+            | None -> return HookStoreResolution
             | Some dispatch ->
                 let! resolved = dispatch.Resolve(press.Token, ct)
 
                 match resolved with
-                | ValueSome(tool, binding) -> do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch)
-                | ValueNone -> do! processHookStorePress ct press
+                | ValueSome(tool, binding) -> return ToolResolution(tool, binding, dispatch)
+                | ValueNone -> return HookStoreResolution
+        }
+
+    let processPress (ct: CancellationToken) (press: ButtonPress) : Task =
+        task {
+            match! resolvePress ct press with
+            | ToolResolution(tool, binding, dispatch) -> do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch)
+            | HookStoreResolution -> do! processHookStorePress ct press
         }
 
     /// Runs until `ct` is cancelled, processing each `AgentEvent` from `source` in arrival order.
     /// Hand-rolled `IAsyncEnumerator` loop rather than `TaskSeq`/`IAsyncEnumerable` `for`-sugar
-    /// (research.md: Core stays at FSharp.Core + FSharp.UMX only), matching Dispatcher.fs.
+    /// (Core stays at FSharp.Core + FSharp.UMX only), matching Dispatcher.fs.
     member _.RunAsync(ct: CancellationToken) : Task =
         task {
             use enumerator = source.Updates(ct).GetAsyncEnumerator(ct)
@@ -210,12 +242,12 @@ type UpdateProcessor
                     moving <- false
         }
 
-/// Agent-facing send operation, shared by both façades (contracts/core-ports.md "AgentOps").
+/// Agent-facing send operation, shared by both façades.
 module AgentOps =
 
     /// `KeyboardPlan.assign (tokenGen)` before `store.Register` before the actual send: hooks
     /// become resolvable the instant registration completes, strictly before the keyboard can
-    /// reach the chat (data-model.md "Outbound: send a keyboard").
+    /// reach the chat.
     let sendKeyboard
         (store: IHookStore)
         (api: IBotApiClient)

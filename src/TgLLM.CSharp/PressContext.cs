@@ -5,9 +5,9 @@ using TgLLM.FSharp;
 namespace TgLLM.CSharp;
 
 /// <summary>
-/// The context of a button press handed to a C# hook (T032, contracts/csharp-facade.md). Wraps the
-/// core press context so the C# surface stays idiomatic — plain <c>string</c>/<c>long</c>, no F#
-/// single-case types (Principle II).
+/// The context of a button press handed to a C# hook. Wraps the core press context so the C#
+/// surface stays idiomatic — plain <c>string</c>/<c>long</c>, no F# single-case types
+/// (Principle II).
 /// </summary>
 public sealed class PressContext
 {
@@ -33,8 +33,8 @@ public sealed class PressContext
     public Task<long> ReplyTextAsync(string text) => _core.ReplyTextAsync(text);
 
     /// <summary>
-    /// The bound tool argument (feature 002-llm-tool-router, FR-003), or <c>null</c> for a
-    /// slice-1 closure-style hook or an argument-less tool button.
+    /// The bound tool argument, or <c>null</c> for a slice-1 closure-style hook or an
+    /// argument-less tool button.
     /// </summary>
     public string? Arg => _core.Arg;
 
@@ -46,17 +46,15 @@ public sealed class PressContext
     public void Answer(string text, bool alert = false) => _core.Answer(text, alert);
 
     /// <summary>
-    /// Edit the pressed message's text in place, leaving its current keyboard untouched (feature
-    /// 002-llm-tool-router, FR-006). Reachable only from a Tool Router tool's deferred-ack path;
-    /// calling this from a slice-1 closure-style hook is a documented no-op (same convention as
-    /// <see cref="Answer"/>).
+    /// Edit the pressed message's text in place, leaving its current keyboard untouched.
+    /// Reachable only from a Tool Router tool's deferred-ack path; calling this from a slice-1
+    /// closure-style hook is a documented no-op (same convention as <see cref="Answer"/>).
     /// </summary>
     public Task EditTextAsync(string text) => _core.EditTextAsync(text);
 
     /// <summary>
-    /// Replace the pressed message's keyboard with one built from a fresh <see cref="KeyboardPlan"/>
-    /// (feature 002-llm-tool-router, FR-006). Same documented no-op on the closure path as
-    /// <see cref="EditTextAsync"/>.
+    /// Replace the pressed message's keyboard with one built from a fresh <see cref="KeyboardPlan"/>.
+    /// Same documented no-op on the closure path as <see cref="EditTextAsync"/>.
     /// </summary>
     public Task EditKeyboardAsync(KeyboardPlan plan) => _core.EditKeyboardAsync(plan.Plan);
 }

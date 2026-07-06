@@ -6,31 +6,31 @@ open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 
-/// Feature 002-llm-tool-router (data-model.md "ToolError", "ToolName", neutral keyboard plan, tool
-/// binding, ports, tool dispatch). Additive on slice 1 (FR-012): nothing here changes slice-1 types
-/// except `RegisteredButton` (Keyboard.fs, T007), which stays behaviorally identical for callbacks.
+/// The Tool Router surface: tool errors/names, the neutral keyboard plan, tool bindings, ports,
+/// and tool dispatch. Additive on top of slice 1: nothing here changes slice-1 types except
+/// `RegisteredButton` (Keyboard.fs), which stays behaviorally identical for callbacks.
 ///
 /// Compiles right after Keyboard.fs: `ToolPlan.plan` produces `RegisteredKeyboard`/`RegisteredButton`
 /// (Keyboard.fs) and needs `ButtonLabel`/`CallbackToken` (Values.fs/CallbackToken.fs); `Tool` needs
 /// `PressContext` (Domain.fs). It compiles before Ports.fs/UpdateProcessor.fs so `ToolDispatch` can be
-/// threaded into `UpdateProcessor` as an optional collaborator (T016).
+/// threaded into `UpdateProcessor` as an optional collaborator.
 ///
-/// `PlanButton`/`ToolKeyboard` (data-model.md "Neutral keyboard plan") moved to Values.fs in T022
-/// (US2): `PressContext.EditKeyboardAsync` (Domain.fs) needs `ToolKeyboard`, and Domain.fs compiles
+/// `PlanButton`/`ToolKeyboard` (the neutral keyboard plan) live in Values.fs instead of here:
+/// `PressContext.EditKeyboardAsync` (Domain.fs) needs `ToolKeyboard`, and Domain.fs compiles
 /// before this file — see Values.fs's own comment on those two types.
 
-/// Validation outcomes for the Tool Router surface (data-model.md "ToolError"). `InvalidKeyboard`
-/// wraps slice-1's `KeyboardError` (deviation, disclosed: the data-model sketch lists three cases;
-/// a fourth is needed because `ToolPlan.plan`/`Plan.rows` reuse `ButtonLabel.create` and slice-1's
-/// row/keyboard-shape checks, both of which already report `KeyboardError`, not a fresh error type).
+/// Validation outcomes for the Tool Router surface. `InvalidKeyboard` wraps slice-1's
+/// `KeyboardError` (deviation, disclosed: an original three-case sketch grew a fourth case
+/// because `ToolPlan.plan`/`Plan.rows` reuse `ButtonLabel.create` and slice-1's row/keyboard-shape
+/// checks, both of which already report `KeyboardError`, not a fresh error type).
 type ToolError =
     | EmptyToolName
     | UnknownTool of name: string
     | InvalidUrl of value: string
     | InvalidKeyboard of KeyboardError
 
-/// The name a tool is registered and referenced under (data-model.md "ToolName"). Single-case,
-/// smart-constructed like `ButtonLabel`/`MessageText` — never a raw, unvalidated `string`.
+/// The name a tool is registered and referenced under. Single-case, smart-constructed like
+/// `ButtonLabel`/`MessageText` — never a raw, unvalidated `string`.
 [<Struct>]
 type ToolName = private ToolName of string
 
@@ -44,26 +44,26 @@ module ToolName =
 
     let value (ToolName s) : string = s
 
-/// The agent-supplied reaction to a tool button press (data-model.md "Ports"). Unlike slice-1's
-/// `Hook`, a `Tool` is looked up by `ToolName` (via `IToolRegistry`), not bound at keyboard-build
-/// time — the same registered tool can be targeted by many different keyboards/bindings.
+/// The agent-supplied reaction to a tool button press. Unlike slice-1's `Hook`, a `Tool` is looked
+/// up by `ToolName` (via `IToolRegistry`), not bound at keyboard-build time — the same registered
+/// tool can be targeted by many different keyboards/bindings.
 type Tool = PressContext -> Task
 
-/// One button→tool association, as stored by `IBindingStore` (data-model.md "Tool binding").
-/// Unlike slice-1's `HookBinding` (`Token -> live Hook` closure, non-serializable), every field here
-/// is plain data, so a `ToolBinding` can be serialized and persisted (D5) — hence it derives
-/// structural equality/comparison (useful for tests and durable-store round-trip checks), unlike
+/// One button→tool association, as stored by `IBindingStore`. Unlike slice-1's `HookBinding`
+/// (`Token -> live Hook` closure, non-serializable), every field here is plain data, so a
+/// `ToolBinding` can be serialized and persisted — hence it derives structural
+/// equality/comparison (useful for tests and durable-store round-trip checks), unlike
 /// `HookBinding`/`RouteDecision`, which hold function values and can't.
 type ToolBinding =
     { Token: CallbackToken
       ToolName: ToolName
       Arg: string option }
 
-/// The pure kernel of the Tool Router (data-model.md "Pure kernel", FsCheck target T006). Mirrors
-/// slice-1's `Keyboard.create` -> `KeyboardPlan.assign` split, but combined into one function: unlike
+/// The pure kernel of the Tool Router (an FsCheck property-test target). Mirrors slice-1's
+/// `Keyboard.create` -> `KeyboardPlan.assign` split, but combined into one function: unlike
 /// `KeyboardSpec` (already validated before token assignment), a `ToolKeyboard` is unvalidated raw
-/// data, so `plan` validates every button (label, tool name, url) THEN assigns tokens to tool buttons
-/// only, passing URL buttons through untouched (research.md D3).
+/// data, so `plan` validates every button (label, tool name, url) THEN assigns tokens to tool
+/// buttons only, passing URL buttons through untouched.
 module ToolPlan =
 
     /// A button whose label/tool-name/url have already been validated — the token-assignment pass
@@ -124,10 +124,10 @@ module ToolPlan =
         validateRows keyboard.Rows |> Result.map (fun _ -> keyboard)
 
     /// Validates every button, THEN assigns one token per `ToolButton` (URL buttons pass through
-    /// untouched, D3). Properties (T006): row/label shape preserved; one token+binding per tool
-    /// button; URL buttons carry no binding; token count = tool-button count; distinct input tokens
-    /// yield distinct button tokens (each input token is consumed at most once, same guarantee as
-    /// `KeyboardPlan.assign`).
+    /// untouched). Properties covered by the FsCheck suite: row/label shape preserved; one
+    /// token+binding per tool button; URL buttons carry no binding; token count = tool-button
+    /// count; distinct input tokens yield distinct button tokens (each input token is consumed at
+    /// most once, same guarantee as `KeyboardPlan.assign`).
     let plan (tokens: CallbackToken seq) (keyboard: ToolKeyboard) : Result<RegisteredKeyboard * ToolBinding list, ToolError> =
         validateRows keyboard.Rows
         |> Result.map (fun validatedRows ->
@@ -152,15 +152,15 @@ module ToolPlan =
             let registeredRows = validatedRows |> List.map (List.map assignButton)
             RegisteredKeyboard registeredRows, List.rev bindings)
 
-/// Registers named tools and resolves them by name (data-model.md "Ports"). Add-or-replace by
-/// design (mirrors slice-1's `IHookStore.Register` semantics for re-sends).
+/// Registers named tools and resolves them by name. Add-or-replace by design (mirrors slice-1's
+/// `IHookStore.Register` semantics for re-sends).
 type IToolRegistry =
     abstract Register: name: ToolName * tool: Tool -> unit
     abstract TryResolve: name: ToolName -> Tool voption
 
 /// Default `IToolRegistry`: a `ConcurrentDictionary` keyed by `ToolName`. Mirrors
-/// `InMemoryHookStore`'s shape, but keyed by name (stable across sends) rather than by
-/// per-button `CallbackToken` (data-model.md "IToolRegistry").
+/// `InMemoryHookStore`'s shape, but keyed by name (stable across sends) rather than by per-button
+/// `CallbackToken`.
 type InMemoryToolRegistry() =
     let tools = ConcurrentDictionary<ToolName, Tool>()
 
@@ -172,9 +172,9 @@ type InMemoryToolRegistry() =
             | true, tool -> ValueSome tool
             | false, _ -> ValueNone
 
-/// Serializable button->tool bindings (data-model.md "IBindingStore", research.md D5). In-memory
-/// default here; a durable (file-based) implementation lives in the separate `TgLLM.Persistence`
-/// leaf project (Core stays IO-agnostic, Principle III).
+/// Serializable button->tool bindings. In-memory default here; a durable (file-based)
+/// implementation lives in the separate `TgLLM.Persistence` leaf project (Core stays
+/// IO-agnostic, Principle III).
 type IBindingStore =
     abstract Save: bindings: IReadOnlyList<ToolBinding> * ct: CancellationToken -> ValueTask
     abstract TryGet: token: CallbackToken * ct: CancellationToken -> ValueTask<ToolBinding voption>
@@ -227,11 +227,11 @@ type MessageBindingTracker() =
         | true, tokens -> Some tokens
         | false, _ -> None
 
-/// The deferred-ack tool path's resolver (T014, data-model.md "Tool dispatch", research.md D6):
-/// token -> binding (via `IBindingStore`) -> tool (via `IToolRegistry`). `ValueNone` on EITHER miss
-/// (unknown token, or a binding whose tool is no longer registered) so `UpdateProcessor` can uniformly
-/// fall back to the slice-1 `IHookStore` ack-first path, which will itself report the unknown/stale
-/// press (FR-005/FR-010) — no separate "known binding, unknown tool" branch is needed.
+/// The deferred-ack tool path's resolver: token -> binding (via `IBindingStore`) -> tool (via
+/// `IToolRegistry`). `ValueNone` on EITHER miss (unknown token, or a binding whose tool is no
+/// longer registered) so `UpdateProcessor` can uniformly fall back to the slice-1 `IHookStore`
+/// ack-first path, which will itself report the unknown/stale press — no separate "known binding,
+/// unknown tool" branch is needed.
 ///
 /// `tracker` defaults to a fresh, private `MessageBindingTracker` so existing 2-arg call sites keep
 /// compiling — pass an explicit instance (as `TgBot` does) to SHARE bookkeeping with whatever also
@@ -241,10 +241,10 @@ type MessageBindingTracker() =
 type ToolDispatch(registry: IToolRegistry, store: IBindingStore, ?tracker: MessageBindingTracker) =
     let tracker = defaultArg tracker (MessageBindingTracker())
 
-    /// Exposed so `UpdateProcessor`'s edit-in-place wiring (feature 002-llm-tool-router, T022) can
-    /// save the bindings for a tool button's REPLACEMENT keyboard (`PressContext.EditKeyboardAsync`)
-    /// into the SAME store this dispatch resolves presses against — a re-plan without this would
-    /// register bindings nothing could ever resolve.
+    /// Exposed so `UpdateProcessor`'s edit-in-place wiring can save the bindings for a tool
+    /// button's REPLACEMENT keyboard (`PressContext.EditKeyboardAsync`) into the SAME store this
+    /// dispatch resolves presses against — a re-plan without this would register bindings nothing
+    /// could ever resolve.
     member _.Store: IBindingStore = store
 
     /// The message->tokens bookkeeping used to remove a superseded keyboard's bindings on edit
@@ -264,3 +264,45 @@ type ToolDispatch(registry: IToolRegistry, store: IBindingStore, ?tracker: Messa
                     | ValueSome tool -> return ValueSome(tool, binding)
             }
         )
+
+/// The shared "plan → save bindings → put the keyboard on the wire → track" operation, used by
+/// both `TgBot.SendKeyboardPlan` (a fresh send) and `UpdateProcessor`'s edit-in-place wiring
+/// (`PressContext.EditKeyboardAsync`). Mirrors `AgentOps.sendKeyboard`'s (UpdateProcessor.fs)
+/// save-before-wire ordering guarantee, but for the Tool Router's serializable `ToolBinding`s
+/// instead of slice-1's live `HookBinding` closures.
+module ToolKeyboardOps =
+
+    /// Validates+plans `plan`, saves its bindings BEFORE `send` puts the keyboard on the wire, then
+    /// records the delivered message's tokens into `tracker` — this only ever affects a FUTURE
+    /// `ctx.EditKeyboardAsync` on that same message, never this call itself. `staleMessageId =
+    /// Some messageId` additionally removes that message's previously-tracked bindings FIRST (the
+    /// edit path: a tool that re-renders its own keyboard, e.g. a paginator/counter, must not leak
+    /// one row per edit); `None` skips this (a fresh send has nothing stale to remove). The old
+    /// tokens are looked up and removed BEFORE the new ones are saved; `tracker.Record` runs only
+    /// AFTER `send` completes, matching `MessageBindingTracker`'s own "reflects past sends only"
+    /// contract. An invalid `plan` is a programmer error by the caller (Always-Rule 6) — fails
+    /// fast (`invalidArg`, tagged with `context` for a useful message) rather than threading a
+    /// `Result` through this API.
+    let deliver
+        (context: string)
+        (tokenGen: unit -> CallbackToken)
+        (store: IBindingStore)
+        (tracker: MessageBindingTracker)
+        (staleMessageId: MessageId option)
+        (send: RegisteredKeyboard -> Task<MessageId>)
+        (ct: CancellationToken)
+        (plan: ToolKeyboard)
+        : Task<MessageId> =
+        task {
+            match ToolPlan.plan (Seq.initInfinite (fun _ -> tokenGen ())) plan with
+            | Error e -> return invalidArg (nameof plan) $"{context}: invalid plan ({e})"
+            | Ok(registeredKeyboard, bindings) ->
+                match staleMessageId |> Option.bind tracker.TryGetPrevious with
+                | Some staleTokens -> do! store.Remove(staleTokens, ct)
+                | None -> ()
+
+                do! store.Save(bindings, ct)
+                let! messageId = send registeredKeyboard
+                tracker.Record(messageId, bindings |> List.map (fun b -> b.Token))
+                return messageId
+        }

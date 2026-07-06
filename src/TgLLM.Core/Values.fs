@@ -2,10 +2,9 @@ namespace TgLLM.Core
 
 open System
 
-/// Validation outcomes shared by the value objects below and by `Keyboard.create`
-/// (data-model.md "KeyboardError"). Row/column limits driven by Bot API vendor verification
-/// (Principle V) are deferred to Phase 3 (T024/T048); only the checks this Foundational phase
-/// actually enforces are represented here.
+/// Validation outcomes shared by the value objects below and by `Keyboard.create`. Row/column
+/// limits driven by Bot API vendor verification (Principle V) are deferred to a later phase;
+/// only the checks currently enforced are represented here.
 type KeyboardError =
     /// A keyboard with zero rows.
     | EmptyKeyboard
@@ -20,17 +19,17 @@ type KeyboardError =
     /// Text longer than the max length allowed for its context.
     | TextTooLong of length: int * max: int
 
-/// The visible text on a button (FR-001, data-model.md "ButtonLabel").
+/// The visible text on a button.
 [<Struct>]
 type ButtonLabel = private ButtonLabel of string
 
 module ButtonLabel =
 
-    /// Bot API vendor verification for inline button text length is deferred to Phase 3
-    /// (T024/T048, Principle V) — core.telegram.org does not document a character limit for
-    /// inline keyboard button text the way it documents `callback_data`'s 1–64 BYTE limit. This
-    /// bound is a conservative placeholder that gives the smart constructor a concrete, testable
-    /// invariant now; revisit once Phase 3 confirms (or replaces) it against the vendor docs.
+    /// Bot API vendor verification for inline button text length is deferred (Principle V) —
+    /// core.telegram.org does not document a character limit for inline keyboard button text the
+    /// way it documents `callback_data`'s 1–64 BYTE limit. This bound is a conservative
+    /// placeholder that gives the smart constructor a concrete, testable invariant now; revisit
+    /// once vendor docs confirm (or replace) it.
     [<Literal>]
     let MaxLength = 64
 
@@ -44,13 +43,13 @@ module ButtonLabel =
 
     let value (ButtonLabel s) = s
 
-/// The text of a message that carries a keyboard or a reply (FR-006, data-model.md "MessageText").
+/// The text of a message that carries a keyboard or a reply.
 [<Struct>]
 type MessageText = private MessageText of string
 
 module MessageText =
 
-    /// Telegram Bot API `sendMessage` text limit (research.md D7; vendor-confirmed value).
+    /// Telegram Bot API `sendMessage` text limit (vendor-confirmed value).
     [<Literal>]
     let MaxLength = 4096
 
@@ -64,20 +63,18 @@ module MessageText =
 
     let value (MessageText s) = s
 
-    /// Fail-fast constructor for trusted literals (contracts/fsharp-facade.md, quickstart.md:
-    /// `MessageText.unsafe "Deploy?"`). An invalid `raw` is a programmer error by the caller
-    /// (Always-Rule 6) — the caller controls the literal, so this is not a business error to
-    /// route through `Result`. Mirrors the fail-fast pattern already used by
-    /// `UpdateProcessor.fs`'s `makeReplyTextAsync`.
+    /// Fail-fast constructor for trusted literals (e.g. `MessageText.unsafe "Deploy?"`). An
+    /// invalid `raw` is a programmer error by the caller (Always-Rule 6) — the caller controls
+    /// the literal, so this is not a business error to route through `Result`. Mirrors the
+    /// fail-fast pattern already used by `UpdateProcessor.fs`'s `makeReplyTextAsync`.
     let unsafe (raw: string) : MessageText =
         match create raw with
         | Ok m -> m
         | Error e -> invalidArg (nameof raw) $"MessageText.unsafe: invalid text ({e})"
 
-/// The host-filled, LLM-agnostic keyboard plan (data-model.md "Neutral keyboard plan", research.md
-/// D7). Relocated here from `Tools.fs` (feature 002-llm-tool-router, T022, disclosed deviation): US2
-/// needs `PressContext.EditKeyboardAsync` (Domain.fs) to accept a `ToolKeyboard`, and `PressContext`
-/// compiles before `Tools.fs` (see the compile-order comment in `TgLLM.Core.fsproj`); `PlanButton`/
+/// The host-filled, LLM-agnostic keyboard plan. Relocated here from `Tools.fs`: `PressContext.
+/// EditKeyboardAsync` (Domain.fs) needs to accept a `ToolKeyboard`, and `PressContext` compiles
+/// before `Tools.fs` (see the compile-order comment in `TgLLM.Core.fsproj`); `PlanButton`/
 /// `ToolKeyboard` have no dependency beyond primitive types, so moving just these two types this
 /// early costs nothing and unblocks the forward reference. `ToolPlan`, `ToolBinding`, `ToolError`,
 /// `IToolRegistry`, `IBindingStore`, and `ToolDispatch` all stay in `Tools.fs`, unaffected.
@@ -85,8 +82,8 @@ type PlanButton =
     | ToolButton of label: string * toolName: string * arg: string option
     | UrlButton of label: string * url: string
 
-/// The neutral, unvalidated plan (data-model.md "ToolKeyboard"): >=1 row, each >=1 button by
-/// convention; `ToolPlan.plan` and the façade's `Plan.rows` are where that shape is actually
+/// The neutral, unvalidated plan: >=1 row, each >=1 button by convention; `ToolPlan.plan` and the
+/// façade's `Plan.rows` are where that shape is actually
 /// enforced (see their doc comments) — this record itself is a plain data holder, like slice-1's
 /// `ButtonSpec list list` before `Keyboard.create` validates it.
 type ToolKeyboard = { Rows: PlanButton list list }

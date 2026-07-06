@@ -1,5 +1,5 @@
-/// T031 (research.md D4/D7). ASP.NET Core minimal-API glue for the webhook transport, and the ONLY
-/// project that references `Microsoft.AspNetCore.App` (Principle III). `MapTelegramWebhook` is a
+/// ASP.NET Core minimal-API glue for the webhook transport, and the ONLY project that references
+/// `Microsoft.AspNetCore.App` (Principle III). `MapTelegramWebhook` is a
 /// `[<Extension>]` method so BOTH C# and F# callers can write `app.MapTelegramWebhook(...)`. It
 /// follows Microsoft's library-author guidance (extends `IEndpointRouteBuilder`, returns the mapped
 /// endpoint's convention builder). The handler verifies the secret-token header, parses the body,

@@ -1,8 +1,8 @@
 namespace TgLLM.Core
 
-/// Agent-facing button spec (data-model.md "KeyboardSpec (agent-facing)"). `Label` is a raw
-/// string — the agent shouldn't have to call `ButtonLabel.create` themselves; `Keyboard.create`
-/// validates it (empty/too-long → the position-qualified `KeyboardError`).
+/// Agent-facing button spec. `Label` is a raw string — the agent shouldn't have to call
+/// `ButtonLabel.create` themselves; `Keyboard.create` validates it (empty/too-long → the
+/// position-qualified `KeyboardError`).
 [<NoComparison; NoEquality>]
 type ButtonSpec = { Label: string; Hook: Hook }
 
@@ -14,10 +14,9 @@ type ButtonSpec = { Label: string; Hook: Hook }
 [<NoComparison; NoEquality>]
 type KeyboardSpec = private KeyboardSpec of (ButtonLabel * Hook) list list
 
-/// One button on the wire-facing keyboard, after token assignment (data-model.md
-/// "RegisteredKeyboard", feature 002-llm-tool-router T007). Was a plain `{ Label; Token }` record
-/// in slice 1; becomes a DU so a keyboard can mix hook/tool (`Callback`) and (`Url`) buttons in the
-/// same layout (research.md D3). `Callback`'s shape is exactly slice-1's old record fields in case
+/// One button on the wire-facing keyboard, after token assignment. Was a plain `{ Label; Token }`
+/// record in slice 1; becomes a DU so a keyboard can mix hook/tool (`Callback`) and (`Url`)
+/// buttons in the same layout. `Callback`'s shape is exactly slice-1's old record fields in case
 /// order, so `Mapping.toInlineKeyboardMarkup`'s callback-button behavior is unchanged — only the
 /// syntax at each call site (construction/pattern-match) changes from field access to this case.
 type RegisteredButton =
@@ -25,7 +24,7 @@ type RegisteredButton =
     | Url of label: ButtonLabel * url: string
 
 /// The wire-facing keyboard shape; the transport layer maps this to Telegram.Bot's
-/// `InlineKeyboardMarkup` (implemented in Phase 3, T024).
+/// `InlineKeyboardMarkup`.
 type RegisteredKeyboard = RegisteredKeyboard of RegisteredButton list list
 
 module Keyboard =
@@ -70,8 +69,8 @@ module Keyboard =
 
 module KeyboardPlan =
 
-    /// Pure (data-model.md "Pure planning step"): assigns one token per button from `tokens`, in
-    /// row-major order, preserving row/column shape and labels. Returns the wire-facing keyboard
+    /// Pure: assigns one token per button from `tokens`, in row-major order, preserving row/column
+    /// shape and labels. Returns the wire-facing keyboard
     /// plus one `HookBinding` per button (`bindings.Length = buttonCount`; distinct input tokens
     /// yield distinct button tokens, since each input token is consumed at most once).
     let assign (tokens: CallbackToken seq) (KeyboardSpec rows) : RegisteredKeyboard * HookBinding list =

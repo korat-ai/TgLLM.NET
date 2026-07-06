@@ -1,9 +1,8 @@
-/// T030 (contracts/core-ports.md "IUpdateSource", research.md D7). Webhook transport: a host-agnostic
-/// `IUpdateSource` fed by an HTTP endpoint that pushes each incoming `Update`. It buffers mapped
-/// events in a single-reader channel so the endpoint can return 200 immediately (Telegram retries a
-/// slow endpoint) while the processor drains events on its own. The `Update` -> domain mapping is the
-/// SAME pure `Mapping.toAgentEvent` the long-polling source uses, so hook behavior is identical
-/// across transports (FR-013).
+/// Webhook transport: a host-agnostic `IUpdateSource` fed by an HTTP endpoint that pushes each
+/// incoming `Update`. It buffers mapped events in a single-reader channel so the endpoint can
+/// return 200 immediately (Telegram retries a slow endpoint) while the processor drains events on
+/// its own. The `Update` -> domain mapping is the SAME pure `Mapping.toAgentEvent` the
+/// long-polling source uses, so hook behavior is identical across transports.
 namespace TgLLM.Webhooks
 
 open System

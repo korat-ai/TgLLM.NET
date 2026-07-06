@@ -5,8 +5,8 @@ using TgLLM.FSharp;
 namespace TgLLM.CSharp;
 
 /// <summary>
-/// A validated Tool Router plan, ready to send (T019, contracts/tool-router.md). Same type as the
-/// F# façade's <c>ToolKeyboard</c> — <c>KeyboardPlan</c> is the idiomatic C# name (mirrors slice-1's
+/// A validated Tool Router plan, ready to send. Same type as the F# façade's <c>ToolKeyboard</c>
+/// — <c>KeyboardPlan</c> is the idiomatic C# name (mirrors slice-1's
 /// <c>KeyboardSpec</c>/<see cref="Keyboard"/> naming split), not a drift.
 /// </summary>
 public sealed class KeyboardPlan
@@ -20,14 +20,14 @@ public sealed class PlanRowBuilder
 {
     internal List<TgLLM.Core.PlanButton> Buttons { get; } = new();
 
-    /// <summary>Add a tool button. <paramref name="arg"/> is the bound string argument (FR-003), if any.</summary>
+    /// <summary>Add a tool button. <paramref name="arg"/> is the bound string argument, if any.</summary>
     public PlanRowBuilder Tool(string label, string toolName, string? arg = null)
     {
         Buttons.Add(arg is null ? Plan.tool(label, toolName) : Plan.toolWithArg(label, toolName, arg));
         return this;
     }
 
-    /// <summary>Add a URL button: opens client-side, invokes no tool (research.md D3).</summary>
+    /// <summary>Add a URL button: opens client-side, invokes no tool.</summary>
     public PlanRowBuilder Url(string label, string url)
     {
         Buttons.Add(Plan.url(label, url));
@@ -36,9 +36,9 @@ public sealed class PlanRowBuilder
 }
 
 /// <summary>
-/// Fluent builder for a <see cref="KeyboardPlan"/> (T019, contracts/tool-router.md). Mirrors the F#
-/// façade's <c>Plan.rows</c>, but throws <see cref="TgKeyboardException"/> on an invalid plan (the
-/// C# idiom) instead of returning a result.
+/// Fluent builder for a <see cref="KeyboardPlan"/>. Mirrors the F# façade's <c>Plan.rows</c>, but
+/// throws <see cref="TgKeyboardException"/> on an invalid plan (the C# idiom) instead of
+/// returning a result.
 /// </summary>
 public sealed class PlanBuilder
 {

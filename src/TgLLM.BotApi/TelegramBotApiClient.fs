@@ -1,9 +1,9 @@
-/// T024 (contracts/core-ports.md "IBotApiClient"). `TelegramBotApiClient : IBotApiClient` over
-/// Telegram.Bot 22.10.1, plus the pure Telegram.Bot `CallbackQuery` -> `ButtonPress`/`AgentEvent`
-/// mapping `LongPollingUpdateSource` (T026, compiled after this file) reuses.
+/// `TelegramBotApiClient : IBotApiClient` over Telegram.Bot 22.10.1, plus the pure Telegram.Bot
+/// `CallbackQuery` -> `ButtonPress`/`AgentEvent` mapping `LongPollingUpdateSource` (compiled after
+/// this file) reuses.
 ///
 /// Bot API facts this file relies on, verified against core.telegram.org and Telegram.Bot's own
-/// source (research.md D7, Principle V):
+/// source (Principle V):
 ///   - `callback_data` is 1-64 BYTES. `CallbackToken.value` always produces a 22-character
 ///     unpadded base64url string (16 bytes encoded), well under that limit.
 ///   - `answerCallbackQuery` must be called for every callback query (known or not) to clear the
@@ -29,17 +29,15 @@ open Telegram.Bot.Types.ReplyMarkups
 open TgLLM.Core
 
 /// Pure mappings between Telegram.Bot's wire-level types and this library's transport-agnostic
-/// domain model (data-model.md). No I/O; total and side-effect-free, so they're reused as-is by
-/// `LongPollingUpdateSource` (T026) and are unit-testable without a fake HTTP server (T023's
-/// `Mapping.toInlineKeyboardMarkup` test).
+/// domain model. No I/O; total and side-effect-free, so they're reused as-is by
+/// `LongPollingUpdateSource` and are unit-testable without a fake HTTP server.
 module Mapping =
 
     /// `RegisteredKeyboard` -> Telegram.Bot's `InlineKeyboardMarkup`: one `InlineKeyboardButton`
     /// per registered button. `Callback` buttons get `callback_data` set to the button's opaque
-    /// `CallbackToken` (never the label or any agent state — FR-011, data-model.md
-    /// "RegisteredKeyboard"); `Url` buttons (feature 002-llm-tool-router T007, research.md D3) get
-    /// a plain client-side link — `url`/`callback_data` are mutually exclusive on one button, so
-    /// these two cases map to Telegram.Bot's two distinct factory methods, never both.
+    /// `CallbackToken` (never the label or any agent state); `Url` buttons get a plain client-side
+    /// link — `url`/`callback_data` are mutually exclusive on one button, so these two cases map
+    /// to Telegram.Bot's two distinct factory methods, never both.
     let toInlineKeyboardMarkup (RegisteredKeyboard rows) : InlineKeyboardMarkup =
         rows
         |> List.map (fun row ->
@@ -81,10 +79,10 @@ module Mapping =
 
     /// One Telegram.Bot `Update` -> `AgentEvent voption` (total; never throws). `ValueNone` when
     /// the update isn't a mappable button press: no `CallbackQuery`, no `Data` (e.g. a `Game`
-    /// callback), or — "handle absent message" (T024) — no `Message` (the callback query
-    /// originated from an inline-mode message, or the original message is too old for Telegram to
-    /// attach; data-model.md's `ButtonPress` requires `Chat`/`MessageId`, which only the message
-    /// carries, so such updates carry no `ButtonPress` and are skipped rather than guessed at).
+    /// callback), or no `Message` (the callback query originated from an inline-mode message, or
+    /// the original message is too old for Telegram to attach; `ButtonPress` requires
+    /// `Chat`/`MessageId`, which only the message carries, so such updates carry no `ButtonPress`
+    /// and are skipped rather than guessed at).
     let toAgentEvent (update: Update) : AgentEvent voption =
         match update.CallbackQuery |> Option.ofObj with
         | None -> ValueNone
@@ -109,9 +107,9 @@ module Mapping =
             | _ -> ValueNone
 
 /// `IBotApiClient` over a real (or fake-hosted) `ITelegramBotClient`. Injected rather than
-/// constructed from a bot token directly, so the façade (T027) owns client lifetime/HttpClient
-/// choice and tests (T023) can point it at `FakeBotApiServer` via `TelegramBotClientOptions`'s
-/// `baseUrl` override.
+/// constructed from a bot token directly, so the façade owns client lifetime/HttpClient choice
+/// and tests can point it at `FakeBotApiServer` via `TelegramBotClientOptions`'s `baseUrl`
+/// override.
 [<Sealed>]
 type TelegramBotApiClient(client: ITelegramBotClient) =
 
@@ -152,10 +150,9 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
         member _.AnswerCallback(query: CallbackQueryId, ct: CancellationToken) : Task =
             client.AnswerCallbackQuery(callbackQueryId = UMX.untag query, cancellationToken = ct)
 
-        /// Tool Router deferred-ack overload (T013, research.md D2): `text`/`showAlert` map
-        /// directly onto Telegram.Bot's `AnswerCallbackQuery` extension (verified against its own
-        /// source, Principle V); `url`/`cacheTime` are left at their defaults, same as the no-arg
-        /// overload above.
+        /// Tool Router deferred-ack overload: `text`/`showAlert` map directly onto Telegram.Bot's
+        /// `AnswerCallbackQuery` extension (verified against its own source, Principle V);
+        /// `url`/`cacheTime` are left at their defaults, same as the no-arg overload above.
         member _.AnswerCallback(query: CallbackQueryId, text: string option, showAlert: bool, ct: CancellationToken) : Task =
             client.AnswerCallbackQuery(
                 callbackQueryId = UMX.untag query,
@@ -164,14 +161,14 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
                 cancellationToken = ct
             )
 
-        /// T021 (feature 002-llm-tool-router, research.md D1): `editMessageText`'s `reply_markup` is
-        /// OPTIONAL — omitting it (`None` here) leaves the message's CURRENT keyboard untouched,
-        /// verified against Telegram.Bot's own `EditMessageText` extension (Principle V); `Some`
-        /// replaces it, same unconditional mapping `SendKeyboard` already uses. Deliberately does
-        /// NOT catch `ApiRequestException` here (`"message to edit not found"`/`"message is not
-        /// modified"`) — see `Ports.fs`'s `EditMessageText` doc comment for why letting it propagate
-        /// is the right layer: `UpdateProcessor`'s existing per-tool try/with already catches and
-        /// reports any tool-body exception via `IHookObserver`, and this port has no `ButtonPress` to
+        /// `editMessageText`'s `reply_markup` is OPTIONAL — omitting it (`None` here) leaves the
+        /// message's CURRENT keyboard untouched, verified against Telegram.Bot's own
+        /// `EditMessageText` extension (Principle V); `Some` replaces it, same unconditional
+        /// mapping `SendKeyboard` already uses. Deliberately does NOT catch `ApiRequestException`
+        /// here (`"message to edit not found"`/`"message is not modified"`) — see `Ports.fs`'s
+        /// `EditMessageText` doc comment for why letting it propagate is the right layer:
+        /// `UpdateProcessor`'s existing per-tool try/with already catches and reports any
+        /// tool-body exception via `IHookObserver`, and this port has no `ButtonPress` to
         /// attribute a failure to in the first place.
         member _.EditMessageText
             (
@@ -192,7 +189,7 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
             )
             :> Task
 
-        /// T021: replaces the message's keyboard only, leaving its text untouched. Same
+        /// Replaces the message's keyboard only, leaving its text untouched. Same
         /// propagate-don't-swallow error handling as `EditMessageText` above.
         member _.EditMessageReplyMarkup
             (

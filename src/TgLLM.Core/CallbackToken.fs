@@ -2,10 +2,9 @@ namespace TgLLM.Core
 
 open System
 
-/// The opaque value the library writes into `callback_data` to identify a button
-/// (FR-011, data-model.md "CallbackToken", research.md D8). 16 random bytes (a `Guid`'s worth)
-/// base64url-encoded, well under the Bot API's 1–64 BYTE `callback_data` limit. The codec is
-/// pure and total, feeding the FR-010 unknown/stale-press path.
+/// The opaque value the library writes into `callback_data` to identify a button. 16 random bytes
+/// (a `Guid`'s worth) base64url-encoded, well under the Bot API's 1–64 BYTE `callback_data` limit.
+/// The codec is pure and total, feeding the unknown/stale-press path.
 [<Struct>]
 type CallbackToken = private CallbackToken of string
 
@@ -33,8 +32,8 @@ module CallbackToken =
     /// `voption` rather than throwing. Only strings that are the canonical encoding of exactly
     /// 16 bytes (i.e. exactly what `ofGuid`/`value` would produce) parse to `ValueSome`.
     /// `s` is annotated nullable because this is a public API boundary — the whole point of
-    /// totality here (FR-010) is that even a caller passing raw, untrusted, possibly-null input
-    /// gets a `voption` back, never an exception (Always-Rule 5).
+    /// totality here is that even a caller passing raw, untrusted, possibly-null input gets a
+    /// `voption` back, never an exception (Always-Rule 5).
     let tryParse (s: string | null) : CallbackToken voption =
         match s |> Option.ofObj with
         | None -> ValueNone

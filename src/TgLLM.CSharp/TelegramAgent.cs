@@ -7,7 +7,7 @@ using TgLLM.Webhooks;
 
 namespace TgLLM.CSharp;
 
-/// <summary>Configuration for a <see cref="TelegramAgent"/> (T032, contracts/csharp-facade.md).</summary>
+/// <summary>Configuration for a <see cref="TelegramAgent"/>.</summary>
 public sealed class TelegramAgentOptions
 {
     /// <summary>The bot token from BotFather.</summary>
@@ -22,23 +22,22 @@ public sealed class TelegramAgentOptions
     /// <summary>Override the Bot API endpoint (tests / local Bot API server / test environment).</summary>
     public string? BaseUrl { get; init; }
 
-    /// <summary>Surface hook failures / unknown presses through this logger (FR-009).</summary>
+    /// <summary>Surface hook failures / unknown presses through this logger.</summary>
     public ILogger? Logger { get; init; }
 
-    /// <summary>Tools available to <see cref="TelegramAgent.SendKeyboardPlanAsync"/>-sent keyboards
-    /// (feature 002-llm-tool-router, T019). <c>null</c> means no Tool Router is wired in.</summary>
+    /// <summary>Tools available to <see cref="TelegramAgent.SendKeyboardPlanAsync"/>-sent
+    /// keyboards. <c>null</c> means no Tool Router is wired in.</summary>
     public ToolRegistry? Tools { get; init; }
 
-    /// <summary>The store backing every tool-button binding (feature 002-llm-tool-router, T027,
-    /// US3). <c>null</c> (the default) keeps the in-memory default; pass e.g.
-    /// <c>TgLLM.Persistence.FileBindingStore.OpenAt("bindings.json")</c> so bindings survive a
-    /// restart (SC-004).</summary>
+    /// <summary>The store backing every tool-button binding. <c>null</c> (the default) keeps the
+    /// in-memory default; pass e.g. <c>TgLLM.Persistence.FileBindingStore.OpenAt("bindings.json")</c>
+    /// so bindings survive a restart.</summary>
     public TgLLM.Core.IBindingStore? BindingStore { get; init; }
 }
 
 /// <summary>
-/// The C# public façade (T032). An agent that ingests updates in the background — over long polling
-/// or webhooks with identical handler code (FR-013) — and sends keyboards/messages to a chat.
+/// The C# public façade. An agent that ingests updates in the background — over long polling or
+/// webhooks with identical handler code — and sends keyboards/messages to a chat.
 /// </summary>
 public sealed class TelegramAgent : IAsyncDisposable
 {
@@ -112,8 +111,8 @@ public sealed class TelegramAgent : IAsyncDisposable
     public Task<long> SendKeyboardAsync(long chatId, string text, Keyboard keyboard, CancellationToken ct = default) =>
         _bot.SendKeyboard(chatId, text, keyboard.Spec);
 
-    /// <summary>Send a keyboard built from a Tool Router plan (feature 002-llm-tool-router, T019);
-    /// presses route to the tools registered via <see cref="TelegramAgentOptions.Tools"/>.</summary>
+    /// <summary>Send a keyboard built from a Tool Router plan; presses route to the tools
+    /// registered via <see cref="TelegramAgentOptions.Tools"/>.</summary>
     public Task<long> SendKeyboardPlanAsync(long chatId, string text, KeyboardPlan plan, CancellationToken ct = default) =>
         _bot.SendKeyboardPlan(chatId, text, plan.Plan);
 

@@ -32,9 +32,9 @@ public sealed class RowBuilder
 }
 
 /// <summary>
-/// Fluent builder for an interactive keyboard (T032, contracts/csharp-facade.md). Mirrors the F#
-/// façade's <c>Keyboard.create</c>, but throws <see cref="TgKeyboardException"/> on an invalid
-/// layout (the C# idiom) instead of returning a result.
+/// Fluent builder for an interactive keyboard. Mirrors the F# façade's <c>Keyboard.create</c>,
+/// but throws <see cref="TgKeyboardException"/> on an invalid layout (the C# idiom) instead of
+/// returning a result.
 /// </summary>
 public sealed class KeyboardBuilder
 {

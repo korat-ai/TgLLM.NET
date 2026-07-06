@@ -1,5 +1,5 @@
-/// T026 (contracts/core-ports.md "IUpdateSource", research.md D7). Long-polling transport adapter:
-/// an `IUpdateSource` that drives Telegram's `getUpdates`. Since `getUpdates` and webhooks are
+/// Long-polling transport adapter: an `IUpdateSource` that drives Telegram's `getUpdates`. Since
+/// `getUpdates` and webhooks are
 /// mutually exclusive, it deletes any configured webhook first, then loops with confirm-by-offset
 /// bookkeeping (`offset = max(update_id) + 1`) so no update is missed or re-processed. Each wire
 /// `Update` is mapped to an `AgentEvent` by the pure `Mapping.toAgentEvent` (reused from
@@ -35,7 +35,7 @@ type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int) =
             let pump () : Task =
                 task {
                     try
-                        // getUpdates will not work while a webhook is set (research.md D7).
+                        // getUpdates will not work while a webhook is set.
                         do! client.DeleteWebhook(cancellationToken = ct)
 
                         let mutable offset = 0

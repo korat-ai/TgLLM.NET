@@ -1,18 +1,18 @@
-/// T017 (contracts/tool-router.md "F# façade"). The idiomatic F# public surface for the Tool
-/// Router: a fluent tool registry and a `Plan` module that turns an LLM-agnostic decision (which
-/// buttons, which registered tool + optional arg, or a URL) into a `ToolKeyboard` the core's
-/// `ToolPlan.plan` can send. Compiles BEFORE `TgBot.fs` (see the compile-order comment in
-/// `TgLLM.FSharp.fsproj`): `TgBotConfig`'s `Tools` field and `TgBot`'s `SendKeyboardPlan` member
-/// need `ToolRegistry` to already exist, and must stay INTRINSIC members of their own types (not
-/// cross-file type augmentations) so they behave like ordinary members for reflection-based tooling
-/// (e.g. the C# façade's idiom-leak canary) and are naturally callable from C#.
+/// The idiomatic F# public surface for the Tool Router: a fluent tool registry and a `Plan`
+/// module that turns an LLM-agnostic decision (which buttons, which registered tool + optional
+/// arg, or a URL) into a `ToolKeyboard` the core's `ToolPlan.plan` can send. Compiles BEFORE
+/// `TgBot.fs` (see the compile-order comment in `TgLLM.FSharp.fsproj`): `TgBotConfig`'s `Tools`
+/// field and `TgBot`'s `SendKeyboardPlan` member need `ToolRegistry` to already exist, and must
+/// stay INTRINSIC members of their own types (not cross-file type augmentations) so they behave
+/// like ordinary members for reflection-based tooling (e.g. the C# façade's idiom-leak canary)
+/// and are naturally callable from C#.
 namespace TgLLM.FSharp
 
 open System.Threading.Tasks
 open TgLLM.Core
 
-/// A fluent, mutable tool registry (contracts/tool-router.md): wraps a plain
-/// `TgLLM.Core.IToolRegistry` so F# consumers can chain `.Register` calls while building it.
+/// A fluent, mutable tool registry: wraps a plain `TgLLM.Core.IToolRegistry` so F# consumers can
+/// chain `.Register` calls while building it.
 [<Sealed>]
 type ToolRegistry private (registry: IToolRegistry) =
 
@@ -34,18 +34,18 @@ type ToolRegistry private (registry: IToolRegistry) =
 
     static member create() : ToolRegistry = ToolRegistry(InMemoryToolRegistry() :> IToolRegistry)
 
-/// Turns an LLM's button/tool/arg decision into the neutral `ToolKeyboard` plan
-/// (contracts/tool-router.md, quickstart.md). The library ships no vendor LLM parsers (FR-013) —
-/// the host maps its own LLM output into calls to `tool`/`toolWithArg`/`url`, then `rows`.
+/// Turns an LLM's button/tool/arg decision into the neutral `ToolKeyboard` plan. The library
+/// ships no vendor LLM parsers — the host maps its own LLM output into calls to
+/// `tool`/`toolWithArg`/`url`, then `rows`.
 module Plan =
 
     /// A tool button with no argument.
     let tool (label: string) (toolName: string) : PlanButton = ToolButton(label, toolName, None)
 
-    /// A tool button carrying a bound string argument (FR-003, research.md D4).
+    /// A tool button carrying a bound string argument.
     let toolWithArg (label: string) (toolName: string) (arg: string) : PlanButton = ToolButton(label, toolName, Some arg)
 
-    /// A URL button (research.md D3): opens client-side, carries no token/binding/tool.
+    /// A URL button: opens client-side, carries no token/binding/tool.
     let url (label: string) (url: string) : PlanButton = UrlButton(label, url)
 
     /// Builds the neutral plan from rows of buttons, validating shape (>=1 row, each >=1 button)

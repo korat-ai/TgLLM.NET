@@ -1,7 +1,6 @@
-/// T027 (contracts/fsharp-facade.md). The idiomatic F# public façade: module functions, `Result`
-/// for keyboard validation, and `Task`-returning members. It wires the transport-agnostic core
-/// (`TgLLM.Core`) to the long-polling transport (`TgLLM.BotApi`) — swapping to webhooks (T031)
-/// leaves hook bodies untouched (FR-013).
+/// The idiomatic F# public façade: module functions, `Result` for keyboard validation, and
+/// `Task`-returning members. It wires the transport-agnostic core (`TgLLM.Core`) to the
+/// long-polling transport (`TgLLM.BotApi`) — swapping to webhooks leaves hook bodies untouched.
 namespace TgLLM.FSharp
 
 open System
@@ -14,8 +13,8 @@ open TgLLM.Core
 open TgLLM.BotApi
 open TgLLM.Webhooks
 
-/// Bridges the core observability seam to an `ILogger` (FR-009): hook failures and unknown/stale
-/// presses are surfaced, never swallowed.
+/// Bridges the core observability seam to an `ILogger`: hook failures and unknown/stale presses
+/// are surfaced, never swallowed.
 type LoggingHookObserver(logger: ILogger) =
     interface IHookObserver with
         member _.OnHookFailed(press: ButtonPress, error: exn) =
@@ -55,71 +54,77 @@ module Keyboard =
         |> List.map (List.map (fun (b: ButtonSpec) -> { Label = b.RawLabel; Hook = b.RawHook }: TgLLM.Core.ButtonSpec))
         |> TgLLM.Core.Keyboard.create
 
-/// Long-polling bot configuration. `WithBaseUrl` overrides the Bot API endpoint — for a local Bot
-/// API server, Telegram's test environment, or pointing tests at a fake server.
+/// Configuration shared by both transports: the bot token, Bot API endpoint override, hook/tool
+/// observability, and Tool Router wiring. Embedded (as `Common`) in both `TgBotConfig` and
+/// `TgWebhookConfig`, and mutated only through the `CommonConfig` module's `with*` functions, so
+/// the two configs' fields and fluent methods can't drift out of lockstep (Principle IV: hook/tool
+/// code and wiring stay identical regardless of transport).
 [<NoComparison>]
-type TgBotConfig =
+type CommonConfig =
     { BotToken: string
       BaseUrl: string option
       Logger: ILogger option
-      /// Feature 002-llm-tool-router (T017): tools available to `SendKeyboardPlan`-sent keyboards.
-      /// `None` (the default) means the bot has no Tool Router wired in — plain slice-1 behavior.
+      /// Tools available to `SendKeyboardPlan`-sent keyboards. `None` (the default) means the bot
+      /// has no Tool Router wired in — plain slice-1 behavior.
       Tools: ToolRegistry option
-      /// Feature 002-llm-tool-router (T027, US3, research.md D5): the store backing every
-      /// tool-button binding (`SendKeyboardPlan`'s saves AND `ToolDispatch`'s resolves). `None` (the
-      /// default) keeps slice-1/MVP behavior — an in-process `InMemoryBindingStore`; `Some` (e.g. a
-      /// `TgLLM.Persistence.FileBindingStore`) makes bindings survive a restart (SC-004).
+      /// The store backing every tool-button binding (`SendKeyboardPlan`'s saves AND
+      /// `ToolDispatch`'s resolves). `None` (the default) keeps slice-1/MVP behavior — an
+      /// in-process `InMemoryBindingStore`; `Some` (e.g. a `TgLLM.Persistence.FileBindingStore`)
+      /// makes bindings survive a restart.
       BindingStore: IBindingStore option }
 
-    static member create(botToken: string) =
+module CommonConfig =
+    let create (botToken: string) : CommonConfig =
         { BotToken = botToken
           BaseUrl = None
           Logger = None
           Tools = None
           BindingStore = None }
 
-    member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
-    /// Surface hook failures / unknown presses through this logger (FR-009).
-    member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
-    /// Wire a Tool Router registry into this bot (contracts/tool-router.md).
-    member this.WithTools(tools: ToolRegistry) = { this with Tools = Some tools }
-    /// Back tool bindings with a durable store (contracts/tool-router.md "Durable store") instead of
-    /// the in-memory default — e.g. `TgLLM.Persistence.FileBindingStore.openAt "bindings.json"`.
-    member this.WithBindingStore(store: IBindingStore) = { this with BindingStore = Some store }
+    let withBaseUrl (url: string) (c: CommonConfig) = { c with BaseUrl = Some url }
+    /// Surface hook failures / unknown presses through this logger.
+    let withLogger (logger: ILogger) (c: CommonConfig) = { c with Logger = Some logger }
+    /// Wire a Tool Router registry into this bot.
+    let withTools (tools: ToolRegistry) (c: CommonConfig) = { c with Tools = Some tools }
+    /// Back tool bindings with a durable store instead of the in-memory default — e.g.
+    /// `TgLLM.Persistence.FileBindingStore.openAt "bindings.json"`.
+    let withBindingStore (store: IBindingStore) (c: CommonConfig) = { c with BindingStore = Some store }
+
+/// Long-polling bot configuration. `WithBaseUrl` overrides the Bot API endpoint — for a local Bot
+/// API server, Telegram's test environment, or pointing tests at a fake server.
+[<NoComparison>]
+type TgBotConfig =
+    { Common: CommonConfig }
+
+    static member create(botToken: string) : TgBotConfig = { Common = CommonConfig.create botToken }
+
+    member this.WithBaseUrl(url: string) = { this with Common = this.Common |> CommonConfig.withBaseUrl url }
+    member this.WithLogger(logger: ILogger) = { this with Common = this.Common |> CommonConfig.withLogger logger }
+    member this.WithTools(tools: ToolRegistry) = { this with Common = this.Common |> CommonConfig.withTools tools }
+
+    member this.WithBindingStore(store: IBindingStore) =
+        { this with Common = this.Common |> CommonConfig.withBindingStore store }
 
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
 /// `WithBaseUrl` overrides the Bot API endpoint (tests / local Bot API server).
 [<NoComparison>]
 type TgWebhookConfig =
-    { BotToken: string
+    { Common: CommonConfig
       PublicUrl: string
-      SecretToken: string
-      BaseUrl: string option
-      Logger: ILogger option
-      /// Feature 002-llm-tool-router (T017): kept in lockstep with `TgBotConfig.Tools` so hook/tool
-      /// code and wiring stay identical regardless of transport (Principle IV).
-      Tools: ToolRegistry option
-      /// Feature 002-llm-tool-router (T027, US3): kept in lockstep with `TgBotConfig.BindingStore` —
-      /// see its doc comment.
-      BindingStore: IBindingStore option }
+      SecretToken: string }
 
-    static member create(botToken: string, publicUrl: string, secretToken: string) =
-        { BotToken = botToken
+    static member create(botToken: string, publicUrl: string, secretToken: string) : TgWebhookConfig =
+        { Common = CommonConfig.create botToken
           PublicUrl = publicUrl
-          SecretToken = secretToken
-          BaseUrl = None
-          Logger = None
-          Tools = None
-          BindingStore = None }
+          SecretToken = secretToken }
 
-    member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
-    /// Surface hook failures / unknown presses through this logger (FR-009).
-    member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
-    /// Wire a Tool Router registry into this bot (contracts/tool-router.md).
-    member this.WithTools(tools: ToolRegistry) = { this with Tools = Some tools }
-    /// Back tool bindings with a durable store instead of the in-memory default (contracts/tool-router.md).
-    member this.WithBindingStore(store: IBindingStore) = { this with BindingStore = Some store }
+    member this.WithBaseUrl(url: string) = { this with Common = this.Common |> CommonConfig.withBaseUrl url }
+    member this.WithLogger(logger: ILogger) = { this with Common = this.Common |> CommonConfig.withLogger logger }
+    member this.WithTools(tools: ToolRegistry) = { this with Common = this.Common |> CommonConfig.withTools tools }
+
+    member this.WithBindingStore(store: IBindingStore) =
+        { this with Common = this.Common |> CommonConfig.withBindingStore store }
 
 /// A running bot: ingests updates in the background and lets the agent send keyboards/messages.
 /// Dispose (`use!`/`IAsyncDisposable`) to stop ingestion and release the per-chat dispatcher.
@@ -142,27 +147,22 @@ type TgBot
 
     member _.SendText(chat: ChatId, text: MessageText) : Task<MessageId> = api.SendText(chat, text, cts.Token)
 
-    /// Send a keyboard built from a neutral Tool Router plan (T017, contracts/tool-router.md);
-    /// presses route to the tools registered via `TgBotConfig.WithTools`. Bindings are saved BEFORE
-    /// the send completes, same ordering guarantee as `SendKeyboard`/`AgentOps.sendKeyboard`
-    /// (data-model.md "Outbound: send a keyboard"). An invalid plan (e.g. a bad label/url that
-    /// `Plan.rows` didn't catch) is a programmer error by the caller (Always-Rule 6) — this member
-    /// returns `Task<MessageId>` directly (no `Result`), so it fails fast rather than forcing every
-    /// caller to unwrap a `Result` for what should have been validated when the plan was built.
-    ///
-    /// Records the sent message's tokens into `tracker` AFTER the send returns its `MessageId`
-    /// (finding: unbounded binding leak) — this only ever affects a FUTURE `ctx.EditKeyboardAsync`
-    /// on that same message (`UpdateProcessor.makeEditKeyboardAction`), never this send itself.
+    /// Send a keyboard built from a neutral Tool Router plan; presses route to the tools
+    /// registered via `TgBotConfig.WithTools`. Delegates to the shared `ToolKeyboardOps.deliver`
+    /// (`TgLLM.Core.Tools`) — bindings are saved BEFORE the send completes, and the sent message's
+    /// tokens are recorded into `tracker` so a LATER `ctx.EditKeyboardAsync` on that same message
+    /// (`UpdateProcessor.makeEditKeyboardAction`) can find and remove them. `staleMessageId = None`
+    /// here: a fresh send has no previous binding to remove.
     member _.SendKeyboardPlan(chat: ChatId, text: MessageText, plan: ToolKeyboard) : Task<MessageId> =
-        task {
-            match ToolPlan.plan (Seq.initInfinite (fun _ -> CallbackToken.generate ())) plan with
-            | Error e -> return invalidArg (nameof plan) $"TgBot.SendKeyboardPlan: invalid plan ({e})"
-            | Ok(registeredKeyboard, bindings) ->
-                do! bindingStore.Save(bindings, cts.Token)
-                let! messageId = api.SendKeyboard(chat, text, registeredKeyboard, cts.Token)
-                tracker.Record(messageId, bindings |> List.map (fun b -> b.Token))
-                return messageId
-        }
+        ToolKeyboardOps.deliver
+            "TgBot.SendKeyboardPlan"
+            CallbackToken.generate
+            bindingStore
+            tracker
+            None
+            (fun registeredKeyboard -> api.SendKeyboard(chat, text, registeredKeyboard, cts.Token))
+            cts.Token
+            plan
 
     /// C#-friendly overload that accepts a raw string (validated with `MessageText.unsafe`).
     member this.SendKeyboardPlan(chat: ChatId, text: string, plan: ToolKeyboard) : Task<MessageId> =
@@ -209,53 +209,55 @@ type TgBot
 
         TelegramBotClient(options) :> ITelegramBotClient
 
+    /// Shared Core wiring for both transports: builds the API client, hook store, binding store,
+    /// tracker, dispatcher, and observer, threads them (plus an optional `ToolDispatch`) into an
+    /// `UpdateProcessor`, and starts its run loop. `startPolling`/`startWebhook` differ only in
+    /// which `IUpdateSource` they hand in and whether a `WebhookUpdateSource` exists for
+    /// `TgBot.WebhookSource` — every other collaborator (and its wiring) is identical regardless
+    /// of transport (Principle IV).
+    static member private wireBot
+        (common: CommonConfig)
+        (client: ITelegramBotClient)
+        (source: IUpdateSource)
+        (webhookSource: WebhookUpdateSource option)
+        : TgBot =
+        let api = TelegramBotApiClient(client) :> IBotApiClient
+        let store = InMemoryHookStore() :> IHookStore
+        let bindingStore = common.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
+        // Shared with `ToolDispatch` below (via `UpdateProcessor`) so `SendKeyboardPlan`'s
+        // send-time record and `EditKeyboardAsync`'s edit-time remove agree on one message's
+        // history of bindings.
+        let tracker = MessageBindingTracker()
+        let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
+
+        let observer =
+            match common.Logger with
+            | Some logger -> LoggingHookObserver logger :> IHookObserver
+            | None -> NoopHookObserver() :> IHookObserver
+
+        let toolDispatch = common.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
+        let processor = UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
+        let cts = new CancellationTokenSource()
+        let runTask = processor.RunAsync cts.Token
+        new TgBot(api, store, bindingStore, tracker, dispatcher, cts, runTask, webhookSource)
+
     /// Start ingesting updates via long polling (deletes any configured webhook first). The returned
     /// bot is already polling in the background.
     static member startPolling(config: TgBotConfig) : Task<TgBot> =
         task {
-            let client = TgBot.buildClient (config.BotToken, config.BaseUrl)
-            let api = TelegramBotApiClient(client) :> IBotApiClient
-            let store = InMemoryHookStore() :> IHookStore
-            let bindingStore = config.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
-            // Shared with `ToolDispatch` below (via `UpdateProcessor`) so `SendKeyboardPlan`'s
-            // send-time record and `EditKeyboardAsync`'s edit-time remove agree on one message's
-            // history of bindings (finding: unbounded binding leak).
-            let tracker = MessageBindingTracker()
-            let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
-            let observer =
-                match config.Logger with
-                | Some logger -> LoggingHookObserver logger :> IHookObserver
-                | None -> NoopHookObserver() :> IHookObserver
+            let client = TgBot.buildClient (config.Common.BotToken, config.Common.BaseUrl)
             let source = LongPollingUpdateSource(client) :> IUpdateSource
-            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
-            let processor = UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
-            let cts = new CancellationTokenSource()
-            let runTask = processor.RunAsync cts.Token
-            return new TgBot(api, store, bindingStore, tracker, dispatcher, cts, runTask, None)
+            return TgBot.wireBot config.Common client source None
         }
 
     /// Start ingesting updates via webhooks. Registers the webhook with Telegram (`setWebhook` with
     /// the secret token) and consumes pushed updates. Map the HTTP endpoint separately with
     /// `app.MapTelegramWebhook(bot.WebhookSource, config.SecretToken)`. Hook code is identical to a
-    /// polling bot (FR-013).
+    /// polling bot.
     static member startWebhook(config: TgWebhookConfig) : Task<TgBot> =
         task {
-            let client = TgBot.buildClient (config.BotToken, config.BaseUrl)
+            let client = TgBot.buildClient (config.Common.BotToken, config.Common.BaseUrl)
             do! client.SetWebhook(url = config.PublicUrl, secretToken = config.SecretToken)
-            let api = TelegramBotApiClient(client) :> IBotApiClient
-            let store = InMemoryHookStore() :> IHookStore
-            let bindingStore = config.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
-            // Shared with `ToolDispatch` below (via `UpdateProcessor`) — see `startPolling`'s comment.
-            let tracker = MessageBindingTracker()
-            let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
-            let observer =
-                match config.Logger with
-                | Some logger -> LoggingHookObserver logger :> IHookObserver
-                | None -> NoopHookObserver() :> IHookObserver
             let webhookSource = WebhookUpdateSource()
-            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
-            let processor = UpdateProcessor(webhookSource :> IUpdateSource, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
-            let cts = new CancellationTokenSource()
-            let runTask = processor.RunAsync cts.Token
-            return new TgBot(api, store, bindingStore, tracker, dispatcher, cts, runTask, Some webhookSource)
+            return TgBot.wireBot config.Common client (webhookSource :> IUpdateSource) (Some webhookSource)
         }

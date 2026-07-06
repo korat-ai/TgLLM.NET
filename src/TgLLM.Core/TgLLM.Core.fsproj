@@ -5,18 +5,16 @@
   </PropertyGroup>
 
   <!--
-    Compile order deviates from the file list in tasks.md (Domain.fs first) on purpose:
+    F# compiles files top-to-bottom with no forward references across a project, so this
+    Compile order is load-bearing, not cosmetic:
     `Hook = PressContext -> Task` is used by `ButtonSpec` (Keyboard.fs) and `HookBinding`
-    (referenced from Ports.fs), both of which must compile before UpdateProcessor.fs where
-    tasks.md originally placed `PressContext`. F# compiles top-to-bottom with no forward
-    references across files, so `PressContext`/`Hook`/`HookBinding`/`ButtonPress`/`AgentEvent`
-    were moved into Domain.fs, and Domain.fs itself was moved after Values.fs (needs
-    `ButtonLabel`) and CallbackToken.fs (needs `CallbackToken`). For the same reason,
-    `KeyboardError` (data-model.md lists it under Domain.fs) lives in Values.fs instead: both
-    `ButtonLabel.create` and `MessageText.create` return `Result<_, KeyboardError>`, and Values.fs
-    is the first file to compile. See the file-level comments in Domain.fs and Values.fs.
+    (referenced from Ports.fs), so `PressContext`/`Hook`/`HookBinding`/`ButtonPress`/`AgentEvent`
+    all live in Domain.fs, which sits after Values.fs (needs `ButtonLabel`) and CallbackToken.fs
+    (needs `CallbackToken`). For the same reason `KeyboardError` lives in Values.fs — the first
+    file to compile — because both `ButtonLabel.create` and `MessageText.create` return
+    `Result<_, KeyboardError>`. See the file-level comments in Domain.fs and Values.fs.
 
-    Tools.fs (feature 002-llm-tool-router) compiles right after Keyboard.fs: `ToolPlan.plan` needs
+    Tools.fs compiles right after Keyboard.fs: `ToolPlan.plan` needs
     `RegisteredKeyboard`/`RegisteredButton` (Keyboard.fs) and `Tool = PressContext -> Task` needs
     `PressContext` (Domain.fs); it must compile before UpdateProcessor.fs so `ToolDispatch` can be
     threaded into `UpdateProcessor` as an optional collaborator. It has no dependency on Routing.fs

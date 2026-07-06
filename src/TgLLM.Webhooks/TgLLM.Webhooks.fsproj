@@ -14,7 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TgLLM.Core\TgLLM.Core.fsproj" />
-    <!-- Reuses the shared Telegram.Bot Update -> domain Mapping (identical across transports, FR-013). -->
+    <!-- Reuses the shared Telegram.Bot Update -> domain Mapping (identical across transports). -->
     <ProjectReference Include="..\TgLLM.BotApi\TgLLM.BotApi.fsproj" />
   </ItemGroup>
 

@@ -1,9 +1,8 @@
-/// T026 (feature 002-llm-tool-router, US3, data-model.md "Tool binding", research.md D5): a
-/// durable, JSON-on-disk `IBindingStore`. Core stays IO-agnostic (Principle III) — this leaf project
-/// is where the actual file IO lives. Loads existing bindings when opened (`openAt`), so a restart
-/// pointing at the same file restores every binding a keyboard was sent with (SC-004); every
-/// mutation (`Save`/`Remove`) rewrites the whole file under a single in-process lock
-/// (single-writer, per T026's own wording) before completing.
+/// A durable, JSON-on-disk `IBindingStore`. Core stays IO-agnostic (Principle III) — this leaf
+/// project is where the actual file IO lives. Loads existing bindings when opened (`openAt`), so
+/// a restart pointing at the same file restores every binding a keyboard was sent with; every
+/// mutation (`Save`/`Remove`) rewrites the whole file under a single in-process writer lock
+/// before completing.
 namespace TgLLM.Persistence
 
 open System
@@ -15,12 +14,12 @@ open System.Threading
 open System.Threading.Tasks
 open TgLLM.Core
 
-/// The on-disk JSON shape of one `ToolBinding` (data-model.md "Tool binding"). `ToolBinding`'s own
-/// fields are library-internal wrapper types (`CallbackToken`, `ToolName`) with private constructors
-/// and smart-constructor invariants — not directly STJ-serializable, and not something a durable
-/// store's wire format should be coupled to anyway (CLAUDE.md's "DTO ≠ domain type" serialization
-/// rule: DUs/opaque wrappers change shape, break readers of an existing bindings file). This DTO is
-/// the plain wire shape; `BindingDto.ofDomain`/`toDomain` map at the file boundary. NOT marked
+/// The on-disk JSON shape of one `ToolBinding`. `ToolBinding`'s own fields are library-internal
+/// wrapper types (`CallbackToken`, `ToolName`) with private constructors and smart-constructor
+/// invariants — not directly STJ-serializable, and not something a durable store's wire format
+/// should be coupled to anyway (DTOs stay decoupled from domain types: DUs/opaque wrappers change
+/// shape, break readers of an existing bindings file). This DTO is the plain wire shape;
+/// `BindingDto.ofDomain`/`toDomain` map at the file boundary. NOT marked
 /// `private` (disclosed deviation from the usual "hide the DTO" instinct): `System.Text.Json`'s
 /// default reflection-based (de)serializer only sees PUBLIC constructors/properties, and this
 /// project ships no `.fsi` signature file to hide a public type from other assemblies anyway — this
@@ -49,10 +48,9 @@ module BindingDto =
                   Arg = dto.Arg |> Option.ofObj }
         | _ -> None
 
-/// Durable, JSON-on-disk `IBindingStore` (contracts/tool-router.md "Durable store"). `openAt` is the
-/// only public constructor path (mirrors slice-1's smart-constructor convention) — it both creates
-/// AND loads, so there is no way to end up with an instance that hasn't seen whatever is already on
-/// disk.
+/// Durable, JSON-on-disk `IBindingStore`. `openAt` is the only public constructor path (mirrors
+/// slice-1's smart-constructor convention) — it both creates AND loads, so there is no way to end
+/// up with an instance that hasn't seen whatever is already on disk.
 [<Sealed>]
 type FileBindingStore
     private
@@ -61,11 +59,11 @@ type FileBindingStore
         initial: ConcurrentDictionary<CallbackToken, ToolBinding>
     ) =
 
-    /// Single in-process writer lock (T026: "single-writer serialization") — every `Save`/`Remove`
-    /// mutates the in-memory index AND rewrites the file as one atomic-from-this-process's-view
-    /// step. A PoC-scope file store (plan.md "Scale/Scope") has no cross-process writer to
-    /// coordinate with, so a plain `lock` is sufficient; it deliberately does the (synchronous) file
-    /// IO while held, so two concurrent `Save`s can never interleave their writes.
+    /// Single in-process writer lock — every `Save`/`Remove` mutates the in-memory index AND
+    /// rewrites the file as one atomic-from-this-process's-view step. A PoC-scope file store has
+    /// no cross-process writer to coordinate with, so a plain `lock` is sufficient; it
+    /// deliberately does the (synchronous) file IO while held, so two concurrent `Save`s can never
+    /// interleave their writes.
     let gate = obj ()
     let bindings = initial
 
@@ -103,10 +101,9 @@ type FileBindingStore
 
             ValueTask.CompletedTask
 
-    /// Opens (or creates) a durable binding store backed by `path` (contracts/tool-router.md
-    /// `FileBindingStore.openAt`): loads any bindings already on disk (the SC-004 restart guarantee
-    /// — a NEW instance over the SAME path sees everything a previous instance saved) or starts
-    /// empty if the file doesn't exist yet.
+    /// Opens (or creates) a durable binding store backed by `path`: loads any bindings already on
+    /// disk (the restart guarantee — a NEW instance over the SAME path sees everything a previous
+    /// instance saved) or starts empty if the file doesn't exist yet.
     static member openAt(path: string) : FileBindingStore =
         let initial = ConcurrentDictionary<CallbackToken, ToolBinding>()
 

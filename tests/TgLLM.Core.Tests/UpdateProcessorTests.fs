@@ -200,4 +200,27 @@ let updateProcessorTests =
 
             Expect.equal (List.length observer.Failed) 1 "exactly the throwing hook's failure is reported"
             Expect.isTrue okHookRan "the second press's hook still ran — the failure did not derail it"
+
+        testCase "PressResolution.ackPolicy: the Tool Router's resolution is Deferred, the hook-store's is AckFirst" <| fun _ ->
+            let token = CallbackToken.generate ()
+
+            let binding: ToolBinding =
+                { Token = token
+                  ToolName = (match ToolName.create "x" with
+                              | Ok n -> n
+                              | Error e -> failwithf "test setup: unreachable %A" e)
+                  Arg = None }
+
+            let tool: Tool = fun _ -> Task.CompletedTask
+            let dispatch = ToolDispatch(InMemoryToolRegistry(), InMemoryBindingStore())
+
+            Expect.equal
+                (PressResolution.ackPolicy (ToolResolution(tool, binding, dispatch)))
+                Deferred
+                "the Tool Router's resolution defers the ack until the tool runs (or the watchdog fires)"
+
+            Expect.equal
+                (PressResolution.ackPolicy HookStoreResolution)
+                AckFirst
+                "the slice-1 hook-store resolution acks immediately, before any hook runs"
     ]
