@@ -189,6 +189,21 @@ type UpdateProcessor
                     ()
             }
 
+    /// The ack-only path (review #8, folded into the Foundational phase): a callback query the
+    /// transport could not map to a `ButtonPress` at all (non-canonical `Data`, or no originating
+    /// `Message`) still gets exactly one `AnswerCallback` — no hook/tool ever runs, since there is
+    /// nothing resolvable here. Unlike `processHookStorePress`'s unknown-token outcome, there is no
+    /// `ButtonPress` to attribute a failure to (or report via `IHookObserver.OnUnknownToken`, which
+    /// requires one) — a failing ack itself is swallowed, matching the same defensive convention
+    /// `buildToolWork`'s `sendAckOnce` already uses for a losing/late ack call.
+    let processAcknowledgeOnly (ct: CancellationToken) (queryId: CallbackQueryId) : Task =
+        task {
+            try
+                do! api.AnswerCallback(queryId, ct)
+            with _ ->
+                ()
+        }
+
     /// Ack-first: resolve, then `AnswerCallback` immediately regardless of outcome, THEN — only if
     /// a hook was found — enqueue it. Unknown/stale/malformed tokens are acked with no hook and no
     /// error; the observer just hears about it. This is slice-1's original `processPress` body,
@@ -267,6 +282,7 @@ type UpdateProcessor
                             // body (already caught inside `buildWork`/`buildToolWork`) or from
                             // `processPress` itself.
                             observer.OnHookFailed(press, ex)
+                    | AckOnly queryId -> do! processAcknowledgeOnly ct queryId
                 else
                     moving <- false
         }

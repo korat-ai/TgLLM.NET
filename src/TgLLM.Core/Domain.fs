@@ -126,4 +126,20 @@ type HookBinding = { Token: CallbackToken; Hook: Hook }
 
 /// Transport-agnostic domain event. Future update kinds slot in here without touching
 /// transports.
-type AgentEvent = ButtonPressed of ButtonPress
+///
+/// `AckOnly` (review #8, folded into the Foundational phase): a callback query the transport
+/// received but could NOT map to a `ButtonPress` — its `Data` didn't parse to a canonical
+/// `CallbackToken`, or it carried no originating `Message` to attribute a chat/message id to (e.g.
+/// an inline-mode callback). Previously such a callback query was simply dropped
+/// (`Mapping.toAgentEvent` returned nothing at all), so it was NEVER acked — the port's own
+/// `IBotApiClient.AnswerCallback` contract says "MUST be called for EVERY press, including
+/// unknown/stale ones", and a callback that never even became an `AgentEvent` couldn't reach that
+/// guarantee. This case carries just enough — the query id — for `UpdateProcessor` to send exactly
+/// one `AnswerCallback` for it, with no hook/tool ever invoked (there is nothing resolvable here).
+/// Named `AckOnly`, not `AcknowledgeOnly`, to avoid colliding with (and being silently shadowed by)
+/// `Routing.RouteDecision.AcknowledgeOnly` — a DIFFERENT type's case that happens to compile later
+/// and would otherwise win unqualified name resolution in `UpdateProcessor.fs`, where both types
+/// are in scope.
+type AgentEvent =
+    | ButtonPressed of ButtonPress
+    | AckOnly of queryId: CallbackQueryId
