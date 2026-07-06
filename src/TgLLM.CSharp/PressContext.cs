@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using TgLLM.FSharp;
@@ -40,21 +41,28 @@ public sealed class PressContext
 
     /// <summary>
     /// Sets the ack directive for a tool button's deferred-ack path: the processor sends it via
-    /// <c>answerCallbackQuery</c> exactly once, after this tool returns. Calling this from a
-    /// slice-1 closure-style hook is a documented no-op — that path has already acked.
+    /// <c>answerCallbackQuery</c> exactly once, after this tool returns — or after a ~2s watchdog
+    /// fires, whichever is first. A directive set AFTER the watchdog has already fired is silently
+    /// dropped (the ack was already sent with no directive; the tool itself is never cancelled and
+    /// keeps running to completion). Calling this from a slice-1 closure-style hook — that path has
+    /// already acked, ack-first, before the hook ever runs — throws
+    /// <see cref="InvalidOperationException"/>: fail-fast, not a silent no-op.
     /// </summary>
     public void Answer(string text, bool alert = false) => _core.Answer(text, alert);
 
     /// <summary>
     /// Edit the pressed message's text in place, leaving its current keyboard untouched.
-    /// Reachable only from a Tool Router tool's deferred-ack path; calling this from a slice-1
-    /// closure-style hook is a documented no-op (same convention as <see cref="Answer"/>).
+    /// Reachable only from a Tool Router tool's deferred-ack path. Calling this from a slice-1
+    /// closure-style hook throws <see cref="InvalidOperationException"/> (same fail-fast convention
+    /// as <see cref="Answer"/>) — a plain hook should reply/send instead.
     /// </summary>
     public Task EditTextAsync(string text) => _core.EditTextAsync(text);
 
     /// <summary>
     /// Replace the pressed message's keyboard with one built from a fresh <see cref="KeyboardPlan"/>.
-    /// Same documented no-op on the closure path as <see cref="EditTextAsync"/>.
+    /// Same fail-fast convention as <see cref="EditTextAsync"/> when called outside the Tool
+    /// Router's deferred-ack path (throws <see cref="InvalidOperationException"/>, never a silent
+    /// no-op).
     /// </summary>
     public Task EditKeyboardAsync(KeyboardPlan plan) => _core.EditKeyboardAsync(plan.Plan);
 }

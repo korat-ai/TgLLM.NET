@@ -30,6 +30,9 @@ type LoggingHookObserver(logger: ILogger) =
                 [| UMX.untag press.Chat :> obj |]
             )
 
+        member _.OnRunLoopFailed(error: exn) =
+            logger.LogError(error, "The update-ingestion run loop stopped unexpectedly; this bot is no longer processing updates")
+
 /// A button being described by the agent: a raw (unvalidated) label plus the handler to run when it
 /// is tapped. Labels are validated by `Keyboard.create`, so an invalid label surfaces as an
 /// `Error`, never an exception (the F# idiom; the C# façade throws instead — Principle II).
@@ -137,6 +140,7 @@ type TgBot
         bindingStore: IBindingStore,
         tracker: MessageBindingTracker,
         dispatcher: IPressDispatcher,
+        toolDispatch: ToolDispatch option,
         cts: CancellationTokenSource,
         runTask: Task,
         webhookSource: WebhookUpdateSource option
@@ -153,12 +157,26 @@ type TgBot
     /// tokens are recorded into `tracker` so a LATER `ctx.EditKeyboardAsync` on that same message
     /// (`UpdateProcessor.makeEditKeyboardAction`) can find and remove them. `staleMessageId = None`
     /// here: a fresh send has no previous binding to remove.
+    ///
+    /// Fails fast if `plan` has a tool button but NO Tool Router was ever wired in
+    /// (`TgBotConfig.WithTools`/`TgWebhookConfig.WithTools`, review finding #10) — without this
+    /// check, such a button would reach the wire, get tapped, and silently no-op forever (no
+    /// `ToolDispatch` could ever resolve its binding). A URL-only plan is always fine, regardless of
+    /// wiring.
     member _.SendKeyboardPlan(chat: ChatId, text: MessageText, plan: ToolKeyboard) : Task<MessageId> =
+        if toolDispatch.IsNone && ToolPlan.hasToolButtons plan then
+            invalidOp
+                "TgBot.SendKeyboardPlan: this plan has a tool button, but no Tool Router is wired in \
+                 (call .WithTools on the bot config first) — every tap would silently no-op forever, \
+                 since no ToolDispatch could ever resolve its binding. Wire a Tool Router, or use \
+                 only URL buttons if no tool routing is needed."
+
         ToolKeyboardOps.deliver
             "TgBot.SendKeyboardPlan"
             CallbackToken.generate
             bindingStore
             tracker
+            chat
             None
             (fun registeredKeyboard -> api.SendKeyboard(chat, text, registeredKeyboard, cts.Token))
             cts.Token
@@ -238,8 +256,22 @@ type TgBot
         let toolDispatch = common.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
         let processor = UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
         let cts = new CancellationTokenSource()
-        let runTask = processor.RunAsync cts.Token
-        new TgBot(api, store, bindingStore, tracker, dispatcher, cts, runTask, webhookSource)
+
+        // A faulted run loop must be surfaced via `observer`, not silently swallowed at `Dispose`
+        // (review finding #1) — `DisposeAsync`'s own `try ... with _ -> ()` around `runTask` stays
+        // as a defensive backstop only, since this wrapper already reports (and then completes
+        // normally) for every ordinary failure. `OperationCanceledException` is the expected
+        // shutdown path (`DisposeAsync` cancels `cts`), not a failure worth reporting.
+        let runTask =
+            task {
+                try
+                    do! processor.RunAsync cts.Token
+                with
+                | :? OperationCanceledException -> ()
+                | ex -> observer.OnRunLoopFailed ex
+            }
+
+        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, cts, runTask, webhookSource)
 
     /// Start ingesting updates via long polling (deletes any configured webhook first). The returned
     /// bot is already polling in the background.

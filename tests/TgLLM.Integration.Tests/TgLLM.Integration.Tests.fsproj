@@ -9,9 +9,12 @@
     <Compile Include="FakeBotApiServer.fs" />
     <Compile Include="BotApiClientTests.fs" />
     <Compile Include="LongPollingTests.fs" />
+    <Compile Include="RunLoopResilienceTests.fs" />
     <Compile Include="FSharpPollingAcceptanceTests.fs" />
     <Compile Include="ToolRouterAcceptanceTests.fs" />
+    <Compile Include="SendKeyboardPlanGuardTests.fs" />
     <Compile Include="EditInPlaceTests.fs" />
+    <Compile Include="CrossChatBindingTests.fs" />
     <Compile Include="RestartPersistenceTests.fs" />
     <Compile Include="UrlButtonTests.fs" />
     <Compile Include="WebhookTests.fs" />

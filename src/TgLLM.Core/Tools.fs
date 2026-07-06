@@ -123,6 +123,22 @@ module ToolPlan =
     let validate (keyboard: ToolKeyboard) : Result<ToolKeyboard, ToolError> =
         validateRows keyboard.Rows |> Result.map (fun _ -> keyboard)
 
+    /// Whether `keyboard` contains at least one `ToolButton` (as opposed to being made entirely of
+    /// `UrlButton`s). Used by `TgBot.SendKeyboardPlan` (review finding #10, 003-tool-router-extensions)
+    /// to fail fast when a plan with tool buttons is sent without a Tool Router wired in: such
+    /// buttons would otherwise reach the wire, get tapped, and silently no-op forever — no
+    /// `ToolDispatch` exists to ever resolve their bindings, so every press falls through to the
+    /// slice-1 `IHookStore` path and is reported only as an unknown/stale token (or nothing at all,
+    /// with the default `NoopHookObserver`). A URL-only plan never needs a Tool Router, so it's
+    /// never flagged regardless of wiring.
+    let hasToolButtons (keyboard: ToolKeyboard) : bool =
+        keyboard.Rows
+        |> List.exists (
+            List.exists (function
+                | ToolButton _ -> true
+                | UrlButton _ -> false)
+        )
+
     /// Validates every button, THEN assigns one token per `ToolButton` (URL buttons pass through
     /// untouched). Properties covered by the FsCheck suite: row/label shape preserved; one
     /// token+binding per tool button; URL buttons carry no binding; token count = tool-button
@@ -209,6 +225,13 @@ type InMemoryBindingStore() =
 /// AFTER a send/edit reaches the wire — the map only ever reflects PAST sends, so it can never
 /// affect the request that is currently producing it.
 ///
+/// Keyed by `(ChatId, MessageId)`, NOT `MessageId` alone (review finding #2,
+/// 003-tool-router-extensions): Telegram's `message_id` is unique only PER CHAT, so two different
+/// chats' keyboard messages can legitimately share the same `MessageId` (e.g. each chat's
+/// first-ever sent message). A bare-`MessageId` key would let an edit in one chat find — and
+/// therefore remove — another chat's still-live bindings the instant their message ids collided;
+/// this is the exact data-corruption bug this key shape fixes.
+///
 /// Accepted PoC-scope limitation (in-memory, per-process): this map is empty after a process
 /// restart, so an edit made to a message that was originally SENT (or last edited) before the
 /// restart won't find — and therefore won't remove — its pre-restart bindings from a durable store
@@ -216,14 +239,16 @@ type InMemoryBindingStore() =
 /// message is edited again after the tracker has re-learned its current tokens.
 [<Sealed>]
 type MessageBindingTracker() =
-    let tokensByMessage = ConcurrentDictionary<MessageId, CallbackToken list>()
+    let tokensByMessage = ConcurrentDictionary<ChatId * MessageId, CallbackToken list>()
 
-    /// Record (or overwrite) the tokens currently live for `messageId`.
-    member _.Record(messageId: MessageId, tokens: CallbackToken list) : unit = tokensByMessage[messageId] <- tokens
+    /// Record (or overwrite) the tokens currently live for `(chat, messageId)`.
+    member _.Record(chat: ChatId, messageId: MessageId, tokens: CallbackToken list) : unit =
+        tokensByMessage[(chat, messageId)] <- tokens
 
-    /// `messageId`'s previously recorded tokens, if this tracker has ever recorded a keyboard for it.
-    member _.TryGetPrevious(messageId: MessageId) : CallbackToken list option =
-        match tokensByMessage.TryGetValue messageId with
+    /// `(chat, messageId)`'s previously recorded tokens, if this tracker has ever recorded a
+    /// keyboard for it. A `messageId` recorded for a DIFFERENT chat is a miss, never a hit.
+    member _.TryGetPrevious(chat: ChatId, messageId: MessageId) : CallbackToken list option =
+        match tokensByMessage.TryGetValue((chat, messageId)) with
         | true, tokens -> Some tokens
         | false, _ -> None
 
@@ -275,19 +300,22 @@ module ToolKeyboardOps =
     /// Validates+plans `plan`, saves its bindings BEFORE `send` puts the keyboard on the wire, then
     /// records the delivered message's tokens into `tracker` — this only ever affects a FUTURE
     /// `ctx.EditKeyboardAsync` on that same message, never this call itself. `staleMessageId =
-    /// Some messageId` additionally removes that message's previously-tracked bindings FIRST (the
-    /// edit path: a tool that re-renders its own keyboard, e.g. a paginator/counter, must not leak
-    /// one row per edit); `None` skips this (a fresh send has nothing stale to remove). The old
-    /// tokens are looked up and removed BEFORE the new ones are saved; `tracker.Record` runs only
-    /// AFTER `send` completes, matching `MessageBindingTracker`'s own "reflects past sends only"
-    /// contract. An invalid `plan` is a programmer error by the caller (Always-Rule 6) — fails
-    /// fast (`invalidArg`, tagged with `context` for a useful message) rather than threading a
-    /// `Result` through this API.
+    /// Some messageId` additionally removes `(chat, messageId)`'s previously-tracked bindings FIRST
+    /// (the edit path: a tool that re-renders its own keyboard, e.g. a paginator/counter, must not
+    /// leak one row per edit); `None` skips this (a fresh send has nothing stale to remove). `chat`
+    /// is required (not bundled into `staleMessageId`) because `MessageId` alone is ambiguous
+    /// across chats (review finding #2) — every caller already has a `ChatId` in hand (the press's
+    /// own chat, or the chat a fresh send targets). The old tokens are looked up and removed BEFORE
+    /// the new ones are saved; `tracker.Record` runs only AFTER `send` completes, matching
+    /// `MessageBindingTracker`'s own "reflects past sends only" contract. An invalid `plan` is a
+    /// programmer error by the caller (Always-Rule 6) — fails fast (`invalidArg`, tagged with
+    /// `context` for a useful message) rather than threading a `Result` through this API.
     let deliver
         (context: string)
         (tokenGen: unit -> CallbackToken)
         (store: IBindingStore)
         (tracker: MessageBindingTracker)
+        (chat: ChatId)
         (staleMessageId: MessageId option)
         (send: RegisteredKeyboard -> Task<MessageId>)
         (ct: CancellationToken)
@@ -297,12 +325,12 @@ module ToolKeyboardOps =
             match ToolPlan.plan (Seq.initInfinite (fun _ -> tokenGen ())) plan with
             | Error e -> return invalidArg (nameof plan) $"{context}: invalid plan ({e})"
             | Ok(registeredKeyboard, bindings) ->
-                match staleMessageId |> Option.bind tracker.TryGetPrevious with
+                match staleMessageId |> Option.bind (fun messageId -> tracker.TryGetPrevious(chat, messageId)) with
                 | Some staleTokens -> do! store.Remove(staleTokens, ct)
                 | None -> ()
 
                 do! store.Save(bindings, ct)
                 let! messageId = send registeredKeyboard
-                tracker.Record(messageId, bindings |> List.map (fun b -> b.Token))
+                tracker.Record(chat, messageId, bindings |> List.map (fun b -> b.Token))
                 return messageId
         }

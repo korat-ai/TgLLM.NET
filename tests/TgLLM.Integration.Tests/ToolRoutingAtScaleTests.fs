@@ -68,6 +68,7 @@ type private CountingObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_, _) = Interlocked.Increment(&failed) |> ignore
         member _.OnUnknownToken(_) = Interlocked.Increment(&unknown) |> ignore
+        member _.OnRunLoopFailed(_) = ()
 
 let private pressOf (token: CallbackToken) (chat: int64) : AgentEvent =
     ButtonPressed

@@ -13,6 +13,7 @@ type NoopHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_press: ButtonPress, _error: exn) = ()
         member _.OnUnknownToken(_press: ButtonPress) = ()
+        member _.OnRunLoopFailed(_error: exn) = ()
 
 /// Default `IPressDispatcher`: one unbounded, `SingleReader = true` channel + one consumer loop
 /// per chat, in a `ConcurrentDictionary`. Work for the SAME chat runs sequentially in enqueue

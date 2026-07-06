@@ -3,6 +3,7 @@
 /// exists — this file MUST fail to compile until T022 implements it (Red).
 module TgLLM.Core.Tests.UpdateProcessorTests
 
+open System
 open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
@@ -47,8 +48,12 @@ type private FakeUpdateSource(events: AgentEvent list) =
 
                         member _.DisposeAsync() = ValueTask.CompletedTask } }
 
-/// Records `AnswerCallback`/`SendText` calls instead of talking to Telegram.
-type private FakeBotApiClient() =
+/// Records `AnswerCallback`/`SendText` calls instead of talking to Telegram. `throwForQueries`
+/// (review finding #1, 003-tool-router-extensions) simulates a transient `AnswerCallback` failure
+/// for specific query ids — every existing call site omits it (empty by default), so this is a
+/// pure addition, unchanged behavior for every pre-existing test.
+type private FakeBotApiClient(?throwForQueries: CallbackQueryId list) =
+    let throwFor = defaultArg throwForQueries [] |> Set.ofList
     let answered = ResizeArray<CallbackQueryId>()
     let sentTexts = ResizeArray<ChatId * MessageText>()
     member _.Answered: CallbackQueryId list = List.ofSeq answered
@@ -62,8 +67,11 @@ type private FakeBotApiClient() =
         member _.SendKeyboard(_chat, _text, _keyboard, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
 
         member _.AnswerCallback(query, _ct) =
-            answered.Add query
-            Task.CompletedTask
+            if throwFor.Contains query then
+                raise (InvalidOperationException "simulated transient AnswerCallback failure")
+            else
+                answered.Add query
+                Task.CompletedTask
 
         /// This file only exercises the slice-1 ack-first path (no `?toolDispatch`), so the
         /// deferred-ack overload is never actually invoked here — implemented to satisfy
@@ -101,6 +109,7 @@ type private FakeHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(press, error) = failed.Add(press, error)
         member _.OnUnknownToken(press) = unknown.Add press
+        member _.OnRunLoopFailed(_error) = ()
 
 [<Tests>]
 let updateProcessorTests =
@@ -223,4 +232,34 @@ let updateProcessorTests =
                 (PressResolution.ackPolicy HookStoreResolution)
                 AckFirst
                 "the slice-1 hook-store resolution acks immediately, before any hook runs"
+
+        testCase
+            "a press whose own processing throws (AnswerCallback itself failing) is reported via OnHookFailed, and RunAsync keeps processing later presses (review finding #1)"
+        <| fun _ ->
+            let throwingToken = CallbackToken.generate ()
+            let okToken = CallbackToken.generate ()
+            let throwingPress = samplePress throwingToken 1L
+            let okPress = samplePress okToken 2L
+            // No hooks registered for EITHER token — both are "unknown", so `processHookStorePress`
+            // reaches `AnswerCallback` before anything else; only the FIRST press's ack throws.
+            let store: IHookStore = InMemoryHookStore()
+            let api = FakeBotApiClient(throwForQueries = [ throwingPress.QueryId ])
+            let dispatcher = FakeDispatcher()
+            let observer = FakeHookObserver()
+            let source = FakeUpdateSource [ ButtonPressed throwingPress; ButtonPressed okPress ]
+            let processor = UpdateProcessor(source, store, api, dispatcher, observer)
+
+            (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
+
+            Expect.equal api.Answered [ okPress.QueryId ] "only the SECOND press's ack actually completed; the first's threw"
+            Expect.equal (List.length observer.Failed) 1 "the first press's processing failure is reported, not silently lost"
+
+            match observer.Failed with
+            | [ (failedPress, _) ] -> Expect.equal failedPress throwingPress "the observer attributes the failure to the right press"
+            | other -> failwithf "expected exactly one reported failure, got %A" other
+
+            Expect.equal
+                observer.Unknown
+                [ okPress ]
+                "the SECOND press still completes its own unknown-token flow — the first press's failure did not derail the loop"
     ]

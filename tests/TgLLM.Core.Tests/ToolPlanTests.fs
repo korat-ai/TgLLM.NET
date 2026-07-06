@@ -121,4 +121,26 @@ let toolPlanTests =
             match ToolPlan.validate { Rows = [ [ UrlButton("Docs", "") ] ] } with
             | Error(InvalidUrl "") -> ()
             | other -> failwithf "expected Error (InvalidUrl \"\"), got %A" other
+
+        // ToolPlan.hasToolButtons (review finding #10, 003-tool-router-extensions): `TgBot.SendKeyboardPlan`
+        // uses this to fail fast when a plan has tool buttons but no Tool Router is wired in.
+        testCase "hasToolButtons is false for a URL-only plan" <| fun _ ->
+            let keyboard: ToolKeyboard = { Rows = [ [ UrlButton("Docs", "https://example.test") ] ] }
+            Expect.isFalse (ToolPlan.hasToolButtons keyboard) "a plan made entirely of URL buttons never needs a Tool Router"
+
+        testCase "hasToolButtons is true for a plan with at least one tool button" <| fun _ ->
+            let keyboard: ToolKeyboard = { Rows = [ [ ToolButton("Approve", "approve", None) ] ] }
+            Expect.isTrue (ToolPlan.hasToolButtons keyboard) "a plan with a tool button needs a Tool Router wired in"
+
+        testCase "hasToolButtons is true for a mixed plan (any row, any column)" <| fun _ ->
+            let keyboard: ToolKeyboard =
+                { Rows =
+                    [ [ UrlButton("Docs", "https://example.test") ]
+                      [ UrlButton("Home", "https://example.test/home"); ToolButton("Approve", "approve", None) ] ] }
+
+            Expect.isTrue (ToolPlan.hasToolButtons keyboard) "even one tool button anywhere in the plan is enough"
+
+        testCase "hasToolButtons is false for a plan with no rows" <| fun _ ->
+            let keyboard: ToolKeyboard = { Rows = [] }
+            Expect.isFalse (ToolPlan.hasToolButtons keyboard) "an empty plan trivially has no tool buttons"
     ]

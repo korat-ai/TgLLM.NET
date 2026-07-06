@@ -45,7 +45,18 @@ public sealed class TelegramAgent : IAsyncDisposable
 
     private TelegramAgent(TgBot bot) => _bot = bot;
 
-    /// <summary>Start ingesting updates via long polling.</summary>
+    /// <summary>
+    /// Start ingesting updates via long polling.
+    /// </summary>
+    /// <param name="options">Bot configuration.</param>
+    /// <param name="ct">
+    /// Accepted for API-shape consistency, but NOT currently honored: the underlying
+    /// <c>TgLLM.FSharp.TgBot.startPolling</c> has no per-call cancellation seam, and threading one
+    /// in here (e.g. via <c>Task.WaitAsync</c>) would risk abandoning a partially-started
+    /// <c>TgBot</c> — one that has already begun ingesting updates in the background — with no
+    /// reference left to dispose it, which is worse than the current no-op. Documented explicitly
+    /// (review finding #6) rather than silently ignored.
+    /// </param>
     public static async Task<TelegramAgent> StartPollingAsync(TelegramAgentOptions options, CancellationToken ct = default)
     {
         var config = TgBotConfig.create(options.BotToken);
@@ -74,8 +85,17 @@ public sealed class TelegramAgent : IAsyncDisposable
         return new TelegramAgent(bot);
     }
 
-    /// <summary>Start ingesting updates via webhooks; map the endpoint with
-    /// <c>app.MapTelegramWebhook(agent.WebhookSource, secret)</c>.</summary>
+    /// <summary>
+    /// Start ingesting updates via webhooks; map the endpoint with
+    /// <c>app.MapTelegramWebhook(agent.WebhookSource, secret)</c>.
+    /// </summary>
+    /// <param name="options">Bot configuration.</param>
+    /// <param name="ct">
+    /// Accepted for API-shape consistency, but NOT currently honored — same reason as
+    /// <see cref="StartPollingAsync"/>'s <c>ct</c>: <c>TgLLM.FSharp.TgBot.startWebhook</c> has no
+    /// per-call cancellation seam, and abandoning a partially-started <c>TgBot</c> would leak it.
+    /// Documented explicitly (review finding #6) rather than silently ignored.
+    /// </param>
     public static async Task<TelegramAgent> StartWebhookAsync(TelegramAgentOptions options, CancellationToken ct = default)
     {
         var config = TgWebhookConfig.create(options.BotToken, options.PublicUrl ?? string.Empty, options.SecretToken ?? string.Empty);
@@ -107,18 +127,42 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// <summary>The webhook ingress to hand to <c>MapTelegramWebhook</c> (webhook mode only).</summary>
     public WebhookUpdateSource WebhookSource => _bot.WebhookSource;
 
-    /// <summary>Send an interactive keyboard to a chat; returns the sent message id.</summary>
+    /// <summary>
+    /// Send an interactive keyboard to a chat; returns the sent message id.
+    /// </summary>
+    /// <param name="chatId">The target chat.</param>
+    /// <param name="text">The message text sent alongside the keyboard.</param>
+    /// <param name="keyboard">The keyboard layout.</param>
+    /// <param name="ct">
+    /// Cancels the WAIT for this call to complete (the awaited task then faults with
+    /// <see cref="OperationCanceledException"/>). Does NOT abort the underlying Telegram Bot API
+    /// request itself — <c>TgLLM.FSharp.TgBot</c>'s send methods have no per-call cancellation
+    /// seam of their own, so the send may still complete in the background after this call
+    /// returns. Threaded via <see cref="Task.WaitAsync(CancellationToken)"/> rather than silently
+    /// ignored (review finding #6).
+    /// </param>
     public Task<long> SendKeyboardAsync(long chatId, string text, Keyboard keyboard, CancellationToken ct = default) =>
-        _bot.SendKeyboard(chatId, text, keyboard.Spec);
+        _bot.SendKeyboard(chatId, text, keyboard.Spec).WaitAsync(ct);
 
-    /// <summary>Send a keyboard built from a Tool Router plan; presses route to the tools
-    /// registered via <see cref="TelegramAgentOptions.Tools"/>.</summary>
+    /// <summary>
+    /// Send a keyboard built from a Tool Router plan; presses route to the tools registered via
+    /// <see cref="TelegramAgentOptions.Tools"/>.
+    /// </summary>
+    /// <param name="chatId">The target chat.</param>
+    /// <param name="text">The message text sent alongside the keyboard.</param>
+    /// <param name="plan">The neutral Tool Router keyboard plan.</param>
+    /// <param name="ct">Same semantics as <see cref="SendKeyboardAsync"/>'s <c>ct</c>.</param>
     public Task<long> SendKeyboardPlanAsync(long chatId, string text, KeyboardPlan plan, CancellationToken ct = default) =>
-        _bot.SendKeyboardPlan(chatId, text, plan.Plan);
+        _bot.SendKeyboardPlan(chatId, text, plan.Plan).WaitAsync(ct);
 
-    /// <summary>Send a plain text message to a chat; returns the sent message id.</summary>
+    /// <summary>
+    /// Send a plain text message to a chat; returns the sent message id.
+    /// </summary>
+    /// <param name="chatId">The target chat.</param>
+    /// <param name="text">The message text.</param>
+    /// <param name="ct">Same semantics as <see cref="SendKeyboardAsync"/>'s <c>ct</c>.</param>
     public Task<long> SendTextAsync(long chatId, string text, CancellationToken ct = default) =>
-        _bot.SendText(chatId, text);
+        _bot.SendText(chatId, text).WaitAsync(ct);
 
     public ValueTask DisposeAsync() => ((IAsyncDisposable)_bot).DisposeAsync();
 }

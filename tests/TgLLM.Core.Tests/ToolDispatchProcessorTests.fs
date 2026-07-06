@@ -116,6 +116,7 @@ type private FakeHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(press, error) = failed.Add(press, error)
         member _.OnUnknownToken(press) = unknown.Add press
+        member _.OnRunLoopFailed(_error) = ()
 
 /// Wires a real `InMemoryToolRegistry` + `InMemoryBindingStore` (already green, Foundational phase)
 /// behind a `ToolDispatch`, with one binding saved for `token -> (registeredToolName, arg)`.

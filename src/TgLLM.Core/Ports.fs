@@ -84,3 +84,11 @@ type IBotApiClient =
 type IHookObserver =
     abstract OnHookFailed: press: ButtonPress * error: exn -> unit
     abstract OnUnknownToken: press: ButtonPress -> unit
+
+    /// The update-ingestion run loop itself (`UpdateProcessor.RunAsync`) faulted — review finding
+    /// #1 (003-tool-router-extensions). Unlike `OnHookFailed`, there is no single `ButtonPress` to
+    /// attribute this to: the failure means the WHOLE bot has stopped ingesting updates, not that
+    /// one press's handling blew up (that case is `OnHookFailed`'s job, and is caught inside
+    /// `RunAsync` so it can never reach here). MUST be surfaced here instead of silently swallowed
+    /// at shutdown/dispose.
+    abstract OnRunLoopFailed: error: exn -> unit

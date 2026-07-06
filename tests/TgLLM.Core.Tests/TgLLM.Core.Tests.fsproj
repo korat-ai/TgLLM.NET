@@ -15,6 +15,7 @@
     <Compile Include="ToolPlanTests.fs" />
     <Compile Include="ToolRegistryTests.fs" />
     <Compile Include="BindingStoreTests.fs" />
+    <Compile Include="MessageBindingTrackerTests.fs" />
     <Compile Include="RoutingTests.fs" />
     <Compile Include="InMemoryHookStoreTests.fs" />
     <Compile Include="DispatcherTests.fs" />

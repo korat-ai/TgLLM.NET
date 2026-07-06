@@ -26,7 +26,10 @@ type PressResolution =
 module PressResolution =
     /// The single, pure statement of "which resolver ⇒ which ack policy" — kept separate from the
     /// async resolve step (`UpdateProcessor`'s own `resolvePress`) so the mapping is testable in
-    /// isolation and can't silently drift out of sync with `processPress`'s branches.
+    /// isolation. `processPress` (below) actually CONSULTS this — matching jointly on
+    /// `(ackPolicy resolution, resolution)` — rather than branching on `resolution` alone, so a
+    /// future change to this mapping that isn't mirrored in `processPress`'s branches (or vice
+    /// versa) fails loudly at runtime (an `unreachable` case) instead of silently drifting.
     let ackPolicy (resolution: PressResolution) : AckPolicy =
         match resolution with
         | ToolResolution _ -> Deferred
@@ -108,6 +111,7 @@ type UpdateProcessor
             CallbackToken.generate
             dispatch.Store
             dispatch.Tracker
+            press.Chat
             (Some press.MessageId)
             (fun registeredKeyboard ->
                 task {
@@ -217,11 +221,25 @@ type UpdateProcessor
                 | ValueNone -> return HookStoreResolution
         }
 
+    /// Dispatches on BOTH the resolution AND its `PressResolution.ackPolicy` jointly (review
+    /// finding #5) — not just the resolution alone — so the policy mapping is actually consulted,
+    /// not merely a parallel, never-read spec. The two "impossible" combinations
+    /// (`Deferred`+`HookStoreResolution`, `AckFirst`+`ToolResolution`) can only fire if
+    /// `PressResolution.ackPolicy`'s mapping is ever changed without updating the branches below (or
+    /// vice versa) — exactly the drift `ackPolicy`'s own doc comment claims can't happen; this match
+    /// makes that claim literally enforced: such a drift now fails LOUDLY at runtime instead of
+    /// silently doing the wrong thing.
     let processPress (ct: CancellationToken) (press: ButtonPress) : Task =
         task {
-            match! resolvePress ct press with
-            | ToolResolution(tool, binding, dispatch) -> do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch)
-            | HookStoreResolution -> do! processHookStorePress ct press
+            let! resolution = resolvePress ct press
+
+            match PressResolution.ackPolicy resolution, resolution with
+            | Deferred, ToolResolution(tool, binding, dispatch) ->
+                do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch)
+            | AckFirst, HookStoreResolution -> do! processHookStorePress ct press
+            | Deferred, HookStoreResolution
+            | AckFirst, ToolResolution _ ->
+                failwith $"unreachable: PressResolution.ackPolicy diverged from processPress's own branches for %A{resolution}"
         }
 
     /// Runs until `ct` is cancelled, processing each `AgentEvent` from `source` in arrival order.
@@ -237,7 +255,18 @@ type UpdateProcessor
 
                 if hasNext then
                     match enumerator.Current with
-                    | ButtonPressed press -> do! processPress ct press
+                    | ButtonPressed press ->
+                        try
+                            do! processPress ct press
+                        with ex ->
+                            // One press's processing must never take down the WHOLE run loop
+                            // (review finding #1) — e.g. `AnswerCallback` itself throwing on the
+                            // ack-first path, before any hook/tool ever runs. Reuses `OnHookFailed`:
+                            // from the observer's point of view "this press's processing blew up"
+                            // is the same signal regardless of whether the failure came from a hook
+                            // body (already caught inside `buildWork`/`buildToolWork`) or from
+                            // `processPress` itself.
+                            observer.OnHookFailed(press, ex)
                 else
                     moving <- false
         }

@@ -18,10 +18,16 @@ open TgLLM.Core
 /// `HttpClient`/`baseUrl` choice), mirroring `TelegramBotApiClient`. The long-poll `timeout` defaults
 /// to 30s; a real HTTP client timeout must exceed it (Telegram.Bot's 100s default does). Tests pass
 /// `timeoutSeconds = 0` (short polling) so the fake server answers immediately.
+///
+/// `initialBackoff`/`maxBackoff` (default 1s/30s; tests override both to keep the retry path fast)
+/// govern the bounded-exponential retry a transient `GetUpdates` failure gets (review finding #1,
+/// 003-tool-router-extensions) — see the `pump` doc comment below.
 [<Sealed>]
-type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int) =
+type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int, ?initialBackoff: TimeSpan, ?maxBackoff: TimeSpan) =
 
     let timeout = defaultArg timeoutSeconds 30
+    let initialBackoff = defaultArg initialBackoff (TimeSpan.FromSeconds 1.0)
+    let maxBackoff = defaultArg maxBackoff (TimeSpan.FromSeconds 30.0)
 
     interface IUpdateSource with
         member _.Updates(ct: CancellationToken) : IAsyncEnumerable<AgentEvent> =
@@ -32,6 +38,15 @@ type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int) =
 
             let writer = channel.Writer
 
+            /// A transient `GetUpdates` failure (network blip, Bot API 5xx/429, ...) must not
+            /// permanently kill update ingestion (review finding #1) — completing the channel WITH
+            /// the exception (the old behavior) faults every future read on the consumer side
+            /// forever, i.e. one bad poll kills the bot for good. Instead: retry with a bounded
+            /// exponential backoff, resetting to `initialBackoff` after any successful poll so only
+            /// CONSECUTIVE failures escalate the delay. `OperationCanceledException` is deliberately
+            /// NOT caught by this inner handler (the `when` guard excludes it) — a real
+            /// cancellation/shutdown still propagates straight to the outer handler below,
+            /// unchanged, so `ct` is always honored promptly.
             let pump () : Task =
                 task {
                     try
@@ -39,22 +54,29 @@ type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int) =
                         do! client.DeleteWebhook(cancellationToken = ct)
 
                         let mutable offset = 0
+                        let mutable backoff = initialBackoff
 
                         while not ct.IsCancellationRequested do
-                            let! updates =
-                                client.GetUpdates(
-                                    offset = Nullable<int> offset,
-                                    timeout = Nullable<int> timeout,
-                                    cancellationToken = ct
-                                )
+                            try
+                                let! updates =
+                                    client.GetUpdates(
+                                        offset = Nullable<int> offset,
+                                        timeout = Nullable<int> timeout,
+                                        cancellationToken = ct
+                                    )
 
-                            for update in updates do
-                                match Mapping.toAgentEvent update with
-                                | ValueSome event -> do! writer.WriteAsync(event, ct)
-                                | ValueNone -> ()
+                                backoff <- initialBackoff
 
-                                // Confirm-by-offset: the next poll asks only for updates after this one.
-                                offset <- max offset (update.Id + 1)
+                                for update in updates do
+                                    match Mapping.toAgentEvent update with
+                                    | ValueSome event -> do! writer.WriteAsync(event, ct)
+                                    | ValueNone -> ()
+
+                                    // Confirm-by-offset: the next poll asks only for updates after this one.
+                                    offset <- max offset (update.Id + 1)
+                            with ex when not (ex :? OperationCanceledException) ->
+                                do! Task.Delay(backoff, ct)
+                                backoff <- min maxBackoff (backoff * 2.0)
 
                         writer.TryComplete() |> ignore
                     with

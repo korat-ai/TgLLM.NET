@@ -80,7 +80,7 @@ type FakeBotApiServer
 
 module FakeBotApiServer =
 
-    let private defaultResult (methodName: string) (body: JsonNode option) (nextMessageId: unit -> int) : string =
+    let private defaultResult (methodName: string) (body: JsonNode option) (nextMessageId: string -> int) : string =
         let field (key: string) (fallback: string) =
             body
             |> Option.bind (fun b -> Option.ofObj (b.Item key))
@@ -90,7 +90,13 @@ module FakeBotApiServer =
         match methodName with
         | "getUpdates" -> "[]"
         | "sendMessage" ->
-            $"""{{"message_id":{nextMessageId ()},"date":0,"chat":{{"id":{field "chat_id" "0"},"type":"private"}}}}"""
+            // Telegram's `message_id` is unique only PER CHAT (review finding #2,
+            // 003-tool-router-extensions) — a global counter here would hide that real-world shape
+            // and let a cross-chat collision bug pass every test. Keying the counter by `chat_id`
+            // means two different chats' first sent message both legitimately land on message_id 1,
+            // exactly like the real Bot API, so tests can represent (and catch) that collision.
+            let chatIdStr = field "chat_id" "0"
+            $"""{{"message_id":{nextMessageId chatIdStr},"date":0,"chat":{{"id":{chatIdStr},"type":"private"}}}}"""
         | "editMessageText"
         | "editMessageReplyMarkup" ->
             // Telegram.Bot deserializes the result as a `Message`, feature 002-llm-tool-router T021/T023:
@@ -110,11 +116,12 @@ module FakeBotApiServer =
 
             let requests = ConcurrentQueue<RecordedRequest>()
             let responses = ConcurrentDictionary<string, ConcurrentQueue<CannedResponse>>()
-            let mutable nextMessageId = 0
+            // Per-chat, not global (see `defaultResult`'s doc comment above): keyed by the request's
+            // raw `chat_id` JSON text so distinct chats never share a counter.
+            let messageIdsByChat = ConcurrentDictionary<string, int>()
 
-            let nextMessageIdFn () =
-                nextMessageId <- nextMessageId + 1
-                nextMessageId
+            let nextMessageIdFn (chatIdKey: string) : int =
+                messageIdsByChat.AddOrUpdate(chatIdKey, (fun _ -> 1), (fun _ previous -> previous + 1))
 
             app.MapPost(
                 "/bot{token}/{method}",
