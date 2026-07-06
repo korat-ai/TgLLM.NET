@@ -11,7 +11,7 @@ entry point below is new or an overload. Indicative signatures — finalized via
 // Slice-2: TgBot.SendKeyboardPlan(chat, text, plan)
 // New: an optional owner scope. Default (omitted) = Anyone (unchanged behavior).
 member SendKeyboardPlan: chat: ChatId * text: string * plan: ToolKeyboard * ?owner: OwnerScope
-                         * ?notModifiedNotice: string -> Task<MessageId>
+                         * ?deniedNotice: string -> Task<MessageId>   // shown to a non-owner presser
 
 module Owner =
     val anyone: OwnerScope
@@ -68,8 +68,8 @@ type TgBotConfig with
 ```csharp
 // US1 — owner scope on send
 Task<int> SendKeyboardPlanAsync(long chatId, string text, KeyboardPlan plan,
-                                OwnerScope? owner = null, string? notModifiedNotice = null,
-                                CancellationToken ct = default);      // ct now honored (review #6)
+                                OwnerScope? owner = null, string? deniedNotice = null,
+                                CancellationToken ct = default);      // deniedNotice → non-owner; ct honored (review #6)
 public static class Owner { public static OwnerScope Anyone {get;} public static OwnerScope User(long id); }
 
 // US2/US3 — plan builder additions
