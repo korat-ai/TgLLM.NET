@@ -64,7 +64,9 @@ type PressContext
         cancellationToken: CancellationToken,
         replyTextAsync: string -> Task<MessageId>,
         ?arg: string,
-        ?answerAction: (string -> bool -> unit)
+        ?answerAction: (string -> bool -> unit),
+        ?editTextAction: (string -> Task),
+        ?editKeyboardAction: (ToolKeyboard -> Task)
     ) =
     member _.ButtonLabel = buttonLabel
     member _.Chat = chat
@@ -91,6 +93,26 @@ type PressContext
         match answerAction with
         | Some action -> action text (defaultArg alert false)
         | None -> ()
+
+    /// Edit the pressed message's text in place (feature 002-llm-tool-router, FR-006,
+    /// data-model.md "PressContext (additive)"). Wired ONLY on the deferred-ack TOOL path
+    /// (`UpdateProcessor.buildToolWork`) — same "documented no-op elsewhere" convention as
+    /// `Answer` above: a slice-1 closure-style hook has no keyboard-plan/binding-store concept to
+    /// re-plan against, so `editTextAction` is absent there and this member is a harmless no-op.
+    member _.EditTextAsync(text: string) : Task =
+        match editTextAction with
+        | Some action -> action text
+        | None -> Task.CompletedTask
+
+    /// Replace the pressed message's keyboard with one built from a fresh `ToolKeyboard` plan
+    /// (feature 002-llm-tool-router, FR-006, data-model.md "PressContext (additive)") — re-plans
+    /// via `ToolPlan.plan` and registers the replacement bindings before the edit reaches Telegram,
+    /// same before-the-wire ordering guarantee as `SendKeyboardPlan`. No-op (see `EditTextAsync`)
+    /// when this press didn't come through the Tool Router's deferred-ack path.
+    member _.EditKeyboardAsync(keyboard: ToolKeyboard) : Task =
+        match editKeyboardAction with
+        | Some action -> action keyboard
+        | None -> Task.CompletedTask
 
 /// The agent-supplied reaction to a button press (FR-002, data-model.md "Hook & HookBinding").
 /// Façades adapt this to their own idiomatic delegate type (`Func<PressContext, Task>` for C#).

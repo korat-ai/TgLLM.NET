@@ -32,13 +32,21 @@ type RecordedRequest =
 /// `RequestBase.cs`; research.md D7, Principle V), not assumed. This server exposes exactly that one
 /// route, `POST /bot{token}/{method}`, and replies with the Bot API's `{"ok":true,"result":...}`
 /// envelope every real Telegram.Bot request expects.
+/// One canned response queued for a Bot API method (feature 002-llm-tool-router, T024): either a
+/// success `result` payload (`EnqueueResult`) or a Bot-API-shaped ERROR (`EnqueueError`) — needed to
+/// simulate `"message to edit not found"`/`"message is not modified"` (research.md D1) without a
+/// real vanished message.
+type internal CannedResponse =
+    | Success of resultJson: string
+    | Failure of errorCode: int * description: string
+
 [<Sealed>]
 type FakeBotApiServer
     internal
     (
         app: WebApplication,
         requests: ConcurrentQueue<RecordedRequest>,
-        responses: ConcurrentDictionary<string, ConcurrentQueue<string>>
+        responses: ConcurrentDictionary<string, ConcurrentQueue<CannedResponse>>
     ) =
 
     /// Every request recorded so far, oldest first.
@@ -53,7 +61,16 @@ type FakeBotApiServer
     /// fall back to a method-aware default: `"getUpdates"` -> `[]`; `"sendMessage"` -> a
     /// synthesized `Message` with an auto-incrementing `message_id`; anything else -> `true`.
     member _.EnqueueResult(methodName: string, resultJson: string) : unit =
-        responses.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue resultJson
+        responses.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue(Success resultJson)
+
+    /// Queues a canned Bot-API ERROR (`{"ok":false,"error_code":...,"description":...}`, HTTP 400)
+    /// to be returned by the NEXT call to `methodName` (feature 002-llm-tool-router, T024) — e.g.
+    /// `server.EnqueueError("editMessageText", 400, "Bad Request: message to edit not found")`
+    /// simulates editing a vanished message. Telegram.Bot's own client throws `ApiRequestException`
+    /// for any `ok:false` response, regardless of HTTP status (Principle V, verified against its
+    /// source), so the exact status code here is cosmetic realism, not load-bearing.
+    member _.EnqueueError(methodName: string, errorCode: int, description: string) : unit =
+        responses.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue(Failure(errorCode, description))
 
     /// e.g. `"http://127.0.0.1:53214"` — pass as `TelegramBotClientOptions`'s `baseUrl`.
     member _.BaseUrl: string = (Seq.head app.Urls).TrimEnd('/')
@@ -64,16 +81,22 @@ type FakeBotApiServer
 module FakeBotApiServer =
 
     let private defaultResult (methodName: string) (body: JsonNode option) (nextMessageId: unit -> int) : string =
+        let field (key: string) (fallback: string) =
+            body
+            |> Option.bind (fun b -> Option.ofObj (b.Item key))
+            |> Option.map (fun n -> n.ToJsonString())
+            |> Option.defaultValue fallback
+
         match methodName with
         | "getUpdates" -> "[]"
         | "sendMessage" ->
-            let chatIdJson =
-                body
-                |> Option.bind (fun b -> Option.ofObj (b.Item "chat_id"))
-                |> Option.map (fun n -> n.ToJsonString())
-                |> Option.defaultValue "0"
-
-            $"""{{"message_id":{nextMessageId ()},"date":0,"chat":{{"id":{chatIdJson},"type":"private"}}}}"""
+            $"""{{"message_id":{nextMessageId ()},"date":0,"chat":{{"id":{field "chat_id" "0"},"type":"private"}}}}"""
+        | "editMessageText"
+        | "editMessageReplyMarkup" ->
+            // Telegram.Bot deserializes the result as a `Message`, feature 002-llm-tool-router T021/T023:
+            // a real `editMessageText`/`editMessageReplyMarkup` echoes back the SAME `message_id` (the
+            // request always carries it — unlike `sendMessage`, which allocates a fresh one).
+            $"""{{"message_id":{field "message_id" "0"},"date":0,"chat":{{"id":{field "chat_id" "0"},"type":"private"}}}}"""
         | _ -> "true"
 
     /// Starts a real Kestrel host on an OS-assigned loopback port and returns the fake server,
@@ -86,7 +109,7 @@ module FakeBotApiServer =
             let app = builder.Build()
 
             let requests = ConcurrentQueue<RecordedRequest>()
-            let responses = ConcurrentDictionary<string, ConcurrentQueue<string>>()
+            let responses = ConcurrentDictionary<string, ConcurrentQueue<CannedResponse>>()
             let mutable nextMessageId = 0
 
             let nextMessageIdFn () =
@@ -109,16 +132,29 @@ module FakeBotApiServer =
 
                         requests.Enqueue { Method = methodName; Token = token; Body = bodyNode }
 
-                        let resultJson =
+                        let canned =
                             match responses.TryGetValue methodName with
                             | true, queue ->
                                 match queue.TryDequeue() with
-                                | true, json -> json
-                                | false, _ -> defaultResult methodName bodyNode nextMessageIdFn
-                            | false, _ -> defaultResult methodName bodyNode nextMessageIdFn
+                                | true, response -> Some response
+                                | false, _ -> None
+                            | false, _ -> None
 
                         ctx.Response.ContentType <- "application/json"
-                        do! ctx.Response.WriteAsync $"""{{"ok":true,"result":{resultJson}}}"""
+
+                        match canned with
+                        | Some(Failure(errorCode, description)) ->
+                            ctx.Response.StatusCode <- 400
+
+                            let escapedDescription = System.Text.Json.JsonSerializer.Serialize<string>(description)
+
+                            do!
+                                ctx.Response.WriteAsync
+                                    $"""{{"ok":false,"error_code":{errorCode},"description":{escapedDescription}}}"""
+                        | Some(Success resultJson) -> do! ctx.Response.WriteAsync $"""{{"ok":true,"result":{resultJson}}}"""
+                        | None ->
+                            let resultJson = defaultResult methodName bodyNode nextMessageIdFn
+                            do! ctx.Response.WriteAsync $"""{{"ok":true,"result":{resultJson}}}"""
                     }
                     :> Task)
             )

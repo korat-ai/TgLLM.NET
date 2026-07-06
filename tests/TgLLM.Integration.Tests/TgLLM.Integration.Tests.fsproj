@@ -11,10 +11,15 @@
     <Compile Include="LongPollingTests.fs" />
     <Compile Include="FSharpPollingAcceptanceTests.fs" />
     <Compile Include="ToolRouterAcceptanceTests.fs" />
+    <Compile Include="EditInPlaceTests.fs" />
+    <Compile Include="RestartPersistenceTests.fs" />
+    <Compile Include="UrlButtonTests.fs" />
     <Compile Include="WebhookTests.fs" />
     <Compile Include="BothTransportsTests.fs" />
     <Compile Include="ProactiveSendTests.fs" />
     <Compile Include="RoutingAtScaleTests.fs" />
+    <Compile Include="ToolRouterBothTransportsTests.fs" />
+    <Compile Include="ToolRoutingAtScaleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -37,6 +42,7 @@
     <ProjectReference Include="..\..\src\TgLLM.AspNetCore\TgLLM.AspNetCore.fsproj" />
     <ProjectReference Include="..\..\src\TgLLM.FSharp\TgLLM.FSharp.fsproj" />
     <ProjectReference Include="..\..\src\TgLLM.CSharp\TgLLM.CSharp.csproj" />
+    <ProjectReference Include="..\..\src\TgLLM.Persistence\TgLLM.Persistence.fsproj" />
   </ItemGroup>
 
 </Project>

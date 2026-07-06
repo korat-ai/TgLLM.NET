@@ -52,6 +52,11 @@ type private RecordingApi() =
             Interlocked.Increment(&acks) |> ignore
             Task.CompletedTask
 
+        /// Edit* (feature 002-llm-tool-router, T021) are only reachable via the deferred-ack tool
+        /// path, never exercised in this ack-first-only suite — implemented to satisfy `IBotApiClient`.
+        member _.EditMessageText(_, _, _, _, _) = Task.CompletedTask
+        member _.EditMessageReplyMarkup(_, _, _, _) = Task.CompletedTask
+
 type private CountingObserver() =
     let mutable failed = 0
     let mutable unknown = 0

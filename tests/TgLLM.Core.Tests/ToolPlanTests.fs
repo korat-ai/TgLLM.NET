@@ -108,4 +108,17 @@ let toolPlanTests =
                 )
 
             List.distinct outputTokens |> List.length = buttonCount
+
+        testCase "an empty/whitespace URL is rejected with InvalidUrl (T030, research.md D3)" <| fun _ ->
+            let rows = [ [ UrlButton("Docs", "   ") ] ]
+            let tokens = List.empty<CallbackToken>
+
+            match ToolPlan.plan tokens { Rows = rows } with
+            | Error(InvalidUrl "   ") -> ()
+            | other -> failwithf "expected Error (InvalidUrl \"   \"), got %A" other
+
+        testCase "Plan.validate also rejects an empty URL (façade's build-time check, contracts/tool-router.md Plan.rows)" <| fun _ ->
+            match ToolPlan.validate { Rows = [ [ UrlButton("Docs", "") ] ] } with
+            | Error(InvalidUrl "") -> ()
+            | other -> failwithf "expected Error (InvalidUrl \"\"), got %A" other
     ]

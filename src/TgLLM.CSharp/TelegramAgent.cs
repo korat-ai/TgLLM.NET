@@ -28,6 +28,12 @@ public sealed class TelegramAgentOptions
     /// <summary>Tools available to <see cref="TelegramAgent.SendKeyboardPlanAsync"/>-sent keyboards
     /// (feature 002-llm-tool-router, T019). <c>null</c> means no Tool Router is wired in.</summary>
     public ToolRegistry? Tools { get; init; }
+
+    /// <summary>The store backing every tool-button binding (feature 002-llm-tool-router, T027,
+    /// US3). <c>null</c> (the default) keeps the in-memory default; pass e.g.
+    /// <c>TgLLM.Persistence.FileBindingStore.OpenAt("bindings.json")</c> so bindings survive a
+    /// restart (SC-004).</summary>
+    public TgLLM.Core.IBindingStore? BindingStore { get; init; }
 }
 
 /// <summary>
@@ -60,6 +66,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithTools(options.Tools.Inner);
         }
 
+        if (options.BindingStore is not null)
+        {
+            config = config.WithBindingStore(options.BindingStore);
+        }
+
         var bot = await TgBot.startPolling(config);
         return new TelegramAgent(bot);
     }
@@ -83,6 +94,11 @@ public sealed class TelegramAgent : IAsyncDisposable
         if (options.Tools is not null)
         {
             config = config.WithTools(options.Tools.Inner);
+        }
+
+        if (options.BindingStore is not null)
+        {
+            config = config.WithBindingStore(options.BindingStore);
         }
 
         var bot = await TgBot.startWebhook(config);

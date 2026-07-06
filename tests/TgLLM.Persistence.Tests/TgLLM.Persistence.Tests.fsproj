@@ -5,10 +5,9 @@
     <GenerateProgramFile>false</GenerateProgramFile>
   </PropertyGroup>
 
-  <!-- T001 (Setup): skeleton test project so the solution builds; real FileBindingStore round-trip
-       tests land in T025 (US3), out of scope for T001-T020. -->
+  <!-- T025 (US3): real FileBindingStore round-trip + restart tests, replacing the T001 placeholder. -->
   <ItemGroup>
-    <Compile Include="PlaceholderTests.fs" />
+    <Compile Include="FileBindingStoreTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

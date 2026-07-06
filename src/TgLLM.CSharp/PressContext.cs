@@ -44,4 +44,19 @@ public sealed class PressContext
     /// slice-1 closure-style hook is a documented no-op — that path has already acked.
     /// </summary>
     public void Answer(string text, bool alert = false) => _core.Answer(text, alert);
+
+    /// <summary>
+    /// Edit the pressed message's text in place, leaving its current keyboard untouched (feature
+    /// 002-llm-tool-router, FR-006). Reachable only from a Tool Router tool's deferred-ack path;
+    /// calling this from a slice-1 closure-style hook is a documented no-op (same convention as
+    /// <see cref="Answer"/>).
+    /// </summary>
+    public Task EditTextAsync(string text) => _core.EditTextAsync(text);
+
+    /// <summary>
+    /// Replace the pressed message's keyboard with one built from a fresh <see cref="KeyboardPlan"/>
+    /// (feature 002-llm-tool-router, FR-006). Same documented no-op on the closure path as
+    /// <see cref="EditTextAsync"/>.
+    /// </summary>
+    public Task EditKeyboardAsync(KeyboardPlan plan) => _core.EditKeyboardAsync(plan.Plan);
 }

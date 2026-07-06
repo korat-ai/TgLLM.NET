@@ -63,9 +63,16 @@ type private AckCall =
     | AckFirst of CallbackQueryId
     | AckDeferred of CallbackQueryId * string option * bool
 
+/// One recorded `EditMessageText`/`EditMessageReplyMarkup` call (feature 002-llm-tool-router, T022).
+type private EditCall =
+    | EditText of ChatId * MessageId * string * RegisteredKeyboard option
+    | EditKeyboard of ChatId * MessageId * RegisteredKeyboard option
+
 type private FakeBotApiClient() =
     let calls = ResizeArray<AckCall>()
+    let edits = ResizeArray<EditCall>()
     member _.Calls: AckCall list = List.ofSeq calls
+    member _.Edits: EditCall list = List.ofSeq edits
 
     interface IBotApiClient with
         member _.SendText(_chat, _text, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
@@ -77,6 +84,14 @@ type private FakeBotApiClient() =
 
         member _.AnswerCallback(query, text, showAlert, _ct) =
             calls.Add(AckDeferred(query, text, showAlert))
+            Task.CompletedTask
+
+        member _.EditMessageText(chat, message, text, keyboard, _ct) =
+            edits.Add(EditText(chat, message, MessageText.value text, keyboard))
+            Task.CompletedTask
+
+        member _.EditMessageReplyMarkup(chat, message, keyboard, _ct) =
+            edits.Add(EditKeyboard(chat, message, keyboard))
             Task.CompletedTask
 
 /// Records enqueued work instead of running it on real per-chat channels — the test decides when to
@@ -228,6 +243,89 @@ let toolDispatchProcessorTests =
             Expect.equal api.Calls [ AckFirst press.QueryId ] "acked via the slice-1 ack-first path, no crash"
             Expect.isEmpty dispatcher.Enqueued "no tool and no hook ran"
             Expect.equal observer.Unknown [ press ] "the observer hears about the unresolvable press"
+
+        testCase "a tool that calls EditTextAsync edits the pressed message in place, keyboard untouched (T022)" <| fun _ ->
+            let token = CallbackToken.generate ()
+            let press = samplePress token 1L
+            let tool: Tool = fun ctx -> ctx.EditTextAsync "Approved!"
+            let dispatch = makeDispatch token "approve" None (Some tool)
+            let api = FakeBotApiClient()
+            let dispatcher = FakeDispatcher()
+            let observer = FakeHookObserver()
+            let source = FakeUpdateSource [ ButtonPressed press ]
+            let processor = UpdateProcessor(source, InMemoryHookStore(), api, dispatcher, observer, toolDispatch = dispatch)
+
+            (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
+
+            match dispatcher.Enqueued with
+            | [ (_, work) ] -> (work CancellationToken.None).GetAwaiter().GetResult()
+            | other -> failwithf "expected exactly one enqueued item, got %d" (List.length other)
+
+            Expect.equal
+                api.Edits
+                [ EditText(press.Chat, press.MessageId, "Approved!", None) ]
+                "the pressed message was edited in place, current keyboard left untouched (None)"
+
+        testCase "a tool that calls EditKeyboardAsync re-plans, saves the new binding, and edits the keyboard only (T022)" <| fun _ ->
+            let token = CallbackToken.generate ()
+            let press = samplePress token 1L
+            let replacementPlan: ToolKeyboard = { Rows = [ [ ToolButton("Undo", "undo", None) ] ] }
+            let tool: Tool = fun ctx -> ctx.EditKeyboardAsync replacementPlan
+            let dispatch = makeDispatch token "approve" None (Some tool)
+            let api = FakeBotApiClient()
+            let dispatcher = FakeDispatcher()
+            let observer = FakeHookObserver()
+            let source = FakeUpdateSource [ ButtonPressed press ]
+            let processor = UpdateProcessor(source, InMemoryHookStore(), api, dispatcher, observer, toolDispatch = dispatch)
+
+            (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
+
+            match dispatcher.Enqueued with
+            | [ (_, work) ] -> (work CancellationToken.None).GetAwaiter().GetResult()
+            | other -> failwithf "expected exactly one enqueued item, got %d" (List.length other)
+
+            match api.Edits with
+            | [ EditKeyboard(chat, messageId, Some(RegisteredKeyboard [ [ Callback(label, newToken) ] ])) ] ->
+                Expect.equal chat press.Chat "edited the pressed message's own chat"
+                Expect.equal messageId press.MessageId "edited the pressed message's own id"
+                Expect.equal (ButtonLabel.value label) "Undo" "the replacement button's label reached the wire"
+
+                let savedBinding = (dispatch.Store.TryGet(newToken, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal
+                    savedBinding
+                    (ValueSome { Token = newToken; ToolName = toolName "undo"; Arg = None })
+                    "the replacement keyboard's binding was saved into the SAME store, resolvable for the next tap"
+            | other -> failwithf "expected exactly one EditKeyboard call with one replacement button, got %A" other
+
+        testCase "EditTextAsync/EditKeyboardAsync are documented no-ops on the slice-1 closure (ack-first) path" <| fun _ ->
+            let token = CallbackToken.generate ()
+            let press = samplePress token 1L
+            let plan: ToolKeyboard = { Rows = [ [ ToolButton("x", "x", None) ] ] }
+
+            let hook: Hook =
+                fun ctx ->
+                    task {
+                        do! ctx.EditTextAsync "should not reach the wire"
+                        do! ctx.EditKeyboardAsync plan
+                    }
+
+            let store: IHookStore = InMemoryHookStore()
+            store.Register([ { Token = token; Hook = hook } ], CancellationToken.None).GetAwaiter().GetResult()
+            let api = FakeBotApiClient()
+            let dispatcher = FakeDispatcher()
+            let observer = FakeHookObserver()
+            let source = FakeUpdateSource [ ButtonPressed press ]
+            let processor = UpdateProcessor(source, store, api, dispatcher, observer)
+
+            (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
+
+            match dispatcher.Enqueued with
+            | [ (_, work) ] -> (work CancellationToken.None).GetAwaiter().GetResult()
+            | other -> failwithf "expected exactly one enqueued item, got %d" (List.length other)
+
+            Expect.isEmpty api.Edits "Edit* is a documented no-op on the closure path — no edit call reached the wire"
+            Expect.isEmpty observer.Failed "the no-op didn't throw"
 
         testCase "the slice-1 closure path stays ack-first when toolDispatch is absent" <| fun _ ->
             let token = CallbackToken.generate ()

@@ -72,6 +72,11 @@ type private FakeBotApiClient() =
             answered.Add query
             Task.CompletedTask
 
+        /// Edit* (feature 002-llm-tool-router, T021) are only reachable via the deferred-ack tool
+        /// path, never exercised in this ack-first-only suite — implemented to satisfy `IBotApiClient`.
+        member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.CompletedTask
+        member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.CompletedTask
+
 /// Records enqueued work instead of running it on real per-chat channels — the test decides
 /// when (and whether) to invoke a recorded work item, so it can assert on the *closure UpdateProcessor
 /// built* (ack-before-hook ordering, exception isolation) independently of the real dispatcher

@@ -163,3 +163,50 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
                 showAlert = showAlert,
                 cancellationToken = ct
             )
+
+        /// T021 (feature 002-llm-tool-router, research.md D1): `editMessageText`'s `reply_markup` is
+        /// OPTIONAL — omitting it (`None` here) leaves the message's CURRENT keyboard untouched,
+        /// verified against Telegram.Bot's own `EditMessageText` extension (Principle V); `Some`
+        /// replaces it, same unconditional mapping `SendKeyboard` already uses. Deliberately does
+        /// NOT catch `ApiRequestException` here (`"message to edit not found"`/`"message is not
+        /// modified"`) — see `Ports.fs`'s `EditMessageText` doc comment for why letting it propagate
+        /// is the right layer: `UpdateProcessor`'s existing per-tool try/with already catches and
+        /// reports any tool-body exception via `IHookObserver`, and this port has no `ButtonPress` to
+        /// attribute a failure to in the first place.
+        member _.EditMessageText
+            (
+                chat: ChatId,
+                message: MessageId,
+                text: MessageText,
+                keyboard: RegisteredKeyboard option,
+                ct: CancellationToken
+            ) : Task =
+            let replyMarkup = keyboard |> Option.map Mapping.toInlineKeyboardMarkup |> Option.toObj
+
+            client.EditMessageText(
+                chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                messageId = int (UMX.untag message),
+                text = MessageText.value text,
+                replyMarkup = replyMarkup,
+                cancellationToken = ct
+            )
+            :> Task
+
+        /// T021: replaces the message's keyboard only, leaving its text untouched. Same
+        /// propagate-don't-swallow error handling as `EditMessageText` above.
+        member _.EditMessageReplyMarkup
+            (
+                chat: ChatId,
+                message: MessageId,
+                keyboard: RegisteredKeyboard option,
+                ct: CancellationToken
+            ) : Task =
+            let replyMarkup = keyboard |> Option.map Mapping.toInlineKeyboardMarkup |> Option.toObj
+
+            client.EditMessageReplyMarkup(
+                chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                messageId = int (UMX.untag message),
+                replyMarkup = replyMarkup,
+                cancellationToken = ct
+            )
+            :> Task

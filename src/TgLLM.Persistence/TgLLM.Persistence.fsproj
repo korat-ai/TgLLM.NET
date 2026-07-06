@@ -4,11 +4,7 @@
     <Description>Durable (file-based) IBindingStore implementation for TgLLM.NET's Tool Router (US3). Core stays IO-agnostic (Principle III); this leaf project does the IO.</Description>
   </PropertyGroup>
 
-  <!--
-    T001 (Setup, feature 002-llm-tool-router): skeleton only — a minimal placeholder so the solution
-    builds. The real `FileBindingStore : IBindingStore` (System.Text.Json on disk) is US3 (T025-T026),
-    out of scope for T001-T020.
-  -->
+  <!-- T026 (US3): the real `FileBindingStore : IBindingStore` (System.Text.Json on disk). -->
   <ItemGroup>
     <Compile Include="FileBindingStore.fs" />
   </ItemGroup>

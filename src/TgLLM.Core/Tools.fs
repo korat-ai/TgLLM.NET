@@ -14,6 +14,10 @@ open System.Threading.Tasks
 /// (Keyboard.fs) and needs `ButtonLabel`/`CallbackToken` (Values.fs/CallbackToken.fs); `Tool` needs
 /// `PressContext` (Domain.fs). It compiles before Ports.fs/UpdateProcessor.fs so `ToolDispatch` can be
 /// threaded into `UpdateProcessor` as an optional collaborator (T016).
+///
+/// `PlanButton`/`ToolKeyboard` (data-model.md "Neutral keyboard plan") moved to Values.fs in T022
+/// (US2): `PressContext.EditKeyboardAsync` (Domain.fs) needs `ToolKeyboard`, and Domain.fs compiles
+/// before this file — see Values.fs's own comment on those two types.
 
 /// Validation outcomes for the Tool Router surface (data-model.md "ToolError"). `InvalidKeyboard`
 /// wraps slice-1's `KeyboardError` (deviation, disclosed: the data-model sketch lists three cases;
@@ -44,19 +48,6 @@ module ToolName =
 /// `Hook`, a `Tool` is looked up by `ToolName` (via `IToolRegistry`), not bound at keyboard-build
 /// time — the same registered tool can be targeted by many different keyboards/bindings.
 type Tool = PressContext -> Task
-
-/// The host-filled, LLM-agnostic keyboard plan (data-model.md "Neutral keyboard plan", research.md
-/// D7). `label`/`toolName`/`url` are raw strings — validated by `ToolPlan.plan` at send time (mirrors
-/// slice-1's `ButtonSpec`, whose raw `Label` is validated by `Keyboard.create`).
-type PlanButton =
-    | ToolButton of label: string * toolName: string * arg: string option
-    | UrlButton of label: string * url: string
-
-/// The neutral, unvalidated plan (data-model.md "ToolKeyboard"): >=1 row, each >=1 button by
-/// convention; `ToolPlan.plan` and the façade's `Plan.rows` are where that shape is actually
-/// enforced (see their doc comments) — this record itself is a plain data holder, like slice-1's
-/// `ButtonSpec list list` before `Keyboard.create` validates it.
-type ToolKeyboard = { Rows: PlanButton list list }
 
 /// One button→tool association, as stored by `IBindingStore` (data-model.md "Tool binding").
 /// Unlike slice-1's `HookBinding` (`Token -> live Hook` closure, non-serializable), every field here
@@ -219,6 +210,12 @@ type InMemoryBindingStore() =
 /// press (FR-005/FR-010) — no separate "known binding, unknown tool" branch is needed.
 [<Sealed>]
 type ToolDispatch(registry: IToolRegistry, store: IBindingStore) =
+
+    /// Exposed so `UpdateProcessor`'s edit-in-place wiring (feature 002-llm-tool-router, T022) can
+    /// save the bindings for a tool button's REPLACEMENT keyboard (`PressContext.EditKeyboardAsync`)
+    /// into the SAME store this dispatch resolves presses against — a re-plan without this would
+    /// register bindings nothing could ever resolve.
+    member _.Store: IBindingStore = store
 
     member _.Resolve(token: CallbackToken, ct: CancellationToken) : ValueTask<(Tool * ToolBinding) voption> =
         ValueTask<(Tool * ToolBinding) voption>(

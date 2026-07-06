@@ -61,7 +61,36 @@ type UpdateProcessor
     /// "exactly one ack" true by construction; the try/with around the actual API call is a
     /// defensive backstop for the real Bot API rejecting a stale/duplicate answer server-side
     /// (`"query ID is invalid"`), which this in-process guard already makes practically unreachable.
-    let buildToolWork (press: ButtonPress) (tool: Tool) (binding: ToolBinding) : CancellationToken -> Task =
+    /// `PressContext.EditTextAsync`'s backing closure on the deferred-ack tool path (feature
+    /// 002-llm-tool-router, T022): edits the PRESSED message's text, leaving its current keyboard
+    /// untouched (`None`, research.md D1). An invalid `text` is a programmer error by the tool
+    /// author (Always-Rule 6), same fail-fast convention as `makeReplyTextAsync`.
+    let makeEditTextAction (press: ButtonPress) (workCt: CancellationToken) (text: string) : Task =
+        match MessageText.create text with
+        | Ok messageText -> api.EditMessageText(press.Chat, press.MessageId, messageText, None, workCt)
+        | Error error -> invalidArg (nameof text) $"PressContext.EditTextAsync: invalid text ({error})"
+
+    /// `PressContext.EditKeyboardAsync`'s backing closure (T022): re-plans the replacement layout
+    /// via `ToolPlan.plan` (fresh tokens) and saves its bindings into the SAME `bindingStore` this
+    /// press's `ToolDispatch` resolves against, BEFORE the edit reaches Telegram — same
+    /// before-the-wire ordering guarantee as `SendKeyboardPlan`/`AgentOps.sendKeyboard`. An invalid
+    /// plan is a programmer error by the tool author (Always-Rule 6), same convention as
+    /// `TgBot.SendKeyboardPlan`.
+    let makeEditKeyboardAction
+        (press: ButtonPress)
+        (bindingStore: IBindingStore)
+        (workCt: CancellationToken)
+        (plan: ToolKeyboard)
+        : Task =
+        task {
+            match ToolPlan.plan (Seq.initInfinite (fun _ -> CallbackToken.generate ())) plan with
+            | Error e -> invalidArg (nameof plan) $"PressContext.EditKeyboardAsync: invalid plan ({e})"
+            | Ok(registeredKeyboard, bindings) ->
+                do! bindingStore.Save(bindings, workCt)
+                do! api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
+        }
+
+    let buildToolWork (press: ButtonPress) (tool: Tool) (binding: ToolBinding) (bindingStore: IBindingStore) : CancellationToken -> Task =
         fun workCt ->
             task {
                 let mutable ackText: string option = None
@@ -90,7 +119,9 @@ type UpdateProcessor
                         workCt,
                         makeReplyTextAsync press workCt,
                         ?arg = binding.Arg,
-                        answerAction = answerAction
+                        answerAction = answerAction,
+                        editTextAction = makeEditTextAction press workCt,
+                        editKeyboardAction = makeEditKeyboardAction press bindingStore workCt
                     )
 
                 let runTool () : Task =
@@ -151,7 +182,7 @@ type UpdateProcessor
                 let! resolved = dispatch.Resolve(press.Token, ct)
 
                 match resolved with
-                | ValueSome(tool, binding) -> do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding)
+                | ValueSome(tool, binding) -> do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch.Store)
                 | ValueNone -> do! processHookStorePress ct press
         }
 

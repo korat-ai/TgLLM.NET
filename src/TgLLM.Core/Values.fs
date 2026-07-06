@@ -73,3 +73,20 @@ module MessageText =
         match create raw with
         | Ok m -> m
         | Error e -> invalidArg (nameof raw) $"MessageText.unsafe: invalid text ({e})"
+
+/// The host-filled, LLM-agnostic keyboard plan (data-model.md "Neutral keyboard plan", research.md
+/// D7). Relocated here from `Tools.fs` (feature 002-llm-tool-router, T022, disclosed deviation): US2
+/// needs `PressContext.EditKeyboardAsync` (Domain.fs) to accept a `ToolKeyboard`, and `PressContext`
+/// compiles before `Tools.fs` (see the compile-order comment in `TgLLM.Core.fsproj`); `PlanButton`/
+/// `ToolKeyboard` have no dependency beyond primitive types, so moving just these two types this
+/// early costs nothing and unblocks the forward reference. `ToolPlan`, `ToolBinding`, `ToolError`,
+/// `IToolRegistry`, `IBindingStore`, and `ToolDispatch` all stay in `Tools.fs`, unaffected.
+type PlanButton =
+    | ToolButton of label: string * toolName: string * arg: string option
+    | UrlButton of label: string * url: string
+
+/// The neutral, unvalidated plan (data-model.md "ToolKeyboard"): >=1 row, each >=1 button by
+/// convention; `ToolPlan.plan` and the façade's `Plan.rows` are where that shape is actually
+/// enforced (see their doc comments) — this record itself is a plain data holder, like slice-1's
+/// `ButtonSpec list list` before `Keyboard.create` validates it.
+type ToolKeyboard = { Rows: PlanButton list list }

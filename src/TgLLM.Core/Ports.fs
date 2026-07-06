@@ -62,6 +62,26 @@ type IBotApiClient =
     /// is expected to catch and swallow when racing a watchdog (D2) — this port itself does not.
     abstract AnswerCallback: query: CallbackQueryId * text: string option * showAlert: bool * ct: CancellationToken -> Task
 
+    /// Edit a message's text in place, optionally replacing its keyboard in the same call
+    /// (feature 002-llm-tool-router, FR-006, research.md D1, T021). `keyboard = None` leaves the
+    /// message's CURRENT keyboard untouched (Telegram's own `editMessageText` semantics: omitting
+    /// `reply_markup` preserves whatever markup the message already has); `Some` replaces it, same
+    /// as `SendKeyboard`'s unconditional markup. Implementations let `ApiRequestException` (e.g.
+    /// `"message to edit not found"`/`"message is not modified"`) propagate rather than swallowing
+    /// it — `UpdateProcessor`'s existing per-tool try/with (buildToolWork) already catches and
+    /// reports ANY exception a tool raises via `IHookObserver`, so a caught-and-surfaced-not-crashed
+    /// edit failure falls out of that existing machinery for free, with no new observer plumbing
+    /// needed here (this port has no `ButtonPress` to attribute a failure to in the first place).
+    abstract EditMessageText:
+        chat: ChatId * message: MessageId * text: MessageText * keyboard: RegisteredKeyboard option * ct: CancellationToken ->
+            Task
+
+    /// Replace a message's keyboard only, leaving its text untouched (feature 002-llm-tool-router,
+    /// FR-006, research.md D1, T021). Same propagate-don't-swallow error handling as
+    /// `EditMessageText` above.
+    abstract EditMessageReplyMarkup:
+        chat: ChatId * message: MessageId * keyboard: RegisteredKeyboard option * ct: CancellationToken -> Task
+
 /// The observability seam (FR-009, FR-010). Default: `NoopHookObserver`. Façades bridge this to
 /// `ILogger` so failures are surfaced, never swallowed; Core stays dependency-free.
 type IHookObserver =

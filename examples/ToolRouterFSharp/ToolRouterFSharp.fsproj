@@ -10,7 +10,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\TgLLM.FSharp\TgLLM.FSharp.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.AspNetCore\TgLLM.AspNetCore.fsproj" />
   </ItemGroup>
 
 </Project>

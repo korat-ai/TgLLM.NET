@@ -79,6 +79,88 @@ await using var agent = await TelegramAgent.StartWebhookAsync(new TelegramAgentO
 app.MapTelegramWebhook("/telegram/webhook", agent.WebhookSource, "<SECRET>");
 ```
 
+## Tool Router
+
+Instead of attaching a hook to each button at keyboard-build time, register named **tools** once,
+then turn a runtime decision (an LLM agent's tool call, or any data source) into a neutral keyboard
+**plan** — labels, tool names, optional string args, and plain URL buttons. A press resolves by name
+to the exact registered tool; the bound argument is on `ctx.Arg`. The library ships no vendor LLM
+parsers — you map your own agent's output into `Plan.tool`/`Plan.toolWithArg`/`Plan.url` calls.
+
+```fsharp
+open TgLLM.Core
+open TgLLM.FSharp
+
+let tools =
+    ToolRegistry.create()
+        .Register("approve", fun ctx -> ctx.EditTextAsync $"Approved by {ctx.User.FirstName}")
+        .Register("reject",  fun ctx -> task { ctx.Answer("Rejected", alert = true) })
+
+task {
+    use! bot = TgBot.startPolling ((TgBotConfig.create "<BOT_TOKEN>").WithTools tools)
+
+    let plan =
+        Plan.rows [ [ Plan.toolWithArg "Approve" "approve" "build-42"; Plan.tool "Reject" "reject" ]
+                    [ Plan.url "Docs" "https://example.test/docs" ] ]
+
+    match plan with
+    | Ok p -> let! _ = bot.SendKeyboardPlan(chatId, MessageText.unsafe "Deploy?", p) in ()
+    | Error e -> eprintfn "%A" e
+}
+```
+
+```csharp
+using TgLLM.CSharp;
+
+var tools = new ToolRegistry()
+    .Register("approve", ctx => ctx.EditTextAsync($"Approved by {ctx.User.FirstName}"))
+    .Register("reject",  ctx => { ctx.Answer("Rejected", alert: true); return Task.CompletedTask; });
+
+await using var agent = await TelegramAgent.StartPollingAsync(
+    new TelegramAgentOptions { BotToken = "<BOT_TOKEN>", Tools = tools });
+
+var plan = new PlanBuilder()
+    .Row(r => r.Tool("Approve", "approve", "build-42").Tool("Reject", "reject"))
+    .Row(r => r.Url("Docs", "https://example.test/docs"))
+    .Build();
+
+await agent.SendKeyboardPlanAsync(chatId, "Deploy?", plan);
+```
+
+**What a tool can do**, via its `PressContext` (`ctx`):
+
+- `ctx.Arg` — the bound string argument (or `null`/`None` if the button carried none).
+- `ctx.EditTextAsync(text)` / `ctx.EditKeyboardAsync(plan)` — edit the pressed message's text and/or
+  replace its keyboard **in place** — no new message is sent.
+- `ctx.Answer(text, alert)` — show a toast (or a blocking alert) when the tap resolves; sent exactly
+  once, after the tool returns (a watchdog keeps the client's loading spinner responsive even if the
+  tool is slow).
+- URL buttons (`Plan.url` / `PlanRowBuilder.Url`) open client-side and invoke no tool — mix them with
+  tool buttons in the same keyboard.
+
+**Durable bindings** (survive a restart): back the registry with a file-based store from
+`TgLLM.Persistence` instead of the in-memory default.
+
+```fsharp
+open TgLLM.Persistence
+
+let store = FileBindingStore.openAt "bindings.json"
+use! bot = TgBot.startPolling (((TgBotConfig.create "<BOT_TOKEN>").WithTools tools).WithBindingStore store)
+```
+
+```csharp
+var store = TgLLM.Persistence.FileBindingStore.OpenAt("bindings.json");
+await using var agent = await TelegramAgent.StartPollingAsync(
+    new TelegramAgentOptions { BotToken = "<BOT_TOKEN>", Tools = tools, BindingStore = store });
+```
+
+A NEW `FileBindingStore.openAt`/`OpenAt` over the SAME path loads whatever was saved by a previous
+run — re-register your tools (by the same names) and taps sent before a restart still route.
+
+Full runnable examples: [`examples/ToolRouterFSharp`](../examples/ToolRouterFSharp),
+[`examples/ToolRouterCSharp`](../examples/ToolRouterCSharp) (both demonstrate long polling and
+webhooks via a `TRANSPORT` environment variable).
+
 ## What you can rely on
 
 - **Right hook, every tap.** Each button routes to exactly its own handler; taps never cross.

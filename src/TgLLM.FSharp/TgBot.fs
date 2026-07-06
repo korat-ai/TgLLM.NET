@@ -64,19 +64,28 @@ type TgBotConfig =
       Logger: ILogger option
       /// Feature 002-llm-tool-router (T017): tools available to `SendKeyboardPlan`-sent keyboards.
       /// `None` (the default) means the bot has no Tool Router wired in — plain slice-1 behavior.
-      Tools: ToolRegistry option }
+      Tools: ToolRegistry option
+      /// Feature 002-llm-tool-router (T027, US3, research.md D5): the store backing every
+      /// tool-button binding (`SendKeyboardPlan`'s saves AND `ToolDispatch`'s resolves). `None` (the
+      /// default) keeps slice-1/MVP behavior — an in-process `InMemoryBindingStore`; `Some` (e.g. a
+      /// `TgLLM.Persistence.FileBindingStore`) makes bindings survive a restart (SC-004).
+      BindingStore: IBindingStore option }
 
     static member create(botToken: string) =
         { BotToken = botToken
           BaseUrl = None
           Logger = None
-          Tools = None }
+          Tools = None
+          BindingStore = None }
 
     member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger (FR-009).
     member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
     /// Wire a Tool Router registry into this bot (contracts/tool-router.md).
     member this.WithTools(tools: ToolRegistry) = { this with Tools = Some tools }
+    /// Back tool bindings with a durable store (contracts/tool-router.md "Durable store") instead of
+    /// the in-memory default — e.g. `TgLLM.Persistence.FileBindingStore.openAt "bindings.json"`.
+    member this.WithBindingStore(store: IBindingStore) = { this with BindingStore = Some store }
 
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
@@ -90,7 +99,10 @@ type TgWebhookConfig =
       Logger: ILogger option
       /// Feature 002-llm-tool-router (T017): kept in lockstep with `TgBotConfig.Tools` so hook/tool
       /// code and wiring stay identical regardless of transport (Principle IV).
-      Tools: ToolRegistry option }
+      Tools: ToolRegistry option
+      /// Feature 002-llm-tool-router (T027, US3): kept in lockstep with `TgBotConfig.BindingStore` —
+      /// see its doc comment.
+      BindingStore: IBindingStore option }
 
     static member create(botToken: string, publicUrl: string, secretToken: string) =
         { BotToken = botToken
@@ -98,13 +110,16 @@ type TgWebhookConfig =
           SecretToken = secretToken
           BaseUrl = None
           Logger = None
-          Tools = None }
+          Tools = None
+          BindingStore = None }
 
     member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger (FR-009).
     member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
     /// Wire a Tool Router registry into this bot (contracts/tool-router.md).
     member this.WithTools(tools: ToolRegistry) = { this with Tools = Some tools }
+    /// Back tool bindings with a durable store instead of the in-memory default (contracts/tool-router.md).
+    member this.WithBindingStore(store: IBindingStore) = { this with BindingStore = Some store }
 
 /// A running bot: ingests updates in the background and lets the agent send keyboards/messages.
 /// Dispose (`use!`/`IAsyncDisposable`) to stop ingestion and release the per-chat dispatcher.
@@ -194,7 +209,7 @@ type TgBot
             let client = TgBot.buildClient (config.BotToken, config.BaseUrl)
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
-            let bindingStore = InMemoryBindingStore() :> IBindingStore
+            let bindingStore = config.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
             let observer =
                 match config.Logger with
@@ -218,7 +233,7 @@ type TgBot
             do! client.SetWebhook(url = config.PublicUrl, secretToken = config.SecretToken)
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
-            let bindingStore = InMemoryBindingStore() :> IBindingStore
+            let bindingStore = config.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
             let observer =
                 match config.Logger with

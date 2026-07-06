@@ -82,10 +82,10 @@ runs with correct arg; a plan naming an unregistered tool → tap acked, no run,
 **Independent Test**: tap a tool that edits the message to new text + a new keyboard → same message
 changes, no new message; a tool that requests a toast → the ack carries it.
 
-- [ ] T021 [US2] Add `IBotApiClient.EditMessageText` / `EditMessageReplyMarkup` in `src/TgLLM.Core/Ports.fs` and implement over Telegram.Bot in `src/TgLLM.BotApi/TelegramBotApiClient.fs`, catching `ApiRequestException` (`message to edit not found` / `message is not modified`) and surfacing via `IHookObserver` (no crash)
-- [ ] T022 [US2] Extend `PressContext` with `EditTextAsync(text)` and `EditKeyboardAsync(plan)` (the latter re-plans + registers bindings for the replacement keyboard) wired to the new client methods in `src/TgLLM.Core/Domain.fs`/`UpdateProcessor.fs`; expose them on both façades' `PressContext` view
-- [ ] T023 [US2] [test] Integration: a tapped tool edits the pressed message in place (text + replaced keyboard) — the same message changes and NO new message is sent (SC-003); a tapped tool that calls `Answer(text, alert)` → `answerCallbackQuery` carries the text/`show_alert` in `tests/TgLLM.Integration.Tests/EditInPlaceTests.fs`
-- [ ] T024 [US2] [test] Integration edge: editing a vanished message (fake returns `message to edit not found`) is surfaced via the observer and does not crash the bot in `tests/TgLLM.Integration.Tests/EditInPlaceTests.fs`
+- [X] T021 [US2] Add `IBotApiClient.EditMessageText` / `EditMessageReplyMarkup` in `src/TgLLM.Core/Ports.fs` and implement over Telegram.Bot in `src/TgLLM.BotApi/TelegramBotApiClient.fs`, catching `ApiRequestException` (`message to edit not found` / `message is not modified`) and surfacing via `IHookObserver` (no crash)
+- [X] T022 [US2] Extend `PressContext` with `EditTextAsync(text)` and `EditKeyboardAsync(plan)` (the latter re-plans + registers bindings for the replacement keyboard) wired to the new client methods in `src/TgLLM.Core/Domain.fs`/`UpdateProcessor.fs`; expose them on both façades' `PressContext` view
+- [X] T023 [US2] [test] Integration: a tapped tool edits the pressed message in place (text + replaced keyboard) — the same message changes and NO new message is sent (SC-003); a tapped tool that calls `Answer(text, alert)` → `answerCallbackQuery` carries the text/`show_alert` in `tests/TgLLM.Integration.Tests/EditInPlaceTests.fs`
+- [X] T024 [US2] [test] Integration edge: editing a vanished message (fake returns `message to edit not found`) is surfaced via the observer and does not crash the bot in `tests/TgLLM.Integration.Tests/EditInPlaceTests.fs`
 
 **Checkpoint**: multi-step in-place LLM flows work; slice-1 green.
 
@@ -98,10 +98,10 @@ changes, no new message; a tool that requests a toast → the ack carries it.
 **Independent Test**: send a plan with a file store; re-open the store in a fresh bot (same tools);
 tap a pre-restart button → the bound tool runs.
 
-- [ ] T025 [US3] [test] Failing tests for `FileBindingStore` (Save → TryGet; re-open the file in a new instance and TryGet returns the saved binding; Remove) in `tests/TgLLM.Persistence.Tests/FileBindingStoreTests.fs`
-- [ ] T026 [US3] Implement `FileBindingStore : IBindingStore` (System.Text.Json on disk; loads existing bindings on open; single-writer serialization) in `src/TgLLM.Persistence/FileBindingStore.fs` to green T025
-- [ ] T027 [US3] Wire `TgBotConfig.WithBindingStore` (F#) and `TelegramAgentOptions.BindingStore` (C#) so the configured store backs the `ToolDispatch` in `src/TgLLM.FSharp/` and `src/TgLLM.CSharp/`
-- [ ] T028 [US3] [test] Integration: send a plan with a `FileBindingStore`; simulate a restart (new bot + processor, same store file + re-registered tools); tap a pre-restart button → the bound tool runs (SC-004); a tap whose tool is no longer registered → acked + surfaced in `tests/TgLLM.Integration.Tests/RestartPersistenceTests.fs`
+- [X] T025 [US3] [test] Failing tests for `FileBindingStore` (Save → TryGet; re-open the file in a new instance and TryGet returns the saved binding; Remove) in `tests/TgLLM.Persistence.Tests/FileBindingStoreTests.fs`
+- [X] T026 [US3] Implement `FileBindingStore : IBindingStore` (System.Text.Json on disk; loads existing bindings on open; single-writer serialization) in `src/TgLLM.Persistence/FileBindingStore.fs` to green T025
+- [X] T027 [US3] Wire `TgBotConfig.WithBindingStore` (F#) and `TelegramAgentOptions.BindingStore` (C#) so the configured store backs the `ToolDispatch` in `src/TgLLM.FSharp/` and `src/TgLLM.CSharp/`
+- [X] T028 [US3] [test] Integration: send a plan with a `FileBindingStore`; simulate a restart (new bot + processor, same store file + re-registered tools); tap a pre-restart button → the bound tool runs (SC-004); a tap whose tool is no longer registered → acked + surfaced in `tests/TgLLM.Integration.Tests/RestartPersistenceTests.fs`
 
 **Checkpoint**: restart-safe bindings; slice-1 green.
 
@@ -114,8 +114,8 @@ tap a pre-restart button → the bound tool runs.
 **Independent Test**: send a plan with one URL button and one tool button; the URL button maps to a
 URL button (no token/binding) and the tool button routes.
 
-- [ ] T029 [US4] [test] Integration: a plan with a URL button + a tool button → the sent keyboard's URL button carries the url (no `callback_data`/token/binding) and the tool button still routes on tap in `tests/TgLLM.Integration.Tests/UrlButtonTests.fs`
-- [ ] T030 [US4] Wire the URL button end-to-end at the façades — `Plan.url` (F#) and `PlanRowBuilder.Url` (C#) — and validate a non-empty url (`ToolError.InvalidUrl` on empty); the core `ToolPlan.plan` + mapping URL passthrough already exist from T007
+- [X] T029 [US4] [test] Integration: a plan with a URL button + a tool button → the sent keyboard's URL button carries the url (no `callback_data`/token/binding) and the tool button still routes on tap in `tests/TgLLM.Integration.Tests/UrlButtonTests.fs`
+- [X] T030 [US4] Wire the URL button end-to-end at the façades — `Plan.url` (F#) and `PlanRowBuilder.Url` (C#) — and validate a non-empty url (`ToolError.InvalidUrl` on empty); the core `ToolPlan.plan` + mapping URL passthrough already exist from T007
 
 **Checkpoint**: all four stories independently pass; slice-1 green.
 
@@ -123,17 +123,17 @@ URL button (no token/binding) and the tool button routes.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T031 [P] Example apps `examples/ToolRouterFSharp` and `examples/ToolRouterCSharp`: register tools + build a data-driven plan (stand-in for an LLM decision), demonstrating BOTH long polling and webhooks (Principle VIII)
-- [ ] T032 [P] Update user docs: a Tool Router section in `README.md`, `docs/quickstart.md`, and a `CHANGELOG.md` entry (Principle VII/VIII)
-- [ ] T033 Full verification: run the whole suite on `net10.0`; confirm the slice-1 62 tests are still green AND SC-001..SC-007 and the C# leak canary pass; confirm the library ships NO business tools (FR-011 — the tool catalog is user code only); verify the Bot API facts used (research D1–D4: edit errors, one-shot ack, URL semantics, callback_data size) against the code
+- [X] T031 [P] Example apps `examples/ToolRouterFSharp` and `examples/ToolRouterCSharp`: register tools + build a data-driven plan (stand-in for an LLM decision), demonstrating BOTH long polling and webhooks (Principle VIII)
+- [X] T032 [P] Update user docs: a Tool Router section in `README.md`, `docs/quickstart.md`, and a `CHANGELOG.md` entry (Principle VII/VIII)
+- [X] T033 Full verification: run the whole suite on `net10.0`; confirm the slice-1 62 tests are still green AND SC-001..SC-007 and the C# leak canary pass; confirm the library ships NO business tools (FR-011 — the tool catalog is user code only); verify the Bot API facts used (research D1–D4: edit errors, one-shot ack, URL semantics, callback_data size) against the code
 
 ## Phase 8: Added coverage (from /speckit-analyze — close SC-007 / SC-002 gaps)
 
 > These are US1 acceptance extensions; run them once US1 (T012–T020) is complete. Appended here to
 > avoid renumbering the additive task list.
 
-- [ ] T034 [US1] [test] SC-007 both-transports tool-router acceptance: run the US1 tool-routing scenario over long polling AND webhooks and assert identical tool behavior (bound tool + arg) across transports in `tests/TgLLM.Integration.Tests/ToolRouterBothTransportsTests.fs`
-- [ ] T035 [US1] [test] SC-002 tool-routing at scale: ≥100 interleaved taps spanning multiple tools and arguments each invoke exactly their bound tool with the correct arg, zero cross-invocation (engine-level, real `ToolDispatch` + `UpdateProcessor` + in-memory fakes, like slice-1's routing-at-scale test) in `tests/TgLLM.Integration.Tests/ToolRoutingAtScaleTests.fs`
+- [X] T034 [US1] [test] SC-007 both-transports tool-router acceptance: run the US1 tool-routing scenario over long polling AND webhooks and assert identical tool behavior (bound tool + arg) across transports in `tests/TgLLM.Integration.Tests/ToolRouterBothTransportsTests.fs`
+- [X] T035 [US1] [test] SC-002 tool-routing at scale: ≥100 interleaved taps spanning multiple tools and arguments each invoke exactly their bound tool with the correct arg, zero cross-invocation (engine-level, real `ToolDispatch` + `UpdateProcessor` + in-memory fakes, like slice-1's routing-at-scale test) in `tests/TgLLM.Integration.Tests/ToolRoutingAtScaleTests.fs`
 
 ---
 
