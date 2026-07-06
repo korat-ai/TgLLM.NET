@@ -42,10 +42,12 @@ module BindingDto =
     let toDomain (dto: BindingDto) : ToolBinding option =
         match CallbackToken.tryParse dto.Token, ToolName.create dto.ToolName with
         | ValueSome token, Ok toolName ->
-            Some
-                { Token = token
-                  ToolName = toolName
-                  Arg = dto.Arg |> Option.ofObj }
+            // `BindingDto` itself doesn't carry Owner/ExpiresAt/SingleUse yet (this store's on-disk
+            // shape is untouched by this slice's foundational phase, US4 is out of scope here) —
+            // every row this store has ever written is therefore slice-2-shaped, so
+            // `ToolBinding.create`'s defaults (Anyone/None/false) are exactly correct, not a
+            // temporary shortcut (FR-017).
+            Some(ToolBinding.create token toolName (dto.Arg |> Option.ofObj))
         | _ -> None
 
 /// Durable, JSON-on-disk `IBindingStore`. `openAt` is the only public constructor path (mirrors

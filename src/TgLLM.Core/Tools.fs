@@ -26,8 +26,13 @@ open System.Threading.Tasks
 type ToolError =
     | EmptyToolName
     | UnknownTool of name: string
+    /// Also covers a `WebAppButton` whose url is missing/non-https (US3, research D4) — same class
+    /// of problem (a bad url), so it reuses this case rather than growing a near-duplicate one.
     | InvalidUrl of value: string
     | InvalidKeyboard of KeyboardError
+    /// A `CopyTextButton` whose text is outside the Bot API's 1..256-character `copy_text` limit
+    /// (US3, research D4, vendor-verified against core.telegram.org).
+    | InvalidCopyText of text: string
 
 /// The name a tool is registered and referenced under. Single-case, smart-constructed like
 /// `ButtonLabel`/`MessageText` — never a raw, unvalidated `string`.
@@ -44,6 +49,48 @@ module ToolName =
 
     let value (ToolName s) : string = s
 
+/// Who may press a tool (callback) button (US1, research D1). `Anyone` (the default, unset) keeps
+/// slice-1/2 behavior: any presser resolves the button. `User uid` restricts tool presses to that
+/// exact user — enforced ONLY on tool buttons (client-side `UrlButton`/`WebAppButton`/
+/// `CopyTextButton` carry no scope at all, research D4). `[<Struct>]` like `ButtonLabel`/`ToolName`:
+/// a small, frequently-compared value.
+[<Struct>]
+type OwnerScope =
+    | Anyone
+    | User of userId: UserId
+
+module OwnerScope =
+
+    /// The pure "is this presser allowed?" decision. `Anyone` always allows, including an
+    /// unidentifiable presser (`None`). `User uid` allows ONLY that exact user — a different user
+    /// OR a missing/anonymous presser (`None`, e.g. no `from` on the callback query) is refused;
+    /// there is no default-allow for an unidentifiable presser under a `User` scope; refusing is
+    /// the safe default.
+    let isAllowed (scope: OwnerScope) (presser: UserId option) : bool =
+        match scope, presser with
+        | Anyone, _ -> true
+        | User uid, Some pressingUser -> uid = pressingUser
+        | User _, None -> false
+
+/// "Now", injected rather than read ambiently — the expiry decision (`Expiry.isLive`) and
+/// `ProcessedQueryTracker`'s TTL bookkeeping both take one of these instead of ever calling
+/// `DateTimeOffset.Now`/`UtcNow` themselves, so Core stays deterministic and property-testable
+/// (research D5). The façade/host supplies the real clock (`fun () -> DateTimeOffset.UtcNow`) when
+/// wiring the resolve/dispatch step (US4, out of scope here).
+type Clock = unit -> DateTimeOffset
+
+/// The pure expiry decision for a `ToolBinding.ExpiresAt` (US4, research D5).
+module Expiry =
+
+    /// `None` (no expiry set) always lives. `Some expiresAt` lives strictly BEFORE `expiresAt` and
+    /// is refused AT and after it — the boundary instant itself already counts as expired, not
+    /// live (deliberate: "expires at 5:00" reads as "no longer valid from 5:00 onward"). Resolution
+    /// treats a refused (expired) binding like an unknown tool: ack, no invoke, no crash.
+    let isLive (now: DateTimeOffset) (expiresAt: DateTimeOffset option) : bool =
+        match expiresAt with
+        | None -> true
+        | Some exp -> now < exp
+
 /// The agent-supplied reaction to a tool button press. Unlike slice-1's `Hook`, a `Tool` is looked
 /// up by `ToolName` (via `IToolRegistry`), not bound at keyboard-build time — the same registered
 /// tool can be targeted by many different keyboards/bindings.
@@ -54,10 +101,35 @@ type Tool = PressContext -> Task
 /// `ToolBinding` can be serialized and persisted — hence it derives structural
 /// equality/comparison (useful for tests and durable-store round-trip checks), unlike
 /// `HookBinding`/`RouteDecision`, which hold function values and can't.
+/// Evolved additively once for US1/US2/US4 (research D1/D5/D6): `Owner`/`ExpiresAt`/`SingleUse`
+/// are NEW fields, on top of slice-2's exact `{ Token; ToolName; Arg }` shape. `Arg` stays `string
+/// option` — an opaque, possibly-JSON payload (research D3) — Core never depends on
+/// System.Text.Json.
 type ToolBinding =
     { Token: CallbackToken
       ToolName: ToolName
-      Arg: string option }
+      Arg: string option
+      /// NEW — who may press this binding's button (US1). Defaults to `Anyone`.
+      Owner: OwnerScope
+      /// NEW — when this binding stops resolving (US4). Defaults to `None` (never expires).
+      ExpiresAt: DateTimeOffset option
+      /// NEW — whether the first successful press consumes this binding (US4, confirm-once mode,
+      /// research D6). Defaults to `false`.
+      SingleUse: bool }
+
+module ToolBinding =
+
+    /// The slice-2-shaped constructor: `token`/`toolName`/`arg` are the only fields a caller not
+    /// yet using owner-scoping/expiry/single-use needs to supply — `Owner`/`ExpiresAt`/`SingleUse`
+    /// are filled with their defaults (`Anyone`/`None`/`false`), so a binding built this way is
+    /// indistinguishable from a slice-2 binding that never had those fields at all (FR-017).
+    let create (token: CallbackToken) (toolName: ToolName) (arg: string option) : ToolBinding =
+        { Token = token
+          ToolName = toolName
+          Arg = arg
+          Owner = Anyone
+          ExpiresAt = None
+          SingleUse = false }
 
 /// The pure kernel of the Tool Router (an FsCheck property-test target). Mirrors slice-1's
 /// `Keyboard.create` -> `KeyboardPlan.assign` split, but combined into one function: unlike
@@ -72,6 +144,32 @@ module ToolPlan =
     type private ValidatedButton =
         | ValidTool of label: ButtonLabel * toolName: ToolName * arg: string option
         | ValidUrl of label: ButtonLabel * url: string
+        /// US3 (research D4): a validated `WebAppButton` — `url` has already been confirmed https.
+        | ValidWebApp of label: ButtonLabel * url: string
+        /// US3 (research D4): a validated `CopyTextButton` — `text` has already been confirmed
+        /// 1..256 characters.
+        | ValidCopyText of label: ButtonLabel * text: string
+
+    /// Bot API vendor fact (core.telegram.org, Principle V): `web_app` (`WebAppInfo`) launches a
+    /// Mini App; its `url` MUST be https. A plain scheme-prefix check (rather than
+    /// `Uri.TryCreate`) is deliberate: the Bot API's own requirement is exactly "scheme is https",
+    /// not RFC-perfect URI validity, and it sidesteps `Uri.TryCreate`'s nullable `out` parameter
+    /// friction under strict nullness checking. Null-safe: a missing/empty url is simply not https.
+    let private isHttps (url: string) : bool =
+        not (String.IsNullOrEmpty url) && url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+
+    /// Bot API vendor fact (core.telegram.org, Principle V): `copy_text` (`CopyTextButton`)'s
+    /// `text` is 1..256 characters. Null-safe via `String.IsNullOrEmpty` (which itself accepts a
+    /// possibly-null string): a missing/empty text is simply out of range, reported as
+    /// `InvalidCopyText` like any other invalid length.
+    [<Literal>]
+    let private CopyTextMinLength = 1
+
+    [<Literal>]
+    let private CopyTextMaxLength = 256
+
+    let private isValidCopyTextLength (text: string) : bool =
+        not (String.IsNullOrEmpty text) && text.Length >= CopyTextMinLength && text.Length <= CopyTextMaxLength
 
     let private validateButton (button: PlanButton) : Result<ValidatedButton, ToolError> =
         match button with
@@ -86,6 +184,14 @@ module ToolPlan =
                 match ToolName.create toolName with
                 | Error e -> Error e
                 | Ok validToolName -> Ok(ValidTool(validLabel, validToolName, arg))
+        | WebAppButton(label, url) ->
+            match ButtonLabel.create label with
+            | Error e -> Error(InvalidKeyboard e)
+            | Ok validLabel -> if isHttps url then Ok(ValidWebApp(validLabel, url)) else Error(InvalidUrl url)
+        | CopyTextButton(label, text) ->
+            match ButtonLabel.create label with
+            | Error e -> Error(InvalidKeyboard e)
+            | Ok validLabel -> if isValidCopyTextLength text then Ok(ValidCopyText(validLabel, text)) else Error(InvalidCopyText text)
 
     /// Same short-circuiting fold shape as slice-1's `Keyboard.create` (Keyboard.fs).
     let private sequenceResults (items: Result<'a, ToolError> list) : Result<'a list, ToolError> =
@@ -136,7 +242,7 @@ module ToolPlan =
         |> List.exists (
             List.exists (function
                 | ToolButton _ -> true
-                | UrlButton _ -> false)
+                | UrlButton _ | WebAppButton _ | CopyTextButton _ -> false)
         )
 
     /// Validates every button, THEN assigns one token per `ToolButton` (URL buttons pass through
@@ -160,9 +266,11 @@ module ToolPlan =
             let assignButton (button: ValidatedButton) : RegisteredButton =
                 match button with
                 | ValidUrl(label, url) -> Url(label, url)
+                | ValidWebApp(label, url) -> WebApp(label, url)
+                | ValidCopyText(label, text) -> CopyText(label, text)
                 | ValidTool(label, toolName, arg) ->
                     let token = nextToken ()
-                    bindings <- { Token = token; ToolName = toolName; Arg = arg } :: bindings
+                    bindings <- ToolBinding.create token toolName arg :: bindings
                     Callback(label, token)
 
             let registeredRows = validatedRows |> List.map (List.map assignButton)
@@ -251,6 +359,59 @@ type MessageBindingTracker() =
         match tokensByMessage.TryGetValue((chat, messageId)) with
         | true, tokens -> Some tokens
         | false, _ -> None
+
+/// At-most-once redelivery dedup (US4, research D6): a bounded, TTL'd set of recently-processed
+/// `callback_query.id`s. `TryBegin` is `true` the FIRST time an id is seen — safe to process — and
+/// `false` on any repeat within the TTL (Telegram, and this library's own webhook transport under
+/// retry, can redeliver an update; a repeat resolves as "already done", never a second tool
+/// invocation). This dedupes by QUERY id, not by user re-tap: rapid but DISTINCT taps get distinct
+/// ids and each still runs the tool (conflating the two would break legitimately-repeatable menu
+/// buttons — see `SingleUse` on `ToolBinding` for the actual confirm-once mode).
+///
+/// `clock` is a required constructor parameter (never ambient `DateTimeOffset.Now`), matching
+/// `Expiry.isLive`'s own contract. Guarded by a plain `lock` rather than
+/// `ConcurrentDictionary.AddOrUpdate`: that method's update delegate can run MORE than once under
+/// contention, which would make the "is this the first sighting?" decision itself racy — exactly
+/// the thing this type exists to get right. A single lock keeps read-decide-write atomic, which
+/// matters more here than lock-free throughput for a per-callback-query bookkeeping structure.
+[<Sealed>]
+type ProcessedQueryTracker(clock: Clock, ?capacity: int, ?ttl: TimeSpan) =
+    let capacity = defaultArg capacity 10_000
+    let ttl = defaultArg ttl (TimeSpan.FromMinutes 5.0)
+    let gate = obj ()
+    let seenAt = Dictionary<string, DateTimeOffset>()
+    /// Insertion order, paired with the timestamp recorded AT that insertion — used to evict the
+    /// oldest entries once `capacity` is exceeded. A repeat past its TTL re-enqueues (with a fresh
+    /// timestamp), so an id can appear more than once here; eviction below only actually removes
+    /// `seenAt`'s entry when the dequeued (id, timestamp) pair is STILL the current one for that
+    /// id — an earlier, since-refreshed sighting is a harmless no-op, not a wrongful eviction of
+    /// the fresh one.
+    let order = Queue<string * DateTimeOffset>()
+
+    /// Drops the oldest entries (FIFO by insertion) until back at `capacity`. Only ever called
+    /// under `gate`.
+    let evictOverCapacity () =
+        while seenAt.Count > capacity && order.Count > 0 do
+            let oldestId, oldestSeenAt = order.Dequeue()
+
+            match seenAt.TryGetValue oldestId with
+            | true, currentSeenAt when currentSeenAt = oldestSeenAt -> seenAt.Remove oldestId |> ignore
+            | _ -> () // superseded by a later (TTL-refreshed) sighting, which owns its own queue entry
+
+    /// First time `queryId` is seen — or its previous sighting has aged out past `ttl` — records it
+    /// and returns `true` (safe to process). A repeat within `ttl` returns `false` (drop; this is a
+    /// redelivery of an already-processed callback query).
+    member _.TryBegin(queryId: string) : bool =
+        let now = clock ()
+
+        lock gate (fun () ->
+            match seenAt.TryGetValue queryId with
+            | true, seenTime when now - seenTime < ttl -> false
+            | _ ->
+                seenAt[queryId] <- now
+                order.Enqueue(queryId, now)
+                evictOverCapacity ()
+                true)
 
 /// The deferred-ack tool path's resolver: token -> binding (via `IBindingStore`) -> tool (via
 /// `IToolRegistry`). `ValueNone` on EITHER miss (unknown token, or a binding whose tool is no

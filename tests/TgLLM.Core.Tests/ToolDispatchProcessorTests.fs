@@ -124,7 +124,7 @@ let private makeDispatch (token: CallbackToken) (registeredToolName: string) (ar
     let store = InMemoryBindingStore() :> IBindingStore
 
     store
-        .Save([ { Token = token; ToolName = toolName registeredToolName; Arg = arg } ], CancellationToken.None)
+        .Save([ ToolBinding.create token (toolName registeredToolName) arg ], CancellationToken.None)
         .GetAwaiter()
         .GetResult()
 
@@ -293,7 +293,7 @@ let toolDispatchProcessorTests =
 
                 Expect.equal
                     savedBinding
-                    (ValueSome { Token = newToken; ToolName = toolName "undo"; Arg = None })
+                    (ValueSome(ToolBinding.create newToken (toolName "undo") None))
                     "the replacement keyboard's binding was saved into the SAME store, resolvable for the next tap"
             | other -> failwithf "expected exactly one EditKeyboard call with one replacement button, got %A" other
 

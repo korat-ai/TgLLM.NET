@@ -81,6 +81,13 @@ module MessageText =
 type PlanButton =
     | ToolButton of label: string * toolName: string * arg: string option
     | UrlButton of label: string * url: string
+    /// Launches a Telegram Mini App (US3, research D4). Client-side: no callback query, no tool,
+    /// no binding — `url` MUST be https (`ToolPlan.plan`/`validate` enforce this).
+    | WebAppButton of label: string * url: string
+    /// Copies `text` to the presser's clipboard (US3, research D4). Client-side, same as
+    /// `WebAppButton`/`UrlButton` — no callback query, no tool, no binding. `text` MUST be 1..256
+    /// characters (the Bot API's own `copy_text` limit).
+    | CopyTextButton of label: string * text: string
 
 /// The neutral, unvalidated plan: >=1 row, each >=1 button by convention; `ToolPlan.plan` and the
 /// façade's `Plan.rows` are where that shape is actually

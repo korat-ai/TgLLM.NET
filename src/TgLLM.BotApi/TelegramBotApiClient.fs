@@ -36,8 +36,15 @@ module Mapping =
     /// `RegisteredKeyboard` -> Telegram.Bot's `InlineKeyboardMarkup`: one `InlineKeyboardButton`
     /// per registered button. `Callback` buttons get `callback_data` set to the button's opaque
     /// `CallbackToken` (never the label or any agent state); `Url` buttons get a plain client-side
-    /// link — `url`/`callback_data` are mutually exclusive on one button, so these two cases map
-    /// to Telegram.Bot's two distinct factory methods, never both.
+    /// link; `WebApp`/`CopyText` (US3) map to their own Telegram.Bot factories — `url`/
+    /// `callback_data`/`web_app`/`copy_text` are all mutually exclusive on one button, so each of
+    /// these four cases maps to its own distinct Telegram.Bot factory method, never more than one.
+    ///
+    /// `WithWebApp`/`WithCopyText` and the `WebAppInfo(url)` / `CopyTextButton` (settable `Text`,
+    /// no string constructor) shapes below are verified against the installed Telegram.Bot 22.10.1
+    /// assembly via reflection (Principle V) — `InlineKeyboardButton.WithWebApp(string, WebAppInfo)`
+    /// and `InlineKeyboardButton.WithCopyText(string, CopyTextButton)` are its only two factories
+    /// for these button kinds.
     let toInlineKeyboardMarkup (RegisteredKeyboard rows) : InlineKeyboardMarkup =
         rows
         |> List.map (fun row ->
@@ -45,7 +52,12 @@ module Mapping =
             |> List.map (fun (button: RegisteredButton) ->
                 match button with
                 | Callback(label, token) -> InlineKeyboardButton.WithCallbackData(ButtonLabel.value label, CallbackToken.value token)
-                | Url(label, url) -> InlineKeyboardButton.WithUrl(ButtonLabel.value label, url))
+                | Url(label, url) -> InlineKeyboardButton.WithUrl(ButtonLabel.value label, url)
+                | WebApp(label, url) -> InlineKeyboardButton.WithWebApp(ButtonLabel.value label, WebAppInfo(url))
+                | CopyText(label, text) ->
+                    // Fully qualified: `TgLLM.Core.CopyTextButton` (the `PlanButton` case, `open`ed
+                    // last) would otherwise shadow Telegram.Bot's own `CopyTextButton` type here.
+                    InlineKeyboardButton.WithCopyText(ButtonLabel.value label, Telegram.Bot.Types.CopyTextButton(Text = text)))
             |> List.toSeq)
         |> List.toSeq
         |> InlineKeyboardMarkup

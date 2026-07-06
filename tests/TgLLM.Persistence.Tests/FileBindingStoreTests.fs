@@ -43,7 +43,7 @@ let fileBindingStoreTests =
             try
                 let store = FileBindingStore.openAt path :> IBindingStore
                 let token = CallbackToken.generate ()
-                let binding: ToolBinding = { Token = token; ToolName = toolName "approve"; Arg = Some "42" }
+                let binding: ToolBinding = ToolBinding.create token (toolName "approve") (Some "42")
 
                 (store.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
                 let result = (store.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
@@ -58,7 +58,7 @@ let fileBindingStoreTests =
             try
                 let store = FileBindingStore.openAt path :> IBindingStore
                 let token = CallbackToken.generate ()
-                let binding: ToolBinding = { Token = token; ToolName = toolName "reject"; Arg = None }
+                let binding: ToolBinding = ToolBinding.create token (toolName "reject") None
 
                 (store.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
                 let result = (store.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
@@ -72,7 +72,7 @@ let fileBindingStoreTests =
 
             try
                 let token = CallbackToken.generate ()
-                let binding: ToolBinding = { Token = token; ToolName = toolName "approve"; Arg = Some "7" }
+                let binding: ToolBinding = ToolBinding.create token (toolName "approve") (Some "7")
 
                 let firstInstance = FileBindingStore.openAt path :> IBindingStore
                 (firstInstance.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
@@ -90,7 +90,7 @@ let fileBindingStoreTests =
 
             try
                 let token = CallbackToken.generate ()
-                let binding: ToolBinding = { Token = token; ToolName = toolName "approve"; Arg = None }
+                let binding: ToolBinding = ToolBinding.create token (toolName "approve") None
 
                 let store = FileBindingStore.openAt path :> IBindingStore
                 (store.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
@@ -136,8 +136,8 @@ let fileBindingStoreTests =
 
             try
                 let tokenA, tokenB = CallbackToken.generate (), CallbackToken.generate ()
-                let bindingA: ToolBinding = { Token = tokenA; ToolName = toolName "approve"; Arg = None }
-                let bindingB: ToolBinding = { Token = tokenB; ToolName = toolName "reject"; Arg = Some "x" }
+                let bindingA: ToolBinding = ToolBinding.create tokenA (toolName "approve") None
+                let bindingB: ToolBinding = ToolBinding.create tokenB (toolName "reject") (Some "x")
 
                 let store = FileBindingStore.openAt path :> IBindingStore
                 (store.Save([ bindingA; bindingB ], CancellationToken.None)).GetAwaiter().GetResult()

@@ -12,7 +12,12 @@
     <Compile Include="KeyboardTests.fs" />
     <Compile Include="KeyboardPlanTests.fs" />
     <Compile Include="ToolNameTests.fs" />
+    <Compile Include="OwnerScopeTests.fs" />
+    <Compile Include="ToolBindingTests.fs" />
+    <Compile Include="ExpiryTests.fs" />
+    <Compile Include="ProcessedQueryTrackerTests.fs" />
     <Compile Include="ToolPlanTests.fs" />
+    <Compile Include="ToolPlanExtTests.fs" />
     <Compile Include="ToolRegistryTests.fs" />
     <Compile Include="BindingStoreTests.fs" />
     <Compile Include="MessageBindingTrackerTests.fs" />

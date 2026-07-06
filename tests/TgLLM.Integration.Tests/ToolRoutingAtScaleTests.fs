@@ -167,8 +167,7 @@ let toolRoutingAtScaleTests =
                       let tools = [ for name in toolNames -> name, recordingTool name ]
 
                       let bindings =
-                          [ for token, name, arg in tokenAssignments ->
-                                { Token = token; ToolName = toolName name; Arg = Some arg } ]
+                          [ for token, name, arg in tokenAssignments -> ToolBinding.create token (toolName name) (Some arg) ]
 
                       // 120 presses distributed deterministically across the 8 tokens / 2 chats.
                       let events =

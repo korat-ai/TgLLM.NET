@@ -212,11 +212,12 @@ let updateProcessorTests =
             let token = CallbackToken.generate ()
 
             let binding: ToolBinding =
-                { Token = token
-                  ToolName = (match ToolName.create "x" with
-                              | Ok n -> n
-                              | Error e -> failwithf "test setup: unreachable %A" e)
-                  Arg = None }
+                ToolBinding.create
+                    token
+                    (match ToolName.create "x" with
+                     | Ok n -> n
+                     | Error e -> failwithf "test setup: unreachable %A" e)
+                    None
 
             let tool: Tool = fun _ -> Task.CompletedTask
             let dispatch = ToolDispatch(InMemoryToolRegistry(), InMemoryBindingStore())

@@ -72,6 +72,35 @@ let botApiClientTests =
                 Expect.equal btnNo.CallbackData (CallbackToken.value tokenNo) "second button's callback_data is its token"
             | other -> failwithf "expected exactly one row of two buttons, got %A" other
 
+        testCase "Mapping.toInlineKeyboardMarkup maps WebApp/CopyText buttons to their own Telegram.Bot factories (US3)" <| fun _ ->
+            let registered =
+                RegisteredKeyboard [
+                    [ WebApp(label "Open", "https://example.test/app")
+                      CopyText(label "Copy", "snippet-1") ]
+                ]
+
+            let markup = Mapping.toInlineKeyboardMarkup registered
+            let rows = markup.InlineKeyboard |> Seq.map List.ofSeq |> List.ofSeq
+
+            match rows with
+            | [ [ btnWebApp; btnCopy ] ] ->
+                Expect.equal btnWebApp.Text "Open" "the WebApp button's visible text is preserved"
+
+                match btnWebApp.WebApp |> Option.ofObj with
+                | Some webApp -> Expect.equal webApp.Url "https://example.test/app" "the WebApp button carries its url, not callback_data"
+                | None -> failtest "expected the mapped button to carry a WebApp payload"
+
+                Expect.isNull btnWebApp.CallbackData "a WebApp button is client-side — no callback_data"
+
+                Expect.equal btnCopy.Text "Copy" "the CopyText button's visible text is preserved"
+
+                match btnCopy.CopyText |> Option.ofObj with
+                | Some copyText -> Expect.equal copyText.Text "snippet-1" "the CopyText button carries its clipboard text"
+                | None -> failtest "expected the mapped button to carry a CopyText payload"
+
+                Expect.isNull btnCopy.CallbackData "a CopyText button is client-side — no callback_data"
+            | other -> failwithf "expected exactly one row of two buttons, got %A" other
+
         testCase "SendText posts sendMessage with chat_id and text" <| fun _ ->
             task {
                 use! server = FakeBotApiServer.start ()
