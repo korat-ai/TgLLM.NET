@@ -65,6 +65,13 @@ type private FakeBotApiClient() =
             answered.Add query
             Task.CompletedTask
 
+        /// This file only exercises the slice-1 ack-first path (no `?toolDispatch`), so the
+        /// deferred-ack overload is never actually invoked here — implemented to satisfy
+        /// `IBotApiClient`, mirroring the 2-arg overload's bookkeeping.
+        member _.AnswerCallback(query, _text, _showAlert, _ct) =
+            answered.Add query
+            Task.CompletedTask
+
 /// Records enqueued work instead of running it on real per-chat channels — the test decides
 /// when (and whether) to invoke a recorded work item, so it can assert on the *closure UpdateProcessor
 /// built* (ack-before-hook ordering, exception isolation) independently of the real dispatcher

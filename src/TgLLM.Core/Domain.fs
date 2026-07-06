@@ -62,7 +62,9 @@ type PressContext
         user: EndUser,
         messageId: MessageId,
         cancellationToken: CancellationToken,
-        replyTextAsync: string -> Task<MessageId>
+        replyTextAsync: string -> Task<MessageId>,
+        ?arg: string,
+        ?answerAction: (string -> bool -> unit)
     ) =
     member _.ButtonLabel = buttonLabel
     member _.Chat = chat
@@ -74,6 +76,21 @@ type PressContext
     /// not satisfy `MessageText`'s invariants — an invalid literal passed by the hook author is
     /// not a business error to route through `Result`.
     member _.ReplyTextAsync(text: string) : Task<MessageId> = replyTextAsync text
+
+    /// The bound tool argument (feature 002-llm-tool-router, FR-003/D4, data-model.md "PressContext
+    /// (additive)"). `null` for slice-1 closure-style hooks and for argument-less tool buttons —
+    /// annotated nullable, not `string option`, because this is a public API boundary consumed
+    /// directly by the C# façade (Principle II: no `FSharpOption` on the C# surface).
+    member _.Arg: string | null = arg |> Option.toObj
+
+    /// Sets the ack directive for the deferred-ack tool path (research.md D2): the processor sends
+    /// it via `AnswerCallback` exactly once, after the tool returns (or the watchdog fires,
+    /// whichever first). On the slice-1 closure (`IHookStore`) path the ack has already fired
+    /// ack-first, so this is a documented no-op there — `answerAction` is absent in that case.
+    member _.Answer(text: string, ?alert: bool) : unit =
+        match answerAction with
+        | Some action -> action text (defaultArg alert false)
+        | None -> ()
 
 /// The agent-supplied reaction to a button press (FR-002, data-model.md "Hook & HookBinding").
 /// Façades adapt this to their own idiomatic delegate type (`Func<PressContext, Task>` for C#).

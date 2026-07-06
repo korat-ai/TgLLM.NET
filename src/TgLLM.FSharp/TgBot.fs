@@ -61,12 +61,22 @@ module Keyboard =
 type TgBotConfig =
     { BotToken: string
       BaseUrl: string option
-      Logger: ILogger option }
+      Logger: ILogger option
+      /// Feature 002-llm-tool-router (T017): tools available to `SendKeyboardPlan`-sent keyboards.
+      /// `None` (the default) means the bot has no Tool Router wired in — plain slice-1 behavior.
+      Tools: ToolRegistry option }
 
-    static member create(botToken: string) = { BotToken = botToken; BaseUrl = None; Logger = None }
+    static member create(botToken: string) =
+        { BotToken = botToken
+          BaseUrl = None
+          Logger = None
+          Tools = None }
+
     member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger (FR-009).
     member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
+    /// Wire a Tool Router registry into this bot (contracts/tool-router.md).
+    member this.WithTools(tools: ToolRegistry) = { this with Tools = Some tools }
 
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
@@ -77,18 +87,24 @@ type TgWebhookConfig =
       PublicUrl: string
       SecretToken: string
       BaseUrl: string option
-      Logger: ILogger option }
+      Logger: ILogger option
+      /// Feature 002-llm-tool-router (T017): kept in lockstep with `TgBotConfig.Tools` so hook/tool
+      /// code and wiring stay identical regardless of transport (Principle IV).
+      Tools: ToolRegistry option }
 
     static member create(botToken: string, publicUrl: string, secretToken: string) =
         { BotToken = botToken
           PublicUrl = publicUrl
           SecretToken = secretToken
           BaseUrl = None
-          Logger = None }
+          Logger = None
+          Tools = None }
 
     member this.WithBaseUrl(url: string) = { this with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger (FR-009).
     member this.WithLogger(logger: ILogger) = { this with Logger = Some logger }
+    /// Wire a Tool Router registry into this bot (contracts/tool-router.md).
+    member this.WithTools(tools: ToolRegistry) = { this with Tools = Some tools }
 
 /// A running bot: ingests updates in the background and lets the agent send keyboards/messages.
 /// Dispose (`use!`/`IAsyncDisposable`) to stop ingestion and release the per-chat dispatcher.
@@ -98,6 +114,7 @@ type TgBot
     (
         api: IBotApiClient,
         store: IHookStore,
+        bindingStore: IBindingStore,
         dispatcher: IPressDispatcher,
         cts: CancellationTokenSource,
         runTask: Task,
@@ -108,6 +125,26 @@ type TgBot
         AgentOps.sendKeyboard store api CallbackToken.generate chat text keyboard cts.Token
 
     member _.SendText(chat: ChatId, text: MessageText) : Task<MessageId> = api.SendText(chat, text, cts.Token)
+
+    /// Send a keyboard built from a neutral Tool Router plan (T017, contracts/tool-router.md);
+    /// presses route to the tools registered via `TgBotConfig.WithTools`. Bindings are saved BEFORE
+    /// the send completes, same ordering guarantee as `SendKeyboard`/`AgentOps.sendKeyboard`
+    /// (data-model.md "Outbound: send a keyboard"). An invalid plan (e.g. a bad label/url that
+    /// `Plan.rows` didn't catch) is a programmer error by the caller (Always-Rule 6) — this member
+    /// returns `Task<MessageId>` directly (no `Result`), so it fails fast rather than forcing every
+    /// caller to unwrap a `Result` for what should have been validated when the plan was built.
+    member _.SendKeyboardPlan(chat: ChatId, text: MessageText, plan: ToolKeyboard) : Task<MessageId> =
+        task {
+            match ToolPlan.plan (Seq.initInfinite (fun _ -> CallbackToken.generate ())) plan with
+            | Error e -> return invalidArg (nameof plan) $"TgBot.SendKeyboardPlan: invalid plan ({e})"
+            | Ok(registeredKeyboard, bindings) ->
+                do! bindingStore.Save(bindings, cts.Token)
+                return! api.SendKeyboard(chat, text, registeredKeyboard, cts.Token)
+        }
+
+    /// C#-friendly overload that accepts a raw string (validated with `MessageText.unsafe`).
+    member this.SendKeyboardPlan(chat: ChatId, text: string, plan: ToolKeyboard) : Task<MessageId> =
+        this.SendKeyboardPlan(chat, MessageText.unsafe text, plan)
 
     /// C#-friendly overloads that accept a raw string (validated with `MessageText.unsafe`), so the
     /// C# façade never touches the F# `MessageText` type.
@@ -157,16 +194,18 @@ type TgBot
             let client = TgBot.buildClient (config.BotToken, config.BaseUrl)
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
+            let bindingStore = InMemoryBindingStore() :> IBindingStore
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
             let observer =
                 match config.Logger with
                 | Some logger -> LoggingHookObserver logger :> IHookObserver
                 | None -> NoopHookObserver() :> IHookObserver
             let source = LongPollingUpdateSource(client) :> IUpdateSource
-            let processor = UpdateProcessor(source, store, api, dispatcher, observer)
+            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore))
+            let processor = UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
             let cts = new CancellationTokenSource()
             let runTask = processor.RunAsync cts.Token
-            return new TgBot(api, store, dispatcher, cts, runTask, None)
+            return new TgBot(api, store, bindingStore, dispatcher, cts, runTask, None)
         }
 
     /// Start ingesting updates via webhooks. Registers the webhook with Telegram (`setWebhook` with
@@ -179,14 +218,16 @@ type TgBot
             do! client.SetWebhook(url = config.PublicUrl, secretToken = config.SecretToken)
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
+            let bindingStore = InMemoryBindingStore() :> IBindingStore
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
             let observer =
                 match config.Logger with
                 | Some logger -> LoggingHookObserver logger :> IHookObserver
                 | None -> NoopHookObserver() :> IHookObserver
             let webhookSource = WebhookUpdateSource()
-            let processor = UpdateProcessor(webhookSource :> IUpdateSource, store, api, dispatcher, observer)
+            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore))
+            let processor = UpdateProcessor(webhookSource :> IUpdateSource, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
             let cts = new CancellationTokenSource()
             let runTask = processor.RunAsync cts.Token
-            return new TgBot(api, store, dispatcher, cts, runTask, Some webhookSource)
+            return new TgBot(api, store, bindingStore, dispatcher, cts, runTask, Some webhookSource)
         }

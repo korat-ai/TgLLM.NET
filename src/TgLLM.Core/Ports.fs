@@ -54,6 +54,14 @@ type IBotApiClient =
     /// including unknown/stale ones (FR-007, FR-010, SC-003).
     abstract AnswerCallback: query: CallbackQueryId * ct: CancellationToken -> Task
 
+    /// Acknowledges a callback query with an optional toast/alert (feature 002-llm-tool-router,
+    /// FR-007, research.md D2). Used ONLY by the Tool Router's deferred-ack path — the slice-1
+    /// ack-first path keeps using the no-arg overload above (FR-012, unchanged). `answerCallbackQuery`
+    /// is one-shot server-side: a second call for the same query fails
+    /// (`"query is too old and response timeout expired or query ID is invalid"`), which the caller
+    /// is expected to catch and swallow when racing a watchdog (D2) — this port itself does not.
+    abstract AnswerCallback: query: CallbackQueryId * text: string option * showAlert: bool * ct: CancellationToken -> Task
+
 /// The observability seam (FR-009, FR-010). Default: `NoopHookObserver`. Façades bridge this to
 /// `ILogger` so failures are surfaced, never swallowed; Core stays dependency-free.
 type IHookObserver =

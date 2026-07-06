@@ -15,12 +15,19 @@
     `KeyboardError` (data-model.md lists it under Domain.fs) lives in Values.fs instead: both
     `ButtonLabel.create` and `MessageText.create` return `Result<_, KeyboardError>`, and Values.fs
     is the first file to compile. See the file-level comments in Domain.fs and Values.fs.
+
+    Tools.fs (feature 002-llm-tool-router) compiles right after Keyboard.fs: `ToolPlan.plan` needs
+    `RegisteredKeyboard`/`RegisteredButton` (Keyboard.fs) and `Tool = PressContext -> Task` needs
+    `PressContext` (Domain.fs); it must compile before UpdateProcessor.fs so `ToolDispatch` can be
+    threaded into `UpdateProcessor` as an optional collaborator. It has no dependency on Routing.fs
+    or Ports.fs, so it sits before both.
   -->
   <ItemGroup>
     <Compile Include="Values.fs" />
     <Compile Include="CallbackToken.fs" />
     <Compile Include="Domain.fs" />
     <Compile Include="Keyboard.fs" />
+    <Compile Include="Tools.fs" />
     <Compile Include="Routing.fs" />
     <Compile Include="Ports.fs" />
     <Compile Include="InMemoryHookStore.fs" />

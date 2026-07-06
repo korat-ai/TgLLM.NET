@@ -5,7 +5,16 @@
     <PackageId>TgLLM.FSharp</PackageId>
   </PropertyGroup>
 
+  <!--
+    ToolRouter.fs compiles BEFORE TgBot.fs: `TgBotConfig`/`TgWebhookConfig`'s `Tools` field and
+    `TgBot.SendKeyboardPlan` need `ToolRegistry` to exist, and must stay INTRINSIC members of their
+    own types (added directly to TgBot.fs) rather than cross-file type augmentations — F# type
+    augmentations declared in a different file compile as loose/optional extension members, which
+    don't reliably surface as true instance members to reflection-based tooling (e.g. the C#
+    façade's idiom-leak canary) or to plain C# dot-call syntax. See ToolRouter.fs's file banner.
+  -->
   <ItemGroup>
+    <Compile Include="ToolRouter.fs" />
     <Compile Include="TgBot.fs" />
     <Compile Include="CSharpSupport.fs" />
   </ItemGroup>

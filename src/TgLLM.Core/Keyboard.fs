@@ -15,8 +15,14 @@ type ButtonSpec = { Label: string; Hook: Hook }
 type KeyboardSpec = private KeyboardSpec of (ButtonLabel * Hook) list list
 
 /// One button on the wire-facing keyboard, after token assignment (data-model.md
-/// "RegisteredKeyboard").
-type RegisteredButton = { Label: ButtonLabel; Token: CallbackToken }
+/// "RegisteredKeyboard", feature 002-llm-tool-router T007). Was a plain `{ Label; Token }` record
+/// in slice 1; becomes a DU so a keyboard can mix hook/tool (`Callback`) and (`Url`) buttons in the
+/// same layout (research.md D3). `Callback`'s shape is exactly slice-1's old record fields in case
+/// order, so `Mapping.toInlineKeyboardMarkup`'s callback-button behavior is unchanged — only the
+/// syntax at each call site (construction/pattern-match) changes from field access to this case.
+type RegisteredButton =
+    | Callback of label: ButtonLabel * token: CallbackToken
+    | Url of label: ButtonLabel * url: string
 
 /// The wire-facing keyboard shape; the transport layer maps this to Telegram.Bot's
 /// `InlineKeyboardMarkup` (implemented in Phase 3, T024).
@@ -85,7 +91,7 @@ module KeyboardPlan =
                 List.map (fun (label, hook) ->
                     let token = nextToken ()
                     bindings <- { Token = token; Hook = hook } :: bindings
-                    { Label = label; Token = token })
+                    Callback(label, token))
             )
 
         RegisteredKeyboard registeredRows, List.rev bindings

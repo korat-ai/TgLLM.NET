@@ -59,8 +59,8 @@ let botApiClientTests =
 
             let registered =
                 RegisteredKeyboard [
-                    [ { Label = label "Yes"; Token = tokenYes }
-                      { Label = label "No"; Token = tokenNo } ]
+                    [ Callback(label "Yes", tokenYes)
+                      Callback(label "No", tokenNo) ]
                 ]
 
             let markup = Mapping.toInlineKeyboardMarkup registered
@@ -97,7 +97,7 @@ let botApiClientTests =
                 use! server = FakeBotApiServer.start ()
                 let api: IBotApiClient = TelegramBotApiClient(makeClient server)
                 let token = CallbackToken.generate ()
-                let keyboard = RegisteredKeyboard [ [ { Label = label "Yes"; Token = token } ] ]
+                let keyboard = RegisteredKeyboard [ [ Callback(label "Yes", token) ] ]
 
                 let! _ = api.SendKeyboard(UMX.tag<chatId> 7L, messageText "Deploy?", keyboard, CancellationToken.None)
 

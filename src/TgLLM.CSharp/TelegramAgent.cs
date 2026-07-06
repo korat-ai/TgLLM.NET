@@ -24,6 +24,10 @@ public sealed class TelegramAgentOptions
 
     /// <summary>Surface hook failures / unknown presses through this logger (FR-009).</summary>
     public ILogger? Logger { get; init; }
+
+    /// <summary>Tools available to <see cref="TelegramAgent.SendKeyboardPlanAsync"/>-sent keyboards
+    /// (feature 002-llm-tool-router, T019). <c>null</c> means no Tool Router is wired in.</summary>
+    public ToolRegistry? Tools { get; init; }
 }
 
 /// <summary>
@@ -51,6 +55,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithLogger(options.Logger);
         }
 
+        if (options.Tools is not null)
+        {
+            config = config.WithTools(options.Tools.Inner);
+        }
+
         var bot = await TgBot.startPolling(config);
         return new TelegramAgent(bot);
     }
@@ -71,6 +80,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithLogger(options.Logger);
         }
 
+        if (options.Tools is not null)
+        {
+            config = config.WithTools(options.Tools.Inner);
+        }
+
         var bot = await TgBot.startWebhook(config);
         return new TelegramAgent(bot);
     }
@@ -81,6 +95,11 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// <summary>Send an interactive keyboard to a chat; returns the sent message id.</summary>
     public Task<long> SendKeyboardAsync(long chatId, string text, Keyboard keyboard, CancellationToken ct = default) =>
         _bot.SendKeyboard(chatId, text, keyboard.Spec);
+
+    /// <summary>Send a keyboard built from a Tool Router plan (feature 002-llm-tool-router, T019);
+    /// presses route to the tools registered via <see cref="TelegramAgentOptions.Tools"/>.</summary>
+    public Task<long> SendKeyboardPlanAsync(long chatId, string text, KeyboardPlan plan, CancellationToken ct = default) =>
+        _bot.SendKeyboardPlan(chatId, text, plan.Plan);
 
     /// <summary>Send a plain text message to a chat; returns the sent message id.</summary>
     public Task<long> SendTextAsync(long chatId, string text, CancellationToken ct = default) =>

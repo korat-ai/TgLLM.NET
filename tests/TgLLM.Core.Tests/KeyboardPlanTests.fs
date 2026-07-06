@@ -39,16 +39,31 @@ let keyboardPlanTests =
 
                 let shapePreserved = List.map List.length registeredRows = rowButtonCounts
 
+                // `KeyboardPlan.assign` only ever produces `Callback` buttons (T007: `Url` buttons
+                // are a Tool Router concept — see `ToolPlan.plan` in Tools.fs); a `Url` case here
+                // would itself be a test failure, not a case to special-case away.
                 let labelsPreserved =
                     List.forall2
                         (fun (regRow: RegisteredButton list) (rawRow: ButtonSpec list) ->
-                            List.forall2 (fun (rb: RegisteredButton) (bs: ButtonSpec) -> ButtonLabel.value rb.Label = bs.Label) regRow rawRow)
+                            List.forall2
+                                (fun (rb: RegisteredButton) (bs: ButtonSpec) ->
+                                    match rb with
+                                    | Callback(label, _) -> ButtonLabel.value label = bs.Label
+                                    | Url _ -> false)
+                                regRow
+                                rawRow)
                         registeredRows
                         rows
 
                 let oneBindingPerButton = List.length bindings = buttonCount
 
-                let outputTokens = registeredRows |> List.collect (List.map (fun rb -> rb.Token))
+                let outputTokens =
+                    registeredRows
+                    |> List.collect (
+                        List.map (function
+                            | Callback(_, token) -> token
+                            | Url _ -> failwith "KeyboardPlan.assign never produces Url buttons")
+                    )
 
                 let bindingTokensMatchKeyboardTokens =
                     (bindings |> List.map (fun b -> b.Token) |> List.sort) = (outputTokens |> List.sort)
@@ -81,7 +96,15 @@ let keyboardPlanTests =
                 // purposes) already pairwise distinct — exactly the premise this property checks.
                 let tokens = List.init buttonCount (fun _ -> CallbackToken.generate ())
                 let (RegisteredKeyboard registeredRows), _ = KeyboardPlan.assign tokens spec
-                let outputTokens = registeredRows |> List.collect (List.map (fun rb -> rb.Token))
+
+                let outputTokens =
+                    registeredRows
+                    |> List.collect (
+                        List.map (function
+                            | Callback(_, token) -> token
+                            | Url _ -> failwith "KeyboardPlan.assign never produces Url buttons")
+                    )
+
                 List.distinct tokens |> List.length = buttonCount
                 && List.distinct outputTokens |> List.length = buttonCount
     ]

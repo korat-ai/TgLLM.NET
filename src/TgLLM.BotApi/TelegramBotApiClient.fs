@@ -35,14 +35,19 @@ open TgLLM.Core
 module Mapping =
 
     /// `RegisteredKeyboard` -> Telegram.Bot's `InlineKeyboardMarkup`: one `InlineKeyboardButton`
-    /// per registered button, `callback_data` set to the button's opaque `CallbackToken` (never the
-    /// label or any agent state — FR-011, data-model.md "RegisteredKeyboard").
+    /// per registered button. `Callback` buttons get `callback_data` set to the button's opaque
+    /// `CallbackToken` (never the label or any agent state — FR-011, data-model.md
+    /// "RegisteredKeyboard"); `Url` buttons (feature 002-llm-tool-router T007, research.md D3) get
+    /// a plain client-side link — `url`/`callback_data` are mutually exclusive on one button, so
+    /// these two cases map to Telegram.Bot's two distinct factory methods, never both.
     let toInlineKeyboardMarkup (RegisteredKeyboard rows) : InlineKeyboardMarkup =
         rows
         |> List.map (fun row ->
             row
             |> List.map (fun (button: RegisteredButton) ->
-                InlineKeyboardButton.WithCallbackData(ButtonLabel.value button.Label, CallbackToken.value button.Token))
+                match button with
+                | Callback(label, token) -> InlineKeyboardButton.WithCallbackData(ButtonLabel.value label, CallbackToken.value token)
+                | Url(label, url) -> InlineKeyboardButton.WithUrl(ButtonLabel.value label, url))
             |> List.toSeq)
         |> List.toSeq
         |> InlineKeyboardMarkup
@@ -146,3 +151,15 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
 
         member _.AnswerCallback(query: CallbackQueryId, ct: CancellationToken) : Task =
             client.AnswerCallbackQuery(callbackQueryId = UMX.untag query, cancellationToken = ct)
+
+        /// Tool Router deferred-ack overload (T013, research.md D2): `text`/`showAlert` map
+        /// directly onto Telegram.Bot's `AnswerCallbackQuery` extension (verified against its own
+        /// source, Principle V); `url`/`cacheTime` are left at their defaults, same as the no-arg
+        /// overload above.
+        member _.AnswerCallback(query: CallbackQueryId, text: string option, showAlert: bool, ct: CancellationToken) : Task =
+            client.AnswerCallbackQuery(
+                callbackQueryId = UMX.untag query,
+                text = Option.toObj text,
+                showAlert = showAlert,
+                cancellationToken = ct
+            )

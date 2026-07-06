@@ -27,8 +27,8 @@ MUST stay green** throughout; every phase re-runs the full suite.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the new project `src/TgLLM.Persistence` (F#; ProjectReference `TgLLM.Core`) and test project `tests/TgLLM.Persistence.Tests` (Expecto + FsCheck), plus example skeletons `examples/ToolRouterFSharp` (F#) and `examples/ToolRouterCSharp` (C#); add all to `TgLLM.NET.sln` with correct references
-- [ ] T002 [P] Confirm no new central packages are required (System.Text.Json ships in the framework); if the file store needs any, add the version to `Directory.Packages.props`
+- [X] T001 Create the new project `src/TgLLM.Persistence` (F#; ProjectReference `TgLLM.Core`) and test project `tests/TgLLM.Persistence.Tests` (Expecto + FsCheck), plus example skeletons `examples/ToolRouterFSharp` (F#) and `examples/ToolRouterCSharp` (C#); add all to `TgLLM.NET.sln` with correct references
+- [X] T002 [P] Confirm no new central packages are required (System.Text.Json ships in the framework); if the file store needs any, add the version to `Directory.Packages.props`
 
 **Checkpoint**: solution builds with the new empty projects; slice-1 suite still green.
 
@@ -39,15 +39,15 @@ MUST stay green** throughout; every phase re-runs the full suite.
 **⚠️ CRITICAL**: keep slice-1 behavior intact. `RegisteredButton` becomes a DU (T007) — update the
 slice-1 mapping and its test to the `Callback` case; callback-button behavior is unchanged.
 
-- [ ] T003 [P] [test] Failing tests for `ToolName.create` (non-empty after trim) and `ToolError` cases in `tests/TgLLM.Core.Tests/ToolNameTests.fs`
-- [ ] T004 Implement `ToolName` (smart constructor) and `ToolError` in `src/TgLLM.Core/Tools.fs` to green T003
-- [ ] T005 Define the neutral plan types `PlanButton` (`ToolButton` | `UrlButton`) and `ToolKeyboard` in `src/TgLLM.Core/Tools.fs`
-- [ ] T006 [P] [test] Failing FsCheck property tests for `ToolPlan.plan` (row/label shape preserved; one token+binding per tool button; URL buttons carry no binding; token count = tool-button count; distinct input tokens ⇒ distinct button tokens) in `tests/TgLLM.Core.Tests/ToolPlanTests.fs`
-- [ ] T007 Implement `RegisteredButton` as a DU (`Callback of label*token` | `Url of label*url`), `ToolBinding`, and `ToolPlan.plan` (assign tokens to tool buttons, pass URL buttons through) in `src/TgLLM.Core/Keyboard.fs`/`Tools.fs`; update slice-1 `Mapping.toInlineKeyboardMarkup` in `src/TgLLM.BotApi/TelegramBotApiClient.fs` (Callback → `WithCallbackData`, Url → `WithUrl`) and adjust the affected slice-1 mapping test to the `Callback` case — behavior of callback buttons unchanged
-- [ ] T008 [P] [test] Failing tests for `InMemoryToolRegistry` (register/replace/resolve by name; unknown → `ValueNone`) in `tests/TgLLM.Core.Tests/ToolRegistryTests.fs`
-- [ ] T009 Implement `IToolRegistry` + `InMemoryToolRegistry` in `src/TgLLM.Core/Tools.fs` to green T008
-- [ ] T010 [P] [test] Failing tests for `InMemoryBindingStore` (Save → TryGet round-trip; unknown → `ValueNone`; Remove) in `tests/TgLLM.Core.Tests/BindingStoreTests.fs`
-- [ ] T011 Implement `IBindingStore` port + `InMemoryBindingStore` in `src/TgLLM.Core/Tools.fs` to green T010
+- [X] T003 [P] [test] Failing tests for `ToolName.create` (non-empty after trim) and `ToolError` cases in `tests/TgLLM.Core.Tests/ToolNameTests.fs`
+- [X] T004 Implement `ToolName` (smart constructor) and `ToolError` in `src/TgLLM.Core/Tools.fs` to green T003
+- [X] T005 Define the neutral plan types `PlanButton` (`ToolButton` | `UrlButton`) and `ToolKeyboard` in `src/TgLLM.Core/Tools.fs`
+- [X] T006 [P] [test] Failing FsCheck property tests for `ToolPlan.plan` (row/label shape preserved; one token+binding per tool button; URL buttons carry no binding; token count = tool-button count; distinct input tokens ⇒ distinct button tokens) in `tests/TgLLM.Core.Tests/ToolPlanTests.fs`
+- [X] T007 Implement `RegisteredButton` as a DU (`Callback of label*token` | `Url of label*url`), `ToolBinding`, and `ToolPlan.plan` (assign tokens to tool buttons, pass URL buttons through) in `src/TgLLM.Core/Keyboard.fs`/`Tools.fs`; update slice-1 `Mapping.toInlineKeyboardMarkup` in `src/TgLLM.BotApi/TelegramBotApiClient.fs` (Callback → `WithCallbackData`, Url → `WithUrl`) and adjust the affected slice-1 mapping test to the `Callback` case — behavior of callback buttons unchanged
+- [X] T008 [P] [test] Failing tests for `InMemoryToolRegistry` (register/replace/resolve by name; unknown → `ValueNone`) in `tests/TgLLM.Core.Tests/ToolRegistryTests.fs`
+- [X] T009 Implement `IToolRegistry` + `InMemoryToolRegistry` in `src/TgLLM.Core/Tools.fs` to green T008
+- [X] T010 [P] [test] Failing tests for `InMemoryBindingStore` (Save → TryGet round-trip; unknown → `ValueNone`; Remove) in `tests/TgLLM.Core.Tests/BindingStoreTests.fs`
+- [X] T011 Implement `IBindingStore` port + `InMemoryBindingStore` in `src/TgLLM.Core/Tools.fs` to green T010
 
 **Checkpoint**: pure kernel (`ToolPlan.plan`) + registry + in-memory store green; slice-1 suite still green.
 
@@ -61,15 +61,15 @@ registered tool with its argument — no per-button glue.
 **Independent Test**: register two tools; send a plan naming them (with args); tap each → correct tool
 runs with correct arg; a plan naming an unregistered tool → tap acked, no run, surfaced.
 
-- [ ] T012 [US1] Extend `PressContext` with `Arg : string | null` and `Answer(text, ?alert)` (records the deferred-ack directive) in `src/TgLLM.Core/Domain.fs`
-- [ ] T013 [US1] Add `IBotApiClient.AnswerCallback(query, text, showAlert, ct)` overload in `src/TgLLM.Core/Ports.fs` and implement it in `src/TgLLM.BotApi/TelegramBotApiClient.fs`
-- [ ] T014 [US1] Implement `ToolDispatch` (resolve token → binding via `IBindingStore` → tool via `IToolRegistry`) in `src/TgLLM.Core/Tools.fs`
-- [ ] T015 [US1] [test] Failing tests for the `UpdateProcessor` deferred-ack tool path (in-memory fakes): tool press → tool runs with `Arg`; the ack is sent EXACTLY ONCE after the tool with its directive; a watchdog sends a default ack if the tool exceeds the budget; unknown tool → ack + observer, no crash; the slice-1 closure path stays ack-first when `toolDispatch` is absent in `tests/TgLLM.Core.Tests/ToolDispatchProcessorTests.fs`
-- [ ] T016 [US1] Extend `UpdateProcessor` with an optional `?toolDispatch` collaborator + the deferred-ack path + watchdog in `src/TgLLM.Core/UpdateProcessor.fs` (slice-1 path unchanged when omitted) to green T015
-- [ ] T017 [US1] Implement the F# façade tool surface — `ToolRegistry`, `Plan` module (`tool`/`toolWithArg`/`url`/`rows`), `TgBotConfig.WithTools`, `TgBot.SendKeyboardPlan` (wires a `ToolDispatch` into the processor) — in `src/TgLLM.FSharp/ToolRouter.fs`
-- [ ] T018 [US1] [test] F# acceptance over long polling: register tools, send a plan with args, tap → the bound tool runs with its arg (SC-002); a plan naming an unregistered tool → tap acked, no run, surfaced (SC-005) in `tests/TgLLM.Integration.Tests/ToolRouterAcceptanceTests.fs`
-- [ ] T019 [US1] Implement the C# façade tool surface — `ToolRegistry`, `PlanBuilder`/`PlanRowBuilder`, `KeyboardPlan`, `TelegramAgentOptions.Tools`, `SendKeyboardPlanAsync` — in `src/TgLLM.CSharp/`
-- [ ] T020 [P] [US1] [test] C# tool-router behavior tests + re-run the idiom-leak canary (no FSharp.Core on the extended surface) in `tests/TgLLM.CSharp.Tests/`
+- [X] T012 [US1] Extend `PressContext` with `Arg : string | null` and `Answer(text, ?alert)` (records the deferred-ack directive) in `src/TgLLM.Core/Domain.fs`
+- [X] T013 [US1] Add `IBotApiClient.AnswerCallback(query, text, showAlert, ct)` overload in `src/TgLLM.Core/Ports.fs` and implement it in `src/TgLLM.BotApi/TelegramBotApiClient.fs`
+- [X] T014 [US1] Implement `ToolDispatch` (resolve token → binding via `IBindingStore` → tool via `IToolRegistry`) in `src/TgLLM.Core/Tools.fs`
+- [X] T015 [US1] [test] Failing tests for the `UpdateProcessor` deferred-ack tool path (in-memory fakes): tool press → tool runs with `Arg`; the ack is sent EXACTLY ONCE after the tool with its directive; a watchdog sends a default ack if the tool exceeds the budget; unknown tool → ack + observer, no crash; the slice-1 closure path stays ack-first when `toolDispatch` is absent in `tests/TgLLM.Core.Tests/ToolDispatchProcessorTests.fs`
+- [X] T016 [US1] Extend `UpdateProcessor` with an optional `?toolDispatch` collaborator + the deferred-ack path + watchdog in `src/TgLLM.Core/UpdateProcessor.fs` (slice-1 path unchanged when omitted) to green T015
+- [X] T017 [US1] Implement the F# façade tool surface — `ToolRegistry`, `Plan` module (`tool`/`toolWithArg`/`url`/`rows`), `TgBotConfig.WithTools`, `TgBot.SendKeyboardPlan` (wires a `ToolDispatch` into the processor) — in `src/TgLLM.FSharp/ToolRouter.fs`
+- [X] T018 [US1] [test] F# acceptance over long polling: register tools, send a plan with args, tap → the bound tool runs with its arg (SC-002); a plan naming an unregistered tool → tap acked, no run, surfaced (SC-005) in `tests/TgLLM.Integration.Tests/ToolRouterAcceptanceTests.fs`
+- [X] T019 [US1] Implement the C# façade tool surface — `ToolRegistry`, `PlanBuilder`/`PlanRowBuilder`, `KeyboardPlan`, `TelegramAgentOptions.Tools`, `SendKeyboardPlanAsync` — in `src/TgLLM.CSharp/`
+- [X] T020 [P] [US1] [test] C# tool-router behavior tests + re-run the idiom-leak canary (no FSharp.Core on the extended surface) in `tests/TgLLM.CSharp.Tests/`
 
 **Checkpoint**: MVP — an LLM-style plan routes taps to tools with args, in F# and C#, over polling; slice-1 green.
 

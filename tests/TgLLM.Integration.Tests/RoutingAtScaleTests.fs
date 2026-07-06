@@ -45,6 +45,13 @@ type private RecordingApi() =
             Interlocked.Increment(&acks) |> ignore
             Task.CompletedTask
 
+        /// This suite drives `UpdateProcessor` without a `?toolDispatch` (US1's engine-at-scale
+        /// tests exercise the slice-1 ack-first path only), so the deferred-ack overload is never
+        /// actually invoked here — implemented to satisfy `IBotApiClient`.
+        member _.AnswerCallback(_, _, _, _) =
+            Interlocked.Increment(&acks) |> ignore
+            Task.CompletedTask
+
 type private CountingObserver() =
     let mutable failed = 0
     let mutable unknown = 0
