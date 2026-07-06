@@ -64,9 +64,11 @@ Every new capability is additive and opt-in.
   user re-taps are distinct taps and, by default, run the tool each time (a persistent menu button is
   legitimately tapped many times). For confirm-once buttons, an **optional single-use binding** mode
   makes the first successful tap consume the binding so later taps are treated as unknown.
-- Q: What is the second durable store? → A: An **embedded SQLite** store. It keeps the test oracle
-  free of any external server (like the file store), and its query model fits expiry/eviction
-  naturally. A networked store (e.g. Redis) remains backlog.
+- Q: What is the second durable store? → A: An **embedded LiteDB** store. LiteDB is a pure-managed,
+  single-file embedded document store — no external server (like the file store) and no native
+  dependency. Its collection-query model fits expiry/eviction naturally. (SQLite was considered and
+  rejected: its native `e_sqlite3` provider carries an unresolved CVE that the repo's NuGet audit
+  blocks.) A networked store (e.g. Redis) remains backlog.
 - Q: Does owner scope apply to every button type? → A: **Only to tool (callback) buttons.** URL,
   WebApp, and CopyText buttons are handled entirely client-side by Telegram — no callback reaches the
   bot — so a non-owner tap on them cannot be (and need not be) refused. Owner scope is enforced on the
@@ -173,7 +175,7 @@ Operational hardening for long-lived bots: a binding can carry an **expiry** aft
 treated as unknown (and the record is evicted); **idle per-chat processing resources are reclaimed**
 after an idle period; a tap that Telegram **redelivers** invokes the tool **at most once**; a tool's
 attempt to **edit a message that vanished or did not change** is surfaced softly instead of throwing;
-and the persistence seam is proven with a **second durable store** (embedded SQLite).
+and the persistence seam is proven with a **second durable store** (embedded LiteDB).
 
 **Why this priority**: These prevent unbounded growth and rough edges in production but are not
 user-facing capability, so they trail the three capability stories.
@@ -181,7 +183,7 @@ user-facing capability, so they trail the three capability stories.
 **Independent Test**: (a) Send a keyboard with a short expiry; after it lapses, a tap is refused like
 an unknown tap. (b) Deliver the same tap twice (same query id); the tool runs once. (c) Have a tool
 edit a since-deleted message; the tool author sees a soft failure, not an exception. (d) Run the
-slice's restart-persistence test against the SQLite store and get the same result as the file store.
+slice's restart-persistence test against the LiteDB store and get the same result as the file store.
 
 **Acceptance Scenarios**:
 
@@ -195,7 +197,7 @@ slice's restart-persistence test against the SQLite store and get the same resul
    **Then** the second tap is treated as unknown (no second invocation).
 5. **Given** a tool that edits a message that was deleted or is unchanged, **When** it runs, **Then**
    the edit failure is surfaced (observable) and no exception propagates to the tool author.
-6. **Given** the SQLite durable store and a keyboard sent before a simulated restart, **When** the bot
+6. **Given** the LiteDB durable store and a keyboard sent before a simulated restart, **When** the bot
    restarts and the user taps a pre-restart button, **Then** the bound, still-registered tool runs.
 
 ---
@@ -267,9 +269,9 @@ slice's restart-persistence test against the SQLite store and get the same resul
 - **FR-015**: Edit-in-place MUST handle Telegram's "message is not modified" (treat as a successful
   no-op) and "message to edit not found" (surface as a soft, observable failure) WITHOUT propagating
   an exception to the tool author.
-- **FR-016**: The library MUST ship a **second durable binding store** (embedded SQLite) implementing
-  the same store seam as the file store; the abstraction, the in-memory default, the file store, and
-  the SQLite store MUST be interchangeable.
+- **FR-016**: The library MUST ship a **second durable binding store** (an embedded LiteDB document
+  store) implementing the same store seam as the file store; the abstraction, the in-memory default,
+  the file store, and the LiteDB store MUST be interchangeable.
 - **FR-017**: The server-side **binding record MUST evolve once** to carry the owner scope, the
   structured payload, and the optional expiry; bindings written by slice 2 (string argument, no owner,
   no expiry) MUST still load and resolve after the evolution.
@@ -294,7 +296,7 @@ slice's restart-persistence test against the SQLite store and get the same resul
   payload, **owner scope**, **optional expiry**, single-use flag). Backward-compatible with slice-2
   string-argument records.
 - **Binding Store (extended)**: the store seam with the in-memory default, the file store (slice 2),
-  and a new **embedded SQLite** store; supports expiry-based eviction.
+  and a new **embedded LiteDB** store; supports expiry-based eviction.
 - **Dispatcher (extended)**: per-chat ordered processing, now reclaiming idle per-chat resources.
 
 ## Success Criteria *(mandatory)*
@@ -318,7 +320,7 @@ slice's restart-persistence test against the SQLite store and get the same resul
 - **SC-008**: A callback query redelivered with the same identity invokes the bound tool at most once.
 - **SC-009**: An edit-in-place against a deleted or unchanged message surfaces a soft failure and
   propagates no exception to the tool author.
-- **SC-010**: The SQLite store passes the same restart-persistence acceptance as the file store — the
+- **SC-010**: The LiteDB store passes the same restart-persistence acceptance as the file store — the
   persistence seam demonstrably generalizes beyond one implementation.
 - **SC-011**: Every flow in this slice passes under both long polling and webhooks and in both the F#
   and C# façades, and the complete slice-1/2 test suite still passes unchanged.
@@ -335,8 +337,10 @@ slice's restart-persistence test against the SQLite store and get the same resul
   answering a web-app query) is a later feature.
 - **Double-tap guarantee is at-most-once per callback-query identity** (redelivery), with an optional
   single-use binding mode for confirm-once buttons (see Clarifications, FR-013/FR-014).
-- **Second durable store is embedded SQLite** (no external server), chosen so the test oracle stays
-  self-contained and expiry/eviction map to queries; a networked store (Redis) remains backlog.
+- **Second durable store is embedded LiteDB** (pure-managed, single-file, no external server, no native
+  dependency), chosen so the test oracle stays self-contained and expiry/eviction map to collection
+  queries; SQLite was rejected because its native provider carries an unresolved CVE blocked by the
+  repo's NuGet audit. A networked store (Redis) remains backlog.
 - **Binding record evolves once** to carry owner + structured payload + expiry, read-compatible with
   slice-2 records (FR-017), so the store schema is not rewritten per story.
 - **Relationship to slices 1–2**: this feature extends the existing library, dual façades, and dual

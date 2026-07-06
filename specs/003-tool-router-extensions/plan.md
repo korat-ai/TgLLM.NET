@@ -12,7 +12,7 @@ owner, and a non-owner tap on a tool button is refused; (US2) a neutral **tool m
 emits for LLM function-calling, plus **structured arguments** (an opaque, possibly-JSON payload that
 supersedes the slice-2 string); (US3) **WebApp and CopyText** buttons; (US4) **lifecycle & reliability**
 — binding expiry/eviction, idle per-chat reclaim, at-most-once redelivery, soft edit-error handling,
-and a second durable store (embedded SQLite). The server-side binding record evolves **once** (owner +
+and a second durable store (embedded LiteDB). The server-side binding record evolves **once** (owner +
 expiry + single-use), backward-compatible with slice-2 records. Everything is additive and opt-in; the
 slice-1 hook API and slice-2 Tool Router API — and their tests — are untouched (FR-019).
 
@@ -34,11 +34,11 @@ now (as slices 1–2; the `net8.0;net10.0` shipping matrix stays a CI/backlog it
 
 **Primary Dependencies**: Telegram.Bot 22.10.1 (WebApp/CopyText buttons, edit/answer — behind ports);
 FSharp.Core; FSharp.UMX; System.Text.Json (façades — structured-arg serialization + manifest emission;
-NOT added to Core). **Microsoft.Data.Sqlite** (new SQLite store leaf project only). No LLM-vendor SDKs
+NOT added to Core). **LiteDB** (new LiteDB store leaf project only). No LLM-vendor SDKs
 (the manifest is neutral, FR-004).
 
-**Storage**: The binding-store seam gains a second durable backend — an **embedded SQLite** store in a
-new leaf project `TgLLM.Persistence.Sqlite`; the in-memory default and the slice-2 file store are
+**Storage**: The binding-store seam gains a second durable backend — an **embedded LiteDB** store in a
+new leaf project `TgLLM.Persistence.LiteDb`; the in-memory default and the slice-2 file store are
 unchanged. The binding record evolves once (owner + expiry + single-use); slice-2 records still load
 (FR-017). Stores support expiry-based eviction.
 
@@ -47,7 +47,7 @@ manifest emission (every registered tool present, neutral shape), structured-pay
 decision (clock injected, not ambient), at-most-once dedup — plus the review's property gaps (duplicate
 input-token consumption, `validate` Ok ⇒ `plan` Ok, non-canonical token rejection, URL passthrough).
 Integration tests (against the fake Bot API server, extended for WebApp/CopyText and per-chat message
-ids): owner auth, WebApp/CopyText client-side buttons, expiry/eviction/at-most-once/soft-edit, SQLite
+ids): owner auth, WebApp/CopyText client-side buttons, expiry/eviction/at-most-once/soft-edit, LiteDB
 restart (SC-010) — under both transports and both façades.
 
 **Target Platform**: Cross-platform .NET library (NuGet).
@@ -68,7 +68,7 @@ carried **opaquely** — Core keeps `Arg : string option` (reinterpreted as a po
 façades own (de)serialization, so Core stays System.Text.Json-free and slice-2 string args keep working.
 
 **Scale/Scope**: PoC — single bot. In scope: owner auth, neutral manifest, structured payload, WebApp/
-CopyText, expiry/eviction, at-most-once, SQLite store. Out of scope (backlog): net8 CI leg, NuGet
+CopyText, expiry/eviction, at-most-once, LiteDB store. Out of scope (backlog): net8 CI leg, NuGet
 publish, CS1591 coverage, live-Telegram smoke; WebApp postback handling; a networked (Redis) store.
 
 ## Constitution Check
@@ -79,7 +79,7 @@ publish, CS1591 coverage, live-Telegram smoke; WebApp postback handling; a netwo
 |---|-----------|------|--------|
 | I | Test-First + property tests | Owner match / manifest / payload round-trip / expiry / dedup TDD'd with FsCheck; the review's property gaps added; integration for each US | ✅ PASS |
 | II | F# core + dual idiomatic APIs | Auth/manifest/structured-args/new buttons in both façades; a **C#-facing `IBindingStore` adapter** removes the `FSharpOption` leak on the store surface; canary extended to walk store members | ✅ PASS |
-| III | Layered architecture | Owner/manifest/expiry/dedup logic in Core (IO-agnostic; clock injected); SQLite IO in a NEW leaf project, NOT in Core | ✅ PASS |
+| III | Layered architecture | Owner/manifest/expiry/dedup logic in Core (IO-agnostic; clock injected); LiteDB IO in a NEW leaf project, NOT in Core | ✅ PASS |
 | IV | Both transports | All capabilities ride the same `IUpdateSource`/`UpdateProcessor`; SC-011 runs over both; dropped-callback ack fixed in both transports | ✅ PASS |
 | V | Vendor-grounded | WebApp (`web_app`/https), CopyText (`copy_text`/256), owner-vs-`from`, `message_id` per-chat, edit-error strings verified against core.telegram.org | ✅ PASS |
 | VI | Task-based concurrency | `Task`/`ValueTask` throughout; eviction/dedup via timers/bounded sets; polling retry/backoff honors `ct`; no `Async` | ✅ PASS |
@@ -87,7 +87,7 @@ publish, CS1591 coverage, live-Telegram smoke; WebApp postback handling; a netwo
 | VIII | Open-source excellence | Auth/manifest examples added; README/CHANGELOG updated; every commit release-ready | ✅ PASS |
 
 **Initial gate**: PASS. **Post-design gate**: PASS — additive design; slice-1/2 tests remain green
-(FR-019). One justified structural addition (SQLite leaf project) tracked below.
+(FR-019). One justified structural addition (LiteDB leaf project) tracked below.
 
 ## Project Structure
 
@@ -99,7 +99,7 @@ specs/003-tool-router-extensions/
 ├── spec.md            # Feature spec (with Clarifications)
 ├── research.md        # Phase 0 decisions + Bot API facts (owner/webapp/copytext/dedup/eviction)
 ├── data-model.md      # Phase 1 domain model (binding evolution, manifest, button DU, owner scope)
-├── quickstart.md      # Phase 1 usage (auth + manifest + structured args + new buttons + SQLite)
+├── quickstart.md      # Phase 1 usage (auth + manifest + structured args + new buttons + LiteDB)
 ├── contracts/tool-router-extensions.md   # Phase 1 public surface delta (F# + C#)
 └── checklists/requirements.md
 ```
@@ -116,8 +116,8 @@ src/
 │                        #   ToolKeyboardOps.deliver failure-ordering fix (remove-old only after send + compensate);
 │                        #   owner check in the resolve/route step (tool buttons only)
 ├── TgLLM.Persistence/          # (file store) + expiry-aware eviction on the store seam
-├── TgLLM.Persistence.Sqlite/   # NEW (F#): SqliteBindingStore : IBindingStore (Microsoft.Data.Sqlite).
-│                               #   Deps: Core, Microsoft.Data.Sqlite. Isolated so file-store users don't inherit it.
+├── TgLLM.Persistence.LiteDb/   # NEW (F#): LiteDbBindingStore : IBindingStore (LiteDB).
+│                               #   Deps: Core, LiteDB. Isolated so file-store users don't inherit it.
 ├── TgLLM.BotApi/        # + WebApp/CopyText button mapping; edit-error classification (not-modified/not-found);
 │                        #   ack (or ack-only event) for dropped non-canonical callback queries; message_id per-chat
 ├── TgLLM.Webhooks/      # + same dropped-callback ack path (parity with long polling)
@@ -130,17 +130,17 @@ tests/
 ├── TgLLM.Core.Tests/            # + property tests: owner match, manifest, payload round-trip, expiry, dedup,
 │                                #   + review gaps (dup-token, validate⇒plan, non-canonical reject, url passthrough)
 ├── TgLLM.Persistence.Tests/     # (file) + backward-compat load of slice-2 records; expiry eviction
-├── TgLLM.Persistence.Sqlite.Tests/  # NEW: round-trip, restart persistence (SC-010), slice-2 record read
+├── TgLLM.Persistence.LiteDb.Tests/  # NEW: round-trip, restart persistence (SC-010), slice-2 record read
 ├── TgLLM.Integration.Tests/     # + owner auth (US1), WebApp/CopyText (US3), expiry/eviction/at-most-once/
 │                                #   soft-edit (US4), manifest (US2), both transports; slice-1/2 stay green
 └── TgLLM.CSharp.Tests/          # + C# auth/manifest/structured-args/new buttons; canary extended (store members)
 
 examples/
-└── ToolRouterFSharp / ToolRouterCSharp   # extended: owner-scoped keyboard + emitted manifest + SQLite store
+└── ToolRouterFSharp / ToolRouterCSharp   # extended: owner-scoped keyboard + emitted manifest + LiteDB store
 ```
 
 **Structure Decision**: Extend the slice-1/2 solution; add exactly one src project
-(`TgLLM.Persistence.Sqlite`) plus its test project. Everything else is additive edits to existing
+(`TgLLM.Persistence.LiteDb`) plus its test project. Everything else is additive edits to existing
 projects. The slice-1/2 public API and tests are preserved (FR-019).
 
 ## Complexity Tracking
@@ -149,4 +149,4 @@ projects. The slice-1/2 public API and tests are preserved (FR-019).
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| New leaf project `TgLLM.Persistence.Sqlite` (not folding SQLite into `TgLLM.Persistence`) | A durable backend with a native dependency (`Microsoft.Data.Sqlite`) must be isolated so file-store-only consumers don't transitively inherit it — the same layering rationale that keeps IO out of Core | Putting `SqliteBindingStore` in the existing `TgLLM.Persistence` project would force the SQLite dependency onto every file-store user; a single "kitchen-sink" persistence project couples unrelated backends |
+| New leaf project `TgLLM.Persistence.LiteDb` (not folding LiteDB into `TgLLM.Persistence`) | The LiteDB dependency should be isolated so file-store-only consumers don't inherit it (dependency hygiene, same rationale that keeps IO out of Core) | Putting `LiteDbBindingStore` in the existing `TgLLM.Persistence` project would force the LiteDB dependency onto every file-store user; a single "kitchen-sink" persistence project couples unrelated backends |

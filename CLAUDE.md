@@ -14,8 +14,8 @@ US2 **neutral tool manifest** (`{name,description,parameters(JSON Schema)}`, no 
 **structured args** (opaque payload: Core keeps `Arg: string option`, façades serialize `'T` / `GetArg<'T>()`
 — STJ stays out of Core). US3 **WebApp + CopyText** buttons (client-side; WebApp https/private-oriented,
 CopyText ≤256). US4 **lifecycle**: binding expiry (injected `Clock`), idle per-chat eviction, at-most-once
-per `callback_query.id`, single-use bindings, soft edit-error handling, embedded **SQLite** store (new
-`TgLLM.Persistence.Sqlite` leaf). Foundation: evolve `ToolBinding` once (+owner +expiry +single-use),
+per `callback_query.id`, single-use bindings, soft edit-error handling, embedded **LiteDB** store (new
+`TgLLM.Persistence.LiteDb` leaf). Foundation: evolve `ToolBinding` once (+owner +expiry +single-use),
 read-compatible with slice-2 records.
 
 **Folded review findings (from a Fable review of 001/002)**: blockers fixed in a hardening pass on this

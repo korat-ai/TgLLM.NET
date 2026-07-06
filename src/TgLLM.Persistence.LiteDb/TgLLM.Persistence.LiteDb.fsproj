@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Durable (embedded LiteDB) IBindingStore implementation for TgLLM.NET's Tool Router. A pure-managed, single-file document store — no external server and no native dependency. Isolated from the file store so file-only consumers do not inherit it (Principle III); Core stays IO-agnostic.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="LiteDbBindingStore.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LiteDB" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TgLLM.Core\TgLLM.Core.fsproj" />
+  </ItemGroup>
+
+</Project>

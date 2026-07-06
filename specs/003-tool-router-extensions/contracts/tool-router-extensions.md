@@ -55,8 +55,8 @@ module Plan =
     val singleUse: PlanButton -> PlanButton                  // confirm-once
 
 // New store; same IBindingStore seam as FileBindingStore.
-type SqliteBindingStore =
-    static member OpenAt: path: string -> SqliteBindingStore  // in TgLLM.Persistence.Sqlite
+type LiteDbBindingStore =
+    static member OpenAt: path: string -> LiteDbBindingStore  // in TgLLM.Persistence.LiteDb
 
 // Config gains an idle-eviction knob (optional; sensible default).
 type TgBotConfig with
@@ -88,7 +88,7 @@ T GetArg<T>();
 bool TryGetArg<T>(out T value);
 
 // US4 — durable store + C#-facing store adapter (review #7: no FSharpOption on the surface)
-public sealed class SqliteBindingStore { public static SqliteBindingStore OpenAt(string path); }
+public sealed class LiteDbBindingStore { public static LiteDbBindingStore OpenAt(string path); }
 public interface IBindingStoreCSharp {                    // nullable / DTO, no F# idioms
     ValueTask<ToolBindingDto?> TryGetAsync(string token);
     ValueTask SaveAsync(ToolBindingDto binding);
@@ -107,7 +107,7 @@ public interface IBindingStoreCSharp {                    // nullable / DTO, no 
 - **New buttons are client-side**: WebApp/CopyText presses reach no tool and produce no callback event.
 - **Expiry/single-use/dedup**: an expired or already-consumed single-use binding, and a redelivered
   callback query id, all resolve as no-invocation + ack (not a crash).
-- **Store interchangeability**: the in-memory, file, and SQLite stores pass the same restart-persistence
+- **Store interchangeability**: the in-memory, file, and LiteDB stores pass the same restart-persistence
   acceptance; all read slice-2 records.
 - **Idempotent edits**: `not modified` is a silent success; `not found` is a soft, observed failure —
   never an exception to the tool author.

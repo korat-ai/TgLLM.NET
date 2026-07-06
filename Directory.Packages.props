@@ -19,8 +19,13 @@
          Version pinned centrally now so later phases (T023+) restore a known-good version. -->
     <PackageVersion Include="Telegram.Bot" Version="22.10.1" />
 
-    <!-- Observability bridge (TgLLM.FSharp façade): IHookObserver -> ILogger (FR-009, T044). -->
+    <!-- Observability bridge (TgLLM.FSharp façade): IHookObserver -> ILogger. -->
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+
+    <!-- Embedded durable binding store (TgLLM.Persistence.LiteDb leaf only — file-store users must
+         not inherit it). Pure-managed, single-file, no external server and no native dependency
+         (SQLite's native e_sqlite3 carries an unresolved CVE that the repo's NuGet audit rejects). -->
+    <PackageVersion Include="LiteDB" Version="5.0.21" />
 
     <!-- F# test stack: Expecto + FsCheck (Principle I — property-based tests are mandatory
          for the pure kernel).

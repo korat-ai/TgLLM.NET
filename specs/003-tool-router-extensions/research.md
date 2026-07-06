@@ -112,8 +112,8 @@ need explicitly.
 
 ## D7 — Eviction: binding TTL sweep, idle per-chat channel reclaim, store-level delete
 
-**Decision**: Three eviction seams: (a) expired bindings are removable from any store — SQLite via
-`DELETE WHERE expires_at < now`, file/in-memory via a periodic sweep; (b) the `MessageBindingTracker`
+**Decision**: Three eviction seams: (a) expired bindings are removable from any store — LiteDB via a
+collection delete-by-query (`expires_at < now`), file/in-memory via a periodic sweep; (b) the `MessageBindingTracker`
 prunes entries for messages past a bound; (c) the dispatcher reclaims a per-chat channel/worker after a
 configurable idle period **without dropping or reordering in-flight presses** (closes the slice-1 idle
 per-chat backlog debt, FR-012). Folds review finding #9 (nothing was evicted anywhere; `FileBindingStore`
@@ -125,20 +125,25 @@ forever). Idle-channel reclaim bounds dispatcher memory across many short-lived 
 **Alternatives rejected**: No eviction (status quo) — unbounded growth, already flagged by review.
 Evicting on every mutation — churn; a periodic/threshold sweep is cheaper.
 
-## D8 — Second durable store: embedded SQLite in a new leaf project
+## D8 — Second durable store: embedded LiteDB in a new leaf project
 
-**Decision**: `SqliteBindingStore : IBindingStore` in a new `TgLLM.Persistence.Sqlite` leaf project
-(dep: `Microsoft.Data.Sqlite`). One table keyed by token, columns for tool name, payload, owner,
-expiry, single-use; expiry eviction is a `DELETE`. Interchangeable with the in-memory and file stores;
-it MUST read slice-2 records (missing owner/expiry columns default to Anyone/none).
+**Decision**: `LiteDbBindingStore : IBindingStore` in a new `TgLLM.Persistence.LiteDb` leaf project
+(dep: `LiteDB`). One collection keyed by token; each document carries the tool name, payload, owner,
+expiry, and single-use flag; expiry eviction is a collection delete-by-query. Interchangeable with the
+in-memory and file stores; it MUST read slice-2 records (missing owner/expiry fields default to
+Anyone/none).
 
 **Rationale**: Proves the store seam generalizes beyond one implementation (SC-010) using an **embedded**
-engine — no external server, so the test oracle stays self-contained like the file store. SQLite's query
-model makes expiry eviction a one-liner. Isolated in its own project so file-store-only consumers do not
-inherit the SQLite native dependency (see plan Complexity Tracking).
+engine — no external server, so the test oracle stays self-contained like the file store. LiteDB's
+document-query model makes expiry eviction a one-liner. Isolated in its own project purely for
+**dependency hygiene**: LiteDB is pure-managed (no native dependency), but file-store-only consumers
+still should not be forced to inherit it transitively (see plan Complexity Tracking). SQLite was
+rejected because its native `e_sqlite3` provider carries an unresolved CVE (CVE-2025-6965 /
+GHSA-2m69-gcr7-jv3q) that the repo's NuGet audit blocks as an error.
 
-**Alternatives rejected**: Redis/Postgres — needs an external server, complicates the test oracle;
-networked stores stay backlog. Folding SQLite into `TgLLM.Persistence` — forces the dep on file users.
+**Alternatives rejected**: SQLite — native `e_sqlite3` provider carries an unresolved, audit-blocking CVE
+(see above). Redis/Postgres — needs an external server, complicates the test oracle; networked stores
+stay backlog. Folding LiteDB into `TgLLM.Persistence` — forces the dep on file users.
 
 ## D9 — Folded review findings (architectural, designed into this slice)
 

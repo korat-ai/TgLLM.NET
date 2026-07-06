@@ -78,7 +78,7 @@ type ToolBinding =
 
 - **Backward compatibility (FR-017)**: a slice-2 record (no `Owner`/`ExpiresAt`/`SingleUse`) loads with
   `Owner = Anyone`, `ExpiresAt = None`, `SingleUse = false`. The file store's JSON gains optional fields
-  (absent ⇒ defaults); the SQLite store's columns are nullable with the same defaults.
+  (absent ⇒ defaults); the LiteDB store's document fields are optional with the same defaults.
 - The record stays fully **serializable** (persistence unchanged in shape — just more fields).
 
 ## Resolution context (Core, IO-agnostic)
@@ -109,9 +109,10 @@ type ICSharpBindingStore = ...   // in the C# façade; bridged to IBindingStore 
 ```
 
 - Implementations: `InMemoryBindingStore` (Core), `FileBindingStore` (`TgLLM.Persistence`),
-  **`SqliteBindingStore`** (`TgLLM.Persistence.Sqlite`, NEW). All interchangeable; all read slice-2 data.
-- `SqliteBindingStore` schema: one table `bindings(token PK, tool_name, arg, owner_user_id NULLABLE,
-  expires_at NULLABLE, single_use)`; `EvictExpired` = `DELETE WHERE expires_at < now`.
+  **`LiteDbBindingStore`** (`TgLLM.Persistence.LiteDb`, NEW). All interchangeable; all read slice-2 data.
+- `LiteDbBindingStore` storage model: a single-file **embedded document store** — one **collection**
+  keyed by token, where each **document** carries the tool name, arg, owner, expiry, and single-use
+  fields (expiry indexed); `EvictExpired` deletes the documents whose expiry field is `< now`.
 
 ## Dispatcher (US4)
 

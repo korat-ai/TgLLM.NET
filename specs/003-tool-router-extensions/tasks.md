@@ -35,8 +35,8 @@ lifecycle). Folded architectural review findings are tagged `[review #n]`.
 
 ## Phase 1: Setup
 
-- [ ] T001 Create the new leaf project `src/TgLLM.Persistence.Sqlite` (F#; ProjectReference `TgLLM.Core`) and test project `tests/TgLLM.Persistence.Sqlite.Tests` (Expecto + FsCheck); add both to `TgLLM.NET.sln` with correct references
-- [ ] T002 [P] Add `Microsoft.Data.Sqlite` to `Directory.Packages.props` and reference it from `TgLLM.Persistence.Sqlite` only (file-store users must not inherit it)
+- [ ] T001 Create the new leaf project `src/TgLLM.Persistence.LiteDb` (F#; ProjectReference `TgLLM.Core`) and test project `tests/TgLLM.Persistence.LiteDb.Tests` (Expecto + FsCheck); add both to `TgLLM.NET.sln` with correct references
+- [ ] T002 [P] Add `LiteDB` to `Directory.Packages.props` and reference it from `TgLLM.Persistence.LiteDb` only (file-store users must not inherit it)
 
 **Checkpoint**: solution builds with the new empty project; slice-1/2 suite still green.
 
@@ -117,16 +117,16 @@ enforced identically after restart and across both transports/façades.
 
 ## Phase 6: User Story 4 — Lifecycle & reliability (Priority: P4)
 
-**Goal**: Expiry/eviction, at-most-once redelivery, single-use, soft edit errors, embedded SQLite store.
+**Goal**: Expiry/eviction, at-most-once redelivery, single-use, soft edit errors, embedded LiteDB store.
 
 - [ ] T034 [US4] Wire expiry + single-use consumption + dedup (`ProcessedQueryTracker`) into the resolve/dispatch step in `src/TgLLM.Core/UpdateProcessor.fs` (expired/consumed/redelivered → ack, no invoke); tests in `tests/TgLLM.Core.Tests/LifecycleRoutingTests.fs` first
 - [ ] T035 [P] [US4] [test] Failing tests for soft edit-error handling (`message is not modified` → success no-op; `message to edit not found` → observed soft failure, no exception) in `tests/TgLLM.Integration.Tests/EditErrorTests.fs`
 - [ ] T036 [US4] Classify Telegram edit errors in the edit-in-place port impl (`src/TgLLM.BotApi/TelegramBotApiClient.fs`) and surface via `IHookObserver` instead of throwing (FR-015), to green T035
 - [ ] T037 [US4] Add idle per-chat eviction to the dispatcher (configurable deadline; never drops/reorders in-flight presses) in `src/TgLLM.Core/Dispatcher.fs`; tests (SC-007, ordering preserved) in `tests/TgLLM.Core.Tests/DispatcherEvictionTests.fs` first
-- [ ] T038 [P] [US4] [test] Failing tests for `SqliteBindingStore`: Save→TryGet round-trip, `EvictExpired`, reload-after-restart (SC-010), and reading a slice-2 record (missing owner/expiry columns → defaults), in `tests/TgLLM.Persistence.Sqlite.Tests/SqliteBindingStoreTests.fs`
-- [ ] T039 [US4] Implement `SqliteBindingStore : IBindingStore` (Microsoft.Data.Sqlite; token PK, tool/arg/owner/expiry/single-use columns; `EvictExpired` = DELETE) in `src/TgLLM.Persistence.Sqlite/SqliteBindingStore.fs` to green T038
-- [ ] T040 [US4] Add `WithIdleChatEviction` (F#) / options (C#) and `SqliteBindingStore.OpenAt` exposure to both façades, in `src/TgLLM.FSharp/TgBot.fs` and `src/TgLLM.CSharp/`
-- [ ] T041 [US4] [test] Integration: expiry refusal, single-use confirm-once, at-most-once redelivery, and SQLite restart persistence over both transports, in `tests/TgLLM.Integration.Tests/LifecycleTests.fs`
+- [ ] T038 [P] [US4] [test] Failing tests for `LiteDbBindingStore`: Save→TryGet round-trip, `EvictExpired`, reload-after-restart (SC-010), and reading a slice-2 record (missing owner/expiry fields → defaults), in `tests/TgLLM.Persistence.LiteDb.Tests/LiteDbBindingStoreTests.fs`
+- [ ] T039 [US4] Implement `LiteDbBindingStore : IBindingStore` (LiteDB; one collection keyed by token, documents carrying tool/arg/owner/expiry/single-use fields; `EvictExpired` = collection delete-by-query) in `src/TgLLM.Persistence.LiteDb/LiteDbBindingStore.fs` to green T038
+- [ ] T040 [US4] Add `WithIdleChatEviction` (F#) / options (C#) and `LiteDbBindingStore.OpenAt` exposure to both façades, in `src/TgLLM.FSharp/TgBot.fs` and `src/TgLLM.CSharp/`
+- [ ] T041 [US4] [test] Integration: expiry refusal, single-use confirm-once, at-most-once redelivery, and LiteDB restart persistence over both transports, in `tests/TgLLM.Integration.Tests/LifecycleTests.fs`
 
 **Checkpoint**: US4 green; the store seam demonstrably generalizes (SC-010); slice-1/2 green.
 
@@ -134,8 +134,8 @@ enforced identically after restart and across both transports/façades.
 
 ## Phase 7: Polish & cross-cutting
 
-- [ ] T042 [P] Extend `examples/ToolRouterFSharp` and `examples/ToolRouterCSharp` with an owner-scoped keyboard, an emitted manifest, a structured-arg button, WebApp/CopyText, and the SQLite store
-- [ ] T043 [P] Update user docs: `docs/quickstart.md` (auth + manifest + structured args + new buttons + SQLite), `README.md`, `CHANGELOG.md` (Unreleased → slice 003) — English, cite code/vendor only (Principle VII)
+- [ ] T042 [P] Extend `examples/ToolRouterFSharp` and `examples/ToolRouterCSharp` with an owner-scoped keyboard, an emitted manifest, a structured-arg button, WebApp/CopyText, and the LiteDB store
+- [ ] T043 [P] Update user docs: `docs/quickstart.md` (auth + manifest + structured args + new buttons + LiteDB), `README.md`, `CHANGELOG.md` (Unreleased → slice 003) — English, cite code/vendor only (Principle VII)
 - [ ] T044 Full-suite acceptance: run the entire suite over both transports and both façades; confirm slice-1/2 tests unchanged and all SC-001..SC-011 covered
 - [ ] T045 Final `dotnet build -c Release` (0 warnings/0 errors) + `dotnet test` green; verify no `FSharpOption`/`FSharpFunc` leak on the C# surface (canary) and no ambient clock in Core
 

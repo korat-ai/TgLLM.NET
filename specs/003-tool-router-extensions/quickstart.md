@@ -63,7 +63,7 @@ let plan =
 // WebApp/CopyText taps are handled entirely by the client — no tool runs for them.
 ```
 
-## 5. Expiry, confirm-once, and a durable SQLite store (US4)
+## 5. Expiry, confirm-once, and a durable LiteDB store (US4)
 
 ```fsharp
 let plan =
@@ -71,8 +71,8 @@ let plan =
         [ [ Plan.tool "Confirm" "confirm" |> Plan.expiring (TimeSpan.FromMinutes 10.) |> Plan.singleUse ] ]
 // After 10 min, or after the first successful press, a tap resolves as unknown (ack, no tool).
 
-// Bindings survive restart in SQLite (interchangeable with the in-memory and file stores):
-let store = SqliteBindingStore.OpenAt "bindings.db"
+// Bindings survive restart in LiteDB (interchangeable with the in-memory and file stores):
+let store = LiteDbBindingStore.OpenAt "bindings.db"
 let config = TgBotConfig.create(token).WithTools(registry).WithBindingStore(store)
                                        .WithIdleChatEviction(TimeSpan.FromMinutes 30.)
 ```
@@ -82,7 +82,7 @@ let config = TgBotConfig.create(token).WithTools(registry).WithBindingStore(stor
 var options = new TelegramAgentOptions(token)
 {
     Tools = registry,
-    BindingStore = SqliteBindingStore.OpenAt("bindings.db"),
+    BindingStore = LiteDbBindingStore.OpenAt("bindings.db"),
 };
 ```
 
@@ -92,4 +92,4 @@ var options = new TelegramAgentOptions(token)
 - The same registry that *routes* taps also *describes itself* to your LLM.
 - Buttons that carry rich, typed arguments — not just short strings.
 - Mini-App-launch and copy-to-clipboard buttons beside your tool buttons.
-- Bindings that expire, can be confirm-once, survive restart in SQLite, and don't grow unbounded.
+- Bindings that expire, can be confirm-once, survive restart in LiteDB, and don't grow unbounded.

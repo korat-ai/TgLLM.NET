@@ -32,7 +32,7 @@
 ## Notes
 
 - This is a **developer library**, so its "stakeholders" are host developers; named deliverables that
-  are user-facing *capabilities* (e.g. "an embedded SQLite durable store", "a JSON-Schema tool
+  are user-facing *capabilities* (e.g. "an embedded LiteDB durable store", "a JSON-Schema tool
   manifest") are stated at the same level as slice 2's "file-based JSON store" — they are contract
   choices the host selects, not internal implementation. True implementation detail (types, project
   layout, wire mapping) is deferred to `plan.md` / `data-model.md`.
