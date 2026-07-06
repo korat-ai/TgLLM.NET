@@ -35,6 +35,31 @@ module PressResolution =
         | ToolResolution _ -> Deferred
         | HookStoreResolution -> AckFirst
 
+/// Shared "ack exactly once" state for the Tool Router's deferred-ack path (review #3). Built and
+/// STARTED at ENQUEUE time (press arrival) by `UpdateProcessor.processPress`'s `Deferred` branch,
+/// rather than inside the enqueued work thunk itself (`buildToolWork`) — a tool queued behind a
+/// slow tool on the SAME chat previously inherited that queue wait before its own watchdog clock
+/// even started (the thunk — and therefore the watchdog it used to create — only ran once the
+/// per-chat dispatcher got to it), silently blowing the client's spinner budget regardless of the
+/// budget's own configured value. Starting the watchdog here instead means its countdown begins
+/// the instant the press is resolved, independent of how deep its chat's queue is; the tool's own
+/// directive can still win the ack race via the same `Interlocked`-CAS guard as before — nothing
+/// about "the tool's own `ctx.Answer` wins if it finishes first" changes, only WHEN the race
+/// starts. `[<NoComparison; NoEquality>]`: like `HookBinding`/`RouteDecision`, every field here is
+/// function-valued, so structural equality/comparison can't be derived (and nothing ever needs
+/// it).
+[<NoComparison; NoEquality>]
+type private DeferredAckState =
+    { /// Backs `PressContext.Answer` — records the tool's ack directive; does not itself send it.
+      AnswerAction: string -> bool -> unit
+      /// Sends the ack exactly once (the tool's directive if `AnswerAction` was called, an empty
+      /// default otherwise) — safe to call from both the watchdog and the tool's own completion,
+      /// racing harmlessly via the internal `Interlocked` guard.
+      SendAckOnce: unit -> Task
+      /// Stops the watchdog and awaits its graceful unwind — call ONCE, after the tool itself has
+      /// finished running (whether it won or lost the ack race).
+      Finish: unit -> Task }
+
 /// The engine that turns an inbound button press into ack + hook/tool execution.
 /// `PressContext` itself lives in Domain.fs — see the compile-order comment in
 /// TgLLM.Core.fsproj for why.
@@ -84,14 +109,61 @@ type UpdateProcessor
                     observer.OnHookFailed(press, ex)
             }
 
-    /// The deferred-ack TOOL path: the tool runs first; the processor answers the callback query
-    /// EXACTLY ONCE afterwards — the tool's own directive (via `ctx.Answer`), or an empty default.
-    /// A watchdog races the tool so a slow tool can't blow the client's spinner budget; it does
-    /// NOT cancel the tool — only the ack is defaulted, the tool keeps running to completion
-    /// regardless. An `Interlocked` guard makes "exactly one ack" true by construction; the
-    /// try/with around the actual API call is a defensive backstop for the real Bot API rejecting
-    /// a stale/duplicate answer server-side (`"query ID is invalid"`), which this in-process guard
-    /// already makes practically unreachable.
+    /// Builds and STARTS a `DeferredAckState` for `press` (review #3) — called at ENQUEUE time,
+    /// before the tool's work is ever handed to `dispatcher.Enqueue`, so the watchdog's countdown
+    /// begins at press arrival regardless of how deep the chat's queue is. The watchdog races the
+    /// tool so a slow tool can't blow the client's spinner budget; it does NOT cancel the tool —
+    /// only the ack is defaulted if the watchdog wins, the tool keeps running to completion
+    /// regardless. An `Interlocked` guard (inside `sendAckOnce`) makes "exactly one ack" true by
+    /// construction; the try/with around the actual API call is a defensive backstop for the real
+    /// Bot API rejecting a stale/duplicate answer server-side (`"query ID is invalid"`), which this
+    /// in-process guard already makes practically unreachable. `ct` is the OVERALL processor's own
+    /// token (`RunAsync`'s), not the per-invocation token the dispatcher later hands the work
+    /// thunk — the only one available at enqueue time, and the correct scope for "stop counting
+    /// down if the whole processor is shutting down" anyway.
+    let startDeferredAck (press: ButtonPress) (ct: CancellationToken) : DeferredAckState =
+        let mutable ackText: string option = None
+        let mutable ackAlert = false
+        let mutable acked = 0
+        let watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(ct)
+
+        let sendAckOnce () : Task =
+            task {
+                if Interlocked.CompareExchange(&acked, 1, 0) = 0 then
+                    try
+                        do! api.AnswerCallback(press.QueryId, ackText, ackAlert, ct)
+                    with _ ->
+                        () // a losing/late ack call can legitimately fail server-side; swallow.
+            }
+
+        let watchdogTask: Task =
+            task {
+                try
+                    do! Task.Delay(watchdogBudget, watchdogCts.Token)
+                    do! sendAckOnce ()
+                with :? OperationCanceledException ->
+                    ()
+            }
+
+        { AnswerAction =
+            fun text alert ->
+                ackText <- Some text
+                ackAlert <- alert
+          SendAckOnce = sendAckOnce
+          Finish =
+            fun () ->
+                task {
+                    // The tool is done (whether it won or lost the ack race) — stop the timer.
+                    watchdogCts.Cancel()
+
+                    try
+                        do! watchdogTask
+                    with :? OperationCanceledException ->
+                        ()
+
+                    watchdogCts.Dispose()
+                } }
+
     /// `PressContext.EditTextAsync`'s backing closure on the deferred-ack tool path: edits the
     /// PRESSED message's text, leaving its current keyboard untouched (`None`). An invalid `text`
     /// is a programmer error by the tool author (Always-Rule 6), same fail-fast convention as
@@ -122,26 +194,20 @@ type UpdateProcessor
             plan
         :> Task
 
-    let buildToolWork (press: ButtonPress) (tool: Tool) (binding: ToolBinding) (dispatch: ToolDispatch) : CancellationToken -> Task =
+    /// The enqueued work itself: runs the tool, then sends its (or the watchdog's) ack and stops
+    /// the watchdog. `ackState` was already built and STARTED at ENQUEUE time
+    /// (`startDeferredAck`, called from `processPress`'s `Deferred` branch) — this thunk only runs
+    /// once the per-chat dispatcher gets to it, which may be well after the watchdog's countdown
+    /// already began (review #3).
+    let buildToolWork
+        (press: ButtonPress)
+        (tool: Tool)
+        (binding: ToolBinding)
+        (dispatch: ToolDispatch)
+        (ackState: DeferredAckState)
+        : CancellationToken -> Task =
         fun workCt ->
             task {
-                let mutable ackText: string option = None
-                let mutable ackAlert = false
-                let mutable acked = 0
-
-                let sendAckOnce () : Task =
-                    task {
-                        if Interlocked.CompareExchange(&acked, 1, 0) = 0 then
-                            try
-                                do! api.AnswerCallback(press.QueryId, ackText, ackAlert, workCt)
-                            with _ ->
-                                () // a losing/late ack call can legitimately fail server-side; swallow.
-                    }
-
-                let answerAction (text: string) (alert: bool) =
-                    ackText <- Some text
-                    ackAlert <- alert
-
                 let context =
                     PressContext(
                         press.ButtonLabel,
@@ -151,42 +217,18 @@ type UpdateProcessor
                         workCt,
                         makeReplyTextAsync press workCt,
                         ?arg = binding.Arg,
-                        answerAction = answerAction,
+                        answerAction = ackState.AnswerAction,
                         editTextAction = makeEditTextAction press workCt,
                         editKeyboardAction = makeEditKeyboardAction press dispatch workCt
                     )
 
-                let runTool () : Task =
-                    task {
-                        try
-                            do! tool context
-                        with ex ->
-                            observer.OnHookFailed(press, ex)
-
-                        do! sendAckOnce ()
-                    }
-
-                use watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(workCt)
-
-                let watchdog () : Task =
-                    task {
-                        try
-                            do! Task.Delay(watchdogBudget, watchdogCts.Token)
-                            do! sendAckOnce ()
-                        with :? OperationCanceledException ->
-                            ()
-                    }
-
-                let toolTask = runTool ()
-                let watchdogTask = watchdog ()
-                do! toolTask
-                // The tool is done (whether it won or lost the ack race) — stop the timer.
-                watchdogCts.Cancel()
-
                 try
-                    do! watchdogTask
-                with :? OperationCanceledException ->
-                    ()
+                    do! tool context
+                with ex ->
+                    observer.OnHookFailed(press, ex)
+
+                do! ackState.SendAckOnce()
+                do! ackState.Finish()
             }
 
     /// The ack-only path (review #8, folded into the Foundational phase): a callback query the
@@ -250,7 +292,11 @@ type UpdateProcessor
 
             match PressResolution.ackPolicy resolution, resolution with
             | Deferred, ToolResolution(tool, binding, dispatch) ->
-                do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch)
+                // Start the watchdog NOW (press arrival) — review #3 — not once the per-chat
+                // dispatcher eventually RUNS the enqueued work; see `startDeferredAck`'s own doc
+                // comment for why.
+                let ackState = startDeferredAck press ct
+                do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch ackState)
             | AckFirst, HookStoreResolution -> do! processHookStorePress ct press
             | Deferred, HookStoreResolution
             | AckFirst, ToolResolution _ ->

@@ -11,6 +11,7 @@
     <Compile Include="LongPollingTests.fs" />
     <Compile Include="RunLoopResilienceTests.fs" />
     <Compile Include="DroppedCallbackTests.fs" />
+    <Compile Include="AckTimingTests.fs" />
     <Compile Include="FSharpPollingAcceptanceTests.fs" />
     <Compile Include="ToolRouterAcceptanceTests.fs" />
     <Compile Include="SendKeyboardPlanGuardTests.fs" />
