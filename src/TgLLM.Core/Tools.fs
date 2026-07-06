@@ -461,13 +461,21 @@ module ToolKeyboardOps =
     /// Validates+plans `plan`, saves its bindings BEFORE `send` puts the keyboard on the wire, then
     /// records the delivered message's tokens into `tracker` — this only ever affects a FUTURE
     /// `ctx.EditKeyboardAsync` on that same message, never this call itself. `staleMessageId =
-    /// Some messageId` additionally removes `(chat, messageId)`'s previously-tracked bindings FIRST
-    /// (the edit path: a tool that re-renders its own keyboard, e.g. a paginator/counter, must not
-    /// leak one row per edit); `None` skips this (a fresh send has nothing stale to remove). `chat`
-    /// is required (not bundled into `staleMessageId`) because `MessageId` alone is ambiguous
-    /// across chats — every caller already has a `ChatId` in hand (the press's
-    /// own chat, or the chat a fresh send targets). The old tokens are looked up and removed BEFORE
-    /// the new ones are saved; `tracker.Record` runs only AFTER `send` completes, matching
+    /// Some messageId` additionally removes `(chat, messageId)`'s previously-tracked bindings (the
+    /// edit path: a tool that re-renders its own keyboard, e.g. a paginator/counter, must not leak
+    /// one row per edit); `None` skips this (a fresh send has nothing stale to remove).
+    ///
+    /// Ordering (review #4 fix): the OLD tokens are removed only AFTER `send` has succeeded — never
+    /// before. Removing them first (the original ordering) meant a failed edit left the OLD
+    /// keyboard visibly on the wire (Telegram never applied the failed edit) with its bindings
+    /// already erased from the store — a stranded live keyboard whose buttons ack but resolve to
+    /// nothing. If `send` throws, this now COMPENSATES by removing the just-saved NEW bindings
+    /// (nothing on the wire ever pointed to them, since the edit that would have shown them never
+    /// reached Telegram) before re-raising, so a failed delivery leaves neither a stranded keyboard
+    /// nor an orphaned binding — then the original exception propagates unchanged. `chat` is
+    /// required (not bundled into `staleMessageId`) because `MessageId` alone is ambiguous across
+    /// chats — every caller already has a `ChatId` in hand (the press's own chat, or the chat a
+    /// fresh send targets). `tracker.Record` runs only AFTER `send` completes, matching
     /// `MessageBindingTracker`'s own "reflects past sends only" contract. An invalid `plan` is a
     /// programmer error by the caller (Always-Rule 6) — fails fast (`invalidArg`, tagged with
     /// `context` for a useful message) rather than threading a `Result` through this API.
@@ -486,12 +494,24 @@ module ToolKeyboardOps =
             match ToolPlan.plan (Seq.initInfinite (fun _ -> tokenGen ())) plan with
             | Error e -> return invalidArg (nameof plan) $"{context}: invalid plan ({e})"
             | Ok(registeredKeyboard, bindings) ->
+                do! store.Save(bindings, ct)
+
+                let! messageId =
+                    task {
+                        try
+                            return! send registeredKeyboard
+                        with ex ->
+                            // Compensate: the edit never reached Telegram, so these just-saved
+                            // bindings are unreachable by any live keyboard — remove them rather
+                            // than leaking them forever, then propagate the original failure.
+                            do! store.Remove(bindings |> List.map (fun b -> b.Token), ct)
+                            return raise ex
+                    }
+
                 match staleMessageId |> Option.bind (fun messageId -> tracker.TryGetPrevious(chat, messageId)) with
                 | Some staleTokens -> do! store.Remove(staleTokens, ct)
                 | None -> ()
 
-                do! store.Save(bindings, ct)
-                let! messageId = send registeredKeyboard
                 tracker.Record(chat, messageId, bindings |> List.map (fun b -> b.Token))
                 return messageId
         }

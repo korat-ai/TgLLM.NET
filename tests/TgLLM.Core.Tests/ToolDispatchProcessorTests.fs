@@ -402,6 +402,66 @@ let toolDispatchProcessorTests =
             assertThrows "EditTextAsync" (fun () -> ctx.EditTextAsync("x") |> ignore)
             assertThrows "EditKeyboardAsync" (fun () -> ctx.EditKeyboardAsync({ Rows = [] }) |> ignore)
 
+        testCase
+            "ToolKeyboardOps.deliver [review #4]: a throwing send neither strands the old (still-visible) keyboard's bindings nor orphans the just-saved new ones"
+        <| fun _ ->
+            let store = InMemoryBindingStore() :> IBindingStore
+            let tracker = MessageBindingTracker()
+            let chat = UMX.tag<chatId> 1L
+            let staleMessageId = UMX.tag<messageId> 1L
+            let staleToken = CallbackToken.generate ()
+            let staleBinding = ToolBinding.create staleToken (toolName "old") None
+
+            // Simulate a previously-delivered keyboard: its binding is saved and tracked, exactly
+            // as a prior successful `deliver` call would leave it.
+            (store.Save([ staleBinding ], CancellationToken.None)).GetAwaiter().GetResult()
+            tracker.Record(chat, staleMessageId, [ staleToken ])
+
+            let plan: ToolKeyboard = { Rows = [ [ ToolButton("New", "new", None) ] ] }
+            let mutable generatedToken: CallbackToken option = None
+
+            let tokenGen () =
+                let t = CallbackToken.generate ()
+                generatedToken <- Some t
+                t
+
+            let failingSend (_keyboard: RegisteredKeyboard) : Task<MessageId> =
+                task { return failwith "simulated send failure" }
+
+            let deliverTask =
+                ToolKeyboardOps.deliver "test" tokenGen store tracker chat (Some staleMessageId) failingSend CancellationToken.None plan
+
+            let mutable caught: exn option = None
+
+            try
+                deliverTask.GetAwaiter().GetResult() |> ignore
+            with ex ->
+                caught <- Some ex
+
+            Expect.isTrue caught.IsSome "the send failure propagates to the caller rather than being swallowed"
+
+            let staleStillLive = (store.TryGet(staleToken, CancellationToken.None)).GetAwaiter().GetResult()
+
+            Expect.equal
+                staleStillLive
+                (ValueSome staleBinding)
+                "the OLD binding (still the one visibly on the wire, since the edit never reached Telegram) must NOT be removed — no stranded live keyboard"
+
+            match generatedToken with
+            | Some newToken ->
+                let newBindingResult = (store.TryGet(newToken, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal
+                    newBindingResult
+                    ValueNone
+                    "the just-saved NEW binding must be compensated (removed) after the send failed — no orphan binding"
+            | None -> failwith "test setup: tokenGen was never invoked"
+
+            Expect.equal
+                (tracker.TryGetPrevious(chat, staleMessageId))
+                (Some [ staleToken ])
+                "the tracker must still show the pre-existing (stale) tokens — Record only runs after a successful send"
+
         testCase "the slice-1 closure path stays ack-first when toolDispatch is absent" <| fun _ ->
             let token = CallbackToken.generate ()
             let press = samplePress token 1L
