@@ -1,4 +1,4 @@
-/// Tests for `IBindingStore.EvictExpired` (research D7, folds review finding #9 — nothing was ever
+/// Tests for `IBindingStore.EvictExpired` (nothing was ever
 /// evicted anywhere) on `InMemoryBindingStore`: removes bindings whose `ExpiresAt` is `Some` and
 /// strictly at-or-before `now` (matching `Expiry.isLive`'s own boundary — the exact expiry instant
 /// already counts as expired), keeps everything else, and returns the exact count removed.

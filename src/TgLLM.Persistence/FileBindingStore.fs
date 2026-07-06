@@ -43,10 +43,10 @@ module BindingDto =
         match CallbackToken.tryParse dto.Token, ToolName.create dto.ToolName with
         | ValueSome token, Ok toolName ->
             // `BindingDto` itself doesn't carry Owner/ExpiresAt/SingleUse yet (this store's on-disk
-            // shape is untouched by this slice's foundational phase, US4 is out of scope here) —
+            // shape isn't extended with the new fields yet) —
             // every row this store has ever written is therefore slice-2-shaped, so
             // `ToolBinding.create`'s defaults (Anyone/None/false) are exactly correct, not a
-            // temporary shortcut (FR-017).
+            // temporary shortcut.
             Some(ToolBinding.create token toolName (dto.Arg |> Option.ofObj))
         | _ -> None
 

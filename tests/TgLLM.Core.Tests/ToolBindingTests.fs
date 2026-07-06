@@ -1,6 +1,6 @@
 /// Tests for `ToolBinding`'s additive evolution (US1/US2/US4 foundation): `Owner`/`ExpiresAt`/
 /// `SingleUse` are new fields, defaulting to `Anyone`/`None`/`false` — the exact slice-2 shape, so
-/// every already-green slice-2 binding is unaffected (FR-017). `ToolBinding.create` is the
+/// every already-green slice-2 binding is unaffected. `ToolBinding.create` is the
 /// one-stop constructor for the common (token, toolName, arg) case that fills in those defaults —
 /// used at every construction site the record's evolution touches (`ToolPlan.plan`, the stores,
 /// the other test files) instead of repeating all six fields as bare record literals everywhere.
@@ -18,7 +18,7 @@ let private toolName (s: string) : ToolName =
 let toolBindingTests =
     testList "ToolBinding" [
 
-        testCase "ToolBinding.create defaults Owner=Anyone, ExpiresAt=None, SingleUse=false (FR-017 backward compat)" <| fun _ ->
+        testCase "ToolBinding.create defaults Owner=Anyone, ExpiresAt=None, SingleUse=false (backward compat)" <| fun _ ->
             let token = CallbackToken.generate ()
             let name = toolName "approve"
 

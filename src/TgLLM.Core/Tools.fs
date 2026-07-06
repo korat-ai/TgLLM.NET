@@ -122,7 +122,7 @@ module ToolBinding =
     /// The slice-2-shaped constructor: `token`/`toolName`/`arg` are the only fields a caller not
     /// yet using owner-scoping/expiry/single-use needs to supply — `Owner`/`ExpiresAt`/`SingleUse`
     /// are filled with their defaults (`Anyone`/`None`/`false`), so a binding built this way is
-    /// indistinguishable from a slice-2 binding that never had those fields at all (FR-017).
+    /// indistinguishable from a slice-2 binding that never had those fields at all.
     let create (token: CallbackToken) (toolName: ToolName) (arg: string option) : ToolBinding =
         { Token = token
           ToolName = toolName
@@ -306,10 +306,9 @@ type IBindingStore =
 
     /// Removes every binding whose `ExpiresAt` is `Some` and no longer live as of `now` (per
     /// `Expiry.isLive` — the boundary instant itself already counts as expired), returning the
-    /// count removed (US4, research D5/D7). A binding with `ExpiresAt = None` is never touched.
-    /// Folds review finding #9 ("nothing was evicted anywhere"): a long-lived bot otherwise grows
-    /// this store unbounded. Callers (a periodic sweep, out of scope here — US4 T034 wiring) decide
-    /// WHEN to call this; the store only decides WHICH bindings are stale as of the given instant.
+    /// count removed. A binding with `ExpiresAt = None` is never touched. Without eviction a
+    /// long-lived bot grows this store unbounded. Callers (a periodic sweep) decide WHEN to call
+    /// this; the store only decides WHICH bindings are stale as of the given instant.
     abstract EvictExpired: now: DateTimeOffset -> ValueTask<int>
 
 /// Default `IBindingStore`: a `ConcurrentDictionary` keyed by `CallbackToken`, same shape as
@@ -365,7 +364,7 @@ type InMemoryBindingStore() =
 /// (e.g. `TgLLM.Persistence.FileBindingStore`). Those rows are only cleaned up if/when that same
 /// message is edited again after the tracker has re-learned its current tokens.
 ///
-/// Eviction seam (US4, research D7(b), folds review finding #9): a long-lived bot otherwise grows
+/// Eviction seam: a long-lived bot otherwise grows
 /// this index unbounded — one entry per DISTINCT `(chat, messageId)` ever recorded, forever.
 /// `capacity` bounds the number of distinct keys tracked; once exceeded, the OLDEST-recorded
 /// distinct key is dropped first (FIFO by first sight). Re-recording an ALREADY-tracked key (a
