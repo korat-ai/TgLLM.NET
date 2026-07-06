@@ -67,6 +67,13 @@ Every new capability is additive and opt-in.
 - Q: What is the second durable store? → A: An **embedded SQLite** store. It keeps the test oracle
   free of any external server (like the file store), and its query model fits expiry/eviction
   naturally. A networked store (e.g. Redis) remains backlog.
+- Q: Does owner scope apply to every button type? → A: **Only to tool (callback) buttons.** URL,
+  WebApp, and CopyText buttons are handled entirely client-side by Telegram — no callback reaches the
+  bot — so a non-owner tap on them cannot be (and need not be) refused. Owner scope is enforced on the
+  server-visible tool presses; a keyboard may still mix scoped tool buttons with client-side buttons.
+- Q: What does a non-owner see if the host sets no notice text? → A: A built-in **default English
+  notice** (e.g. "This button isn't for you"). The host may override it per keyboard; leaving it unset
+  is valid and uses the default.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -211,6 +218,9 @@ slice's restart-persistence test against the SQLite store and get the same resul
   ("message is not modified")**: surfaced softly; "not modified" treated as a successful no-op.
 - **Idle per-chat eviction racing an incoming press for that chat**: the press is processed in order;
   eviction never drops or reorders in-flight work.
+- **Owner-scoped keyboard mixing tool and client-side buttons**: only the tool (callback) buttons are
+  owner-checked; URL/WebApp/CopyText buttons are handled client-side by Telegram with no server
+  round-trip, so they are inherently un-scoped (see Clarifications).
 
 ## Requirements *(mandatory)*
 
@@ -219,9 +229,11 @@ slice's restart-persistence test against the SQLite store and get the same resul
 - **FR-001**: A keyboard MAY be scoped to an **owner** at send time — a specific end user, or
   explicitly "anyone." The default when unset is **anyone** (identical to slice 2; not a breaking
   change).
-- **FR-002**: On a press of an owner-scoped button, the library MUST compare the presser to the owner
-  and, if they differ (or the presser is not identifiable), MUST acknowledge the tap with a
-  host-configurable notice and MUST NOT invoke the tool.
+- **FR-002**: On a press of an owner-scoped tool button, the library MUST compare the presser to the
+  owner and, if they differ (or the presser is not identifiable), MUST acknowledge the tap with a
+  notice (host-configurable per keyboard; a built-in default is used when unset) and MUST NOT invoke
+  the tool. (Owner scope applies only to tool buttons; client-side buttons are un-scoped — see
+  Clarifications.)
 - **FR-003**: The owner scope MUST be stored with the binding so it is enforced identically after a
   restart (durable stores).
 - **FR-004**: The tool registry MUST be able to emit a **neutral tool manifest** — for each registered
