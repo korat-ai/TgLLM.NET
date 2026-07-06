@@ -298,6 +298,53 @@ let toolDispatchProcessorTests =
                     "the replacement keyboard's binding was saved into the SAME store, resolvable for the next tap"
             | other -> failwithf "expected exactly one EditKeyboard call with one replacement button, got %A" other
 
+        testCase "repeated EditKeyboardAsync calls on the same message leave only the LATEST keyboard's bindings in the store (no unbounded leak)" <| fun _ ->
+            let token = CallbackToken.generate ()
+            let press = samplePress token 1L
+            let editCount = 5
+
+            let tool: Tool =
+                fun ctx ->
+                    task {
+                        for i in 1 .. editCount do
+                            let plan: ToolKeyboard = { Rows = [ [ ToolButton($"Page {i}", "counter", Some(string i)) ] ] }
+                            do! ctx.EditKeyboardAsync plan
+                    }
+
+            let dispatch = makeDispatch token "counter" None (Some tool)
+            let api = FakeBotApiClient()
+            let dispatcher = FakeDispatcher()
+            let observer = FakeHookObserver()
+            let source = FakeUpdateSource [ ButtonPressed press ]
+            let processor = UpdateProcessor(source, InMemoryHookStore(), api, dispatcher, observer, toolDispatch = dispatch)
+
+            (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
+
+            match dispatcher.Enqueued with
+            | [ (_, work) ] -> (work CancellationToken.None).GetAwaiter().GetResult()
+            | other -> failwithf "expected exactly one enqueued item, got %d" (List.length other)
+
+            let editedTokens =
+                api.Edits
+                |> List.choose (function
+                    | EditKeyboard(_, _, Some(RegisteredKeyboard [ [ Callback(_, tok) ] ])) -> Some tok
+                    | _ -> None)
+
+            Expect.equal (List.length editedTokens) editCount "sanity: all N edits reached the wire"
+
+            let latestToken = List.last editedTokens
+            let staleTokens = editedTokens |> List.take (editCount - 1)
+
+            for staleTok in staleTokens do
+                let result = (dispatch.Store.TryGet(staleTok, CancellationToken.None)).GetAwaiter().GetResult()
+                Expect.equal result ValueNone "a superseded keyboard's binding must be removed, not leaked forever"
+
+            let latestResult = (dispatch.Store.TryGet(latestToken, CancellationToken.None)).GetAwaiter().GetResult()
+
+            match latestResult with
+            | ValueSome _ -> ()
+            | ValueNone -> failwith "the LATEST keyboard's binding must still resolve"
+
         testCase "EditTextAsync/EditKeyboardAsync are documented no-ops on the slice-1 closure (ack-first) path" <| fun _ ->
             let token = CallbackToken.generate ()
             let press = samplePress token 1L

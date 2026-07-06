@@ -105,6 +105,34 @@ let fileBindingStoreTests =
             finally
                 File.Delete path
 
+        testCase "openAt on a file with truncated/garbage JSON does not throw and starts empty" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                File.WriteAllText(path, "{ this is not valid json at all ]")
+                let store = FileBindingStore.openAt path :> IBindingStore
+                let token = CallbackToken.generate ()
+
+                let result = (store.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal result ValueNone "a corrupt file on disk must not crash openAt — best-effort empty store"
+            finally
+                File.Delete path
+
+        testCase "openAt on a file containing the JSON literal null does not throw and starts empty" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                File.WriteAllText(path, "null")
+                let store = FileBindingStore.openAt path :> IBindingStore
+                let token = CallbackToken.generate ()
+
+                let result = (store.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal result ValueNone "a JSON `null` payload must not crash openAt — best-effort empty store"
+            finally
+                File.Delete path
+
         testCase "Save registers multiple bindings as a unit, all persisted" <| fun _ ->
             let path = tempPath ()
 

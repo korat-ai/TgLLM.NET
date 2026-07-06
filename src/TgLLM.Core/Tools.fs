@@ -203,19 +203,53 @@ type InMemoryBindingStore() =
 
             ValueTask.CompletedTask
 
+/// Tracks which `CallbackToken`s are currently live for a sent/edited message's keyboard, so a
+/// re-render (`ctx.EditKeyboardAsync`, e.g. a paginator/counter tool) can remove its OWN previous
+/// bindings from the durable store instead of leaking one row per edit forever. `Record` is called
+/// AFTER a send/edit reaches the wire — the map only ever reflects PAST sends, so it can never
+/// affect the request that is currently producing it.
+///
+/// Accepted PoC-scope limitation (in-memory, per-process): this map is empty after a process
+/// restart, so an edit made to a message that was originally SENT (or last edited) before the
+/// restart won't find — and therefore won't remove — its pre-restart bindings from a durable store
+/// (e.g. `TgLLM.Persistence.FileBindingStore`). Those rows are only cleaned up if/when that same
+/// message is edited again after the tracker has re-learned its current tokens.
+[<Sealed>]
+type MessageBindingTracker() =
+    let tokensByMessage = ConcurrentDictionary<MessageId, CallbackToken list>()
+
+    /// Record (or overwrite) the tokens currently live for `messageId`.
+    member _.Record(messageId: MessageId, tokens: CallbackToken list) : unit = tokensByMessage[messageId] <- tokens
+
+    /// `messageId`'s previously recorded tokens, if this tracker has ever recorded a keyboard for it.
+    member _.TryGetPrevious(messageId: MessageId) : CallbackToken list option =
+        match tokensByMessage.TryGetValue messageId with
+        | true, tokens -> Some tokens
+        | false, _ -> None
+
 /// The deferred-ack tool path's resolver (T014, data-model.md "Tool dispatch", research.md D6):
 /// token -> binding (via `IBindingStore`) -> tool (via `IToolRegistry`). `ValueNone` on EITHER miss
 /// (unknown token, or a binding whose tool is no longer registered) so `UpdateProcessor` can uniformly
 /// fall back to the slice-1 `IHookStore` ack-first path, which will itself report the unknown/stale
 /// press (FR-005/FR-010) — no separate "known binding, unknown tool" branch is needed.
+///
+/// `tracker` defaults to a fresh, private `MessageBindingTracker` so existing 2-arg call sites keep
+/// compiling — pass an explicit instance (as `TgBot` does) to SHARE bookkeeping with whatever also
+/// records a message's bindings at send time (`TgBot.SendKeyboardPlan`), so an edit can find and
+/// remove them.
 [<Sealed>]
-type ToolDispatch(registry: IToolRegistry, store: IBindingStore) =
+type ToolDispatch(registry: IToolRegistry, store: IBindingStore, ?tracker: MessageBindingTracker) =
+    let tracker = defaultArg tracker (MessageBindingTracker())
 
     /// Exposed so `UpdateProcessor`'s edit-in-place wiring (feature 002-llm-tool-router, T022) can
     /// save the bindings for a tool button's REPLACEMENT keyboard (`PressContext.EditKeyboardAsync`)
     /// into the SAME store this dispatch resolves presses against — a re-plan without this would
     /// register bindings nothing could ever resolve.
     member _.Store: IBindingStore = store
+
+    /// The message->tokens bookkeeping used to remove a superseded keyboard's bindings on edit
+    /// (see `MessageBindingTracker`'s own doc comment).
+    member _.Tracker: MessageBindingTracker = tracker
 
     member _.Resolve(token: CallbackToken, ct: CancellationToken) : ValueTask<(Tool * ToolBinding) voption> =
         ValueTask<(Tool * ToolBinding) voption>(

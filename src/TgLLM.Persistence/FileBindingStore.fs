@@ -70,9 +70,14 @@ type FileBindingStore
     let bindings = initial
 
     /// Rewrites the WHOLE file from the current in-memory index. Only ever called under `gate`.
+    /// Writes to a sibling temp file then `File.Move`s it into place (atomic on the same volume):
+    /// a crash mid-write leaves the temp file corrupt but `path` itself untouched, rather than a
+    /// truncated `path` that the next `openAt` would have to recover from.
     let persist () =
         let dtos = bindings.Values |> Seq.map BindingDto.ofDomain |> Seq.toArray
-        File.WriteAllText(path, JsonSerializer.Serialize dtos)
+        let tempPath = $"{path}.tmp"
+        File.WriteAllText(tempPath, JsonSerializer.Serialize dtos)
+        File.Move(tempPath, path, overwrite = true)
 
     interface IBindingStore with
         member _.Save(newBindings: IReadOnlyList<ToolBinding>, _ct: CancellationToken) : ValueTask =
@@ -109,11 +114,19 @@ type FileBindingStore
             let json = File.ReadAllText path
 
             if not (String.IsNullOrWhiteSpace json) then
-                let dtos = JsonSerializer.Deserialize<BindingDto[]> json
-
-                for dto in dtos do
-                    match BindingDto.toDomain dto with
-                    | Some binding -> initial[binding.Token] <- binding
+                // Best-effort load (mirrors `BindingDto.toDomain`'s own per-row contract above): a
+                // truncated write (crash mid-`persist`, before the atomicity fix) or a hand-edited
+                // file can leave genuinely-unparsable JSON, or the JSON literal `null` (STJ then
+                // returns a null array reference, Always-Rule 5) — either way there is no caller
+                // here to hand a `Result`/exception to, so start empty rather than crash the bot.
+                try
+                    match JsonSerializer.Deserialize<BindingDto[]> json |> Option.ofObj with
                     | None -> ()
+                    | Some dtos ->
+                        for dto in dtos do
+                            match BindingDto.toDomain dto with
+                            | Some binding -> initial[binding.Token] <- binding
+                            | None -> ()
+                with :? JsonException -> ()
 
         FileBindingStore(path, initial)

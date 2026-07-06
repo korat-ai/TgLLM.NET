@@ -130,6 +130,7 @@ type TgBot
         api: IBotApiClient,
         store: IHookStore,
         bindingStore: IBindingStore,
+        tracker: MessageBindingTracker,
         dispatcher: IPressDispatcher,
         cts: CancellationTokenSource,
         runTask: Task,
@@ -148,13 +149,19 @@ type TgBot
     /// `Plan.rows` didn't catch) is a programmer error by the caller (Always-Rule 6) — this member
     /// returns `Task<MessageId>` directly (no `Result`), so it fails fast rather than forcing every
     /// caller to unwrap a `Result` for what should have been validated when the plan was built.
+    ///
+    /// Records the sent message's tokens into `tracker` AFTER the send returns its `MessageId`
+    /// (finding: unbounded binding leak) — this only ever affects a FUTURE `ctx.EditKeyboardAsync`
+    /// on that same message (`UpdateProcessor.makeEditKeyboardAction`), never this send itself.
     member _.SendKeyboardPlan(chat: ChatId, text: MessageText, plan: ToolKeyboard) : Task<MessageId> =
         task {
             match ToolPlan.plan (Seq.initInfinite (fun _ -> CallbackToken.generate ())) plan with
             | Error e -> return invalidArg (nameof plan) $"TgBot.SendKeyboardPlan: invalid plan ({e})"
             | Ok(registeredKeyboard, bindings) ->
                 do! bindingStore.Save(bindings, cts.Token)
-                return! api.SendKeyboard(chat, text, registeredKeyboard, cts.Token)
+                let! messageId = api.SendKeyboard(chat, text, registeredKeyboard, cts.Token)
+                tracker.Record(messageId, bindings |> List.map (fun b -> b.Token))
+                return messageId
         }
 
     /// C#-friendly overload that accepts a raw string (validated with `MessageText.unsafe`).
@@ -210,17 +217,21 @@ type TgBot
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
             let bindingStore = config.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
+            // Shared with `ToolDispatch` below (via `UpdateProcessor`) so `SendKeyboardPlan`'s
+            // send-time record and `EditKeyboardAsync`'s edit-time remove agree on one message's
+            // history of bindings (finding: unbounded binding leak).
+            let tracker = MessageBindingTracker()
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
             let observer =
                 match config.Logger with
                 | Some logger -> LoggingHookObserver logger :> IHookObserver
                 | None -> NoopHookObserver() :> IHookObserver
             let source = LongPollingUpdateSource(client) :> IUpdateSource
-            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore))
+            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
             let processor = UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
             let cts = new CancellationTokenSource()
             let runTask = processor.RunAsync cts.Token
-            return new TgBot(api, store, bindingStore, dispatcher, cts, runTask, None)
+            return new TgBot(api, store, bindingStore, tracker, dispatcher, cts, runTask, None)
         }
 
     /// Start ingesting updates via webhooks. Registers the webhook with Telegram (`setWebhook` with
@@ -234,15 +245,17 @@ type TgBot
             let api = TelegramBotApiClient(client) :> IBotApiClient
             let store = InMemoryHookStore() :> IHookStore
             let bindingStore = config.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
+            // Shared with `ToolDispatch` below (via `UpdateProcessor`) — see `startPolling`'s comment.
+            let tracker = MessageBindingTracker()
             let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
             let observer =
                 match config.Logger with
                 | Some logger -> LoggingHookObserver logger :> IHookObserver
                 | None -> NoopHookObserver() :> IHookObserver
             let webhookSource = WebhookUpdateSource()
-            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore))
+            let toolDispatch = config.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
             let processor = UpdateProcessor(webhookSource :> IUpdateSource, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
             let cts = new CancellationTokenSource()
             let runTask = processor.RunAsync cts.Token
-            return new TgBot(api, store, bindingStore, dispatcher, cts, runTask, Some webhookSource)
+            return new TgBot(api, store, bindingStore, tracker, dispatcher, cts, runTask, Some webhookSource)
         }

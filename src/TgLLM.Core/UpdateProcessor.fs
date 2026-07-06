@@ -76,21 +76,27 @@ type UpdateProcessor
     /// before-the-wire ordering guarantee as `SendKeyboardPlan`/`AgentOps.sendKeyboard`. An invalid
     /// plan is a programmer error by the tool author (Always-Rule 6), same convention as
     /// `TgBot.SendKeyboardPlan`.
-    let makeEditKeyboardAction
-        (press: ButtonPress)
-        (bindingStore: IBindingStore)
-        (workCt: CancellationToken)
-        (plan: ToolKeyboard)
-        : Task =
+    ///
+    /// Also removes the PRESSED message's previously-recorded bindings (`dispatch.Tracker`) so a
+    /// tool that re-renders its own keyboard (a paginator/counter) doesn't leak one row per edit
+    /// (finding: unbounded binding-store growth). The old tokens are looked up and removed BEFORE
+    /// the new ones are saved; the tracker's record is updated only AFTER the edit reaches the wire,
+    /// matching `Record`'s own "reflects past sends only" contract.
+    let makeEditKeyboardAction (press: ButtonPress) (dispatch: ToolDispatch) (workCt: CancellationToken) (plan: ToolKeyboard) : Task =
         task {
             match ToolPlan.plan (Seq.initInfinite (fun _ -> CallbackToken.generate ())) plan with
             | Error e -> invalidArg (nameof plan) $"PressContext.EditKeyboardAsync: invalid plan ({e})"
             | Ok(registeredKeyboard, bindings) ->
-                do! bindingStore.Save(bindings, workCt)
+                match dispatch.Tracker.TryGetPrevious press.MessageId with
+                | Some staleTokens -> do! dispatch.Store.Remove(staleTokens, workCt)
+                | None -> ()
+
+                do! dispatch.Store.Save(bindings, workCt)
                 do! api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
+                dispatch.Tracker.Record(press.MessageId, bindings |> List.map (fun b -> b.Token))
         }
 
-    let buildToolWork (press: ButtonPress) (tool: Tool) (binding: ToolBinding) (bindingStore: IBindingStore) : CancellationToken -> Task =
+    let buildToolWork (press: ButtonPress) (tool: Tool) (binding: ToolBinding) (dispatch: ToolDispatch) : CancellationToken -> Task =
         fun workCt ->
             task {
                 let mutable ackText: string option = None
@@ -121,7 +127,7 @@ type UpdateProcessor
                         ?arg = binding.Arg,
                         answerAction = answerAction,
                         editTextAction = makeEditTextAction press workCt,
-                        editKeyboardAction = makeEditKeyboardAction press bindingStore workCt
+                        editKeyboardAction = makeEditKeyboardAction press dispatch workCt
                     )
 
                 let runTool () : Task =
@@ -182,7 +188,7 @@ type UpdateProcessor
                 let! resolved = dispatch.Resolve(press.Token, ct)
 
                 match resolved with
-                | ValueSome(tool, binding) -> do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch.Store)
+                | ValueSome(tool, binding) -> do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch)
                 | ValueNone -> do! processHookStorePress ct press
         }
 
