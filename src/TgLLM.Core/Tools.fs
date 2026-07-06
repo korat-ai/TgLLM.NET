@@ -304,6 +304,14 @@ type IBindingStore =
     abstract TryGet: token: CallbackToken * ct: CancellationToken -> ValueTask<ToolBinding voption>
     abstract Remove: tokens: IReadOnlyList<CallbackToken> * ct: CancellationToken -> ValueTask
 
+    /// Removes every binding whose `ExpiresAt` is `Some` and no longer live as of `now` (per
+    /// `Expiry.isLive` — the boundary instant itself already counts as expired), returning the
+    /// count removed (US4, research D5/D7). A binding with `ExpiresAt = None` is never touched.
+    /// Folds review finding #9 ("nothing was evicted anywhere"): a long-lived bot otherwise grows
+    /// this store unbounded. Callers (a periodic sweep, out of scope here — US4 T034 wiring) decide
+    /// WHEN to call this; the store only decides WHICH bindings are stale as of the given instant.
+    abstract EvictExpired: now: DateTimeOffset -> ValueTask<int>
+
 /// Default `IBindingStore`: a `ConcurrentDictionary` keyed by `CallbackToken`, same shape as
 /// `InMemoryHookStore` — all operations complete synchronously, hence `ValueTask` throughout.
 type InMemoryBindingStore() =
@@ -327,6 +335,17 @@ type InMemoryBindingStore() =
 
             ValueTask.CompletedTask
 
+        member _.EvictExpired(now: DateTimeOffset) : ValueTask<int> =
+            let expiredTokens =
+                bindings
+                |> Seq.choose (fun kv -> if Expiry.isLive now kv.Value.ExpiresAt then None else Some kv.Key)
+                |> Seq.toList
+
+            for token in expiredTokens do
+                bindings.TryRemove(token) |> ignore
+
+            ValueTask.FromResult(List.length expiredTokens)
+
 /// Tracks which `CallbackToken`s are currently live for a sent/edited message's keyboard, so a
 /// re-render (`ctx.EditKeyboardAsync`, e.g. a paginator/counter tool) can remove its OWN previous
 /// bindings from the durable store instead of leaking one row per edit forever. `Record` is called
@@ -345,13 +364,44 @@ type InMemoryBindingStore() =
 /// restart won't find — and therefore won't remove — its pre-restart bindings from a durable store
 /// (e.g. `TgLLM.Persistence.FileBindingStore`). Those rows are only cleaned up if/when that same
 /// message is edited again after the tracker has re-learned its current tokens.
+///
+/// Eviction seam (US4, research D7(b), folds review finding #9): a long-lived bot otherwise grows
+/// this index unbounded — one entry per DISTINCT `(chat, messageId)` ever recorded, forever.
+/// `capacity` bounds the number of distinct keys tracked; once exceeded, the OLDEST-recorded
+/// distinct key is dropped first (FIFO by first sight). Re-recording an ALREADY-tracked key (a
+/// paginator/counter tool re-rendering the SAME message many times) does not itself consume
+/// capacity or move that key's position — the growth this bounds is the number of distinct
+/// messages ever seen, not the number of edits to any one of them, since a repeatedly-edited
+/// single message is already just one entry, overwritten in place. Dropping the oldest entry only
+/// means a FUTURE `ctx.EditKeyboardAsync` on that long-since-touched message won't find (and
+/// therefore won't clean up) its previous bindings — the same category of accepted limitation as
+/// the restart gap above, not a correctness issue for in-flight presses.
 [<Sealed>]
-type MessageBindingTracker() =
+type MessageBindingTracker(?capacity: int) =
+    let capacity = defaultArg capacity 10_000
     let tokensByMessage = ConcurrentDictionary<ChatId * MessageId, CallbackToken list>()
+    let gate = obj ()
+    /// Insertion order of DISTINCT keys only — a re-`Record` of an already-tracked key is an
+    /// overwrite, not a fresh insertion, so it is never enqueued again (see the type-level comment
+    /// above for why that is the correct policy here, unlike `ProcessedQueryTracker`'s TTL-refresh
+    /// re-enqueueing).
+    let order = Queue<ChatId * MessageId>()
+
+    let evictOverCapacity () =
+        while tokensByMessage.Count > capacity && order.Count > 0 do
+            let oldestKey = order.Dequeue()
+            tokensByMessage.TryRemove(oldestKey) |> ignore
 
     /// Record (or overwrite) the tokens currently live for `(chat, messageId)`.
     member _.Record(chat: ChatId, messageId: MessageId, tokens: CallbackToken list) : unit =
-        tokensByMessage[(chat, messageId)] <- tokens
+        let key = (chat, messageId)
+        let isNewKey = not (tokensByMessage.ContainsKey key)
+        tokensByMessage[key] <- tokens
+
+        if isNewKey then
+            lock gate (fun () ->
+                order.Enqueue key
+                evictOverCapacity ())
 
     /// `(chat, messageId)`'s previously recorded tokens, if this tracker has ever recorded a
     /// keyboard for it. A `messageId` recorded for a DIFFERENT chat is a miss, never a hit.

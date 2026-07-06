@@ -20,6 +20,7 @@
     <Compile Include="ToolPlanExtTests.fs" />
     <Compile Include="ToolRegistryTests.fs" />
     <Compile Include="BindingStoreTests.fs" />
+    <Compile Include="BindingStoreEvictionTests.fs" />
     <Compile Include="MessageBindingTrackerTests.fs" />
     <Compile Include="RoutingTests.fs" />
     <Compile Include="InMemoryHookStoreTests.fs" />

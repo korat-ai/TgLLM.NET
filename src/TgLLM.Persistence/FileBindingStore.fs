@@ -103,6 +103,30 @@ type FileBindingStore
 
             ValueTask.CompletedTask
 
+        /// Sweeps the in-memory index for bindings past their `ExpiresAt` (per `Expiry.isLive`),
+        /// removes them, and persists the result — same in-process contract as
+        /// `InMemoryBindingStore.EvictExpired`. NOTE (accepted, documented limitation, mirrors
+        /// `BindingDto`'s own doc comment above): the on-disk `BindingDto` shape does not yet carry
+        /// `ExpiresAt` — every row this store persists and reloads is still slice-2-shaped, so a
+        /// binding's `ExpiresAt` only survives for the lifetime of the CURRENT process, not across
+        /// a restart. `EvictExpired` therefore only ever has something to evict for bindings saved
+        /// (with an expiry) THIS session; wiring the full field through the on-disk DTO is US4
+        /// scope, not this eviction-seam addition.
+        member _.EvictExpired(now: DateTimeOffset) : ValueTask<int> =
+            lock gate (fun () ->
+                let expiredTokens =
+                    bindings
+                    |> Seq.choose (fun kv -> if Expiry.isLive now kv.Value.ExpiresAt then None else Some kv.Key)
+                    |> Seq.toList
+
+                if not (List.isEmpty expiredTokens) then
+                    for token in expiredTokens do
+                        bindings.TryRemove(token) |> ignore
+
+                    persist ()
+
+                ValueTask.FromResult(List.length expiredTokens))
+
     /// Opens (or creates) a durable binding store backed by `path`: loads any bindings already on
     /// disk (the restart guarantee — a NEW instance over the SAME path sees everything a previous
     /// instance saved) or starts empty if the file doesn't exist yet.

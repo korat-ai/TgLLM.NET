@@ -8,6 +8,7 @@
   <!-- Real FileBindingStore round-trip + restart tests. -->
   <ItemGroup>
     <Compile Include="FileBindingStoreTests.fs" />
+    <Compile Include="FileBindingStoreEvictionTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

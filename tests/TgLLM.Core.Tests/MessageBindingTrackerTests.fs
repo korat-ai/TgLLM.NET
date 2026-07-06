@@ -73,4 +73,55 @@ let messageBindingTrackerTests =
             tracker.Record(chat, messageId, secondTokens)
 
             Expect.equal (tracker.TryGetPrevious(chat, messageId)) (Some secondTokens) "the latest Record wins for the same key"
+
+        // Eviction seam (research D7(b)): a long-lived bot must not grow this tracker's index
+        // unbounded (one entry per DISTINCT (chat, messageId) forever). `capacity` bounds it; once
+        // exceeded, the OLDEST-recorded distinct key is dropped first (FIFO by first sight).
+        testCase "recording within capacity keeps every distinct (chat, messageId) entry" <| fun _ ->
+            let tracker = MessageBindingTracker(capacity = 3)
+            let chat = UMX.tag<chatId> 1L
+
+            for messageIdValue in 1L .. 3L do
+                tracker.Record(chat, UMX.tag<messageId> messageIdValue, [ CallbackToken.generate () ])
+
+            for messageIdValue in 1L .. 3L do
+                match tracker.TryGetPrevious(chat, UMX.tag<messageId> messageIdValue) with
+                | Some _ -> ()
+                | None -> failwithf "message_id %d should still be tracked (within capacity)" messageIdValue
+
+        testCase "recording past capacity evicts the OLDEST distinct entry first, keeps the rest" <| fun _ ->
+            let tracker = MessageBindingTracker(capacity = 3)
+            let chat = UMX.tag<chatId> 1L
+            let oldestMessageId = UMX.tag<messageId> 1L
+
+            for messageIdValue in 1L .. 4L do
+                tracker.Record(chat, UMX.tag<messageId> messageIdValue, [ CallbackToken.generate () ])
+
+            Expect.equal
+                (tracker.TryGetPrevious(chat, oldestMessageId))
+                None
+                "the oldest-recorded distinct (chat, messageId) was evicted once capacity was exceeded"
+
+            for messageIdValue in 2L .. 4L do
+                match tracker.TryGetPrevious(chat, UMX.tag<messageId> messageIdValue) with
+                | Some _ -> ()
+                | None -> failwithf "message_id %d should still be tracked (within capacity after eviction)" messageIdValue
+
+        testCase "re-recording an already-tracked (chat, messageId) does not itself count as a new distinct entry" <| fun _ ->
+            let tracker = MessageBindingTracker(capacity = 2)
+            let chat = UMX.tag<chatId> 1L
+            let messageIdA = UMX.tag<messageId> 1L
+            let messageIdB = UMX.tag<messageId> 2L
+            let tokensForB = [ CallbackToken.generate () ]
+            let latestTokensForA = [ CallbackToken.generate () ]
+
+            tracker.Record(chat, messageIdA, [ CallbackToken.generate () ])
+            tracker.Record(chat, messageIdB, tokensForB)
+            // Re-recording A repeatedly must not push the tracker over capacity by itself — it's
+            // the SAME distinct key, not a new one.
+            tracker.Record(chat, messageIdA, latestTokensForA)
+            tracker.Record(chat, messageIdA, latestTokensForA)
+
+            Expect.equal (tracker.TryGetPrevious(chat, messageIdA)) (Some latestTokensForA) "A's latest tokens are still tracked"
+            Expect.equal (tracker.TryGetPrevious(chat, messageIdB)) (Some tokensForB) "B was NOT evicted by A's re-recordings (still within capacity)"
     ]
