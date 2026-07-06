@@ -1,5 +1,5 @@
-/// T035 (Phase 8, closing SC-002 for the Tool Router): >=100 interleaved taps spanning MULTIPLE
-/// tools and arguments each invoke exactly their own bound tool with the correct arg — zero
+/// >=100 interleaved taps spanning MULTIPLE tools and arguments each invoke exactly their own
+/// bound tool with the correct arg — zero
 /// cross-invocation. Engine-level: the REAL `ToolDispatch` + `UpdateProcessor` + in-memory fakes for
 /// the transport-facing ports, mirroring slice-1's `RoutingAtScaleTests.fs` (same `sourceOf`/
 /// `pressOf`/`drive` shape), but driven through `InMemoryToolRegistry`/`InMemoryBindingStore`/
@@ -124,7 +124,7 @@ let toolRoutingAtScaleTests =
         "ToolRoutingAtScale"
         [
 
-          testCaseAsync "≥100 interleaved taps across MULTIPLE tools and args each invoke exactly their own bound tool + arg, zero cross-invocation (SC-002)"
+          testCaseAsync "≥100 interleaved taps across MULTIPLE tools and args each invoke exactly their own bound tool + arg, zero cross-invocation"
           <| async {
               do!
                   task {

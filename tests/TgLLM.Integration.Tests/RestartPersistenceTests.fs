@@ -1,7 +1,7 @@
-/// T028: US3 (bindings survive a restart) exercised end-to-end — send a plan through a bot backed by
+/// Bindings survive a restart, exercised end-to-end — send a plan through a bot backed by
 /// a `FileBindingStore`, simulate a restart (dispose that bot; build a BRAND NEW bot + processor with
 /// a NEW `FileBindingStore` over the SAME file + freshly re-registered tools), then tap a
-/// PRE-restart button: the bound tool still runs (SC-004). Also covers the edge case: a tap whose
+/// PRE-restart button: the bound tool still runs. Also covers the edge case: a tap whose
 /// tool is no longer registered after the restart is still acked and surfaced, no crash. Mirrors
 /// `ToolRouterAcceptanceTests.fs`'s / `EditInPlaceTests.fs`'s structure.
 module TgLLM.Integration.Tests.RestartPersistenceTests
@@ -41,7 +41,7 @@ let private callbackDataAt (row: int) (col: int) (sendBody: JsonNode) : string =
 let private tempPath () : string =
     Path.Combine(Path.GetTempPath(), $"tgllm-tool-router-restart-tests-{Guid.NewGuid()}.json")
 
-/// `Plan.rows` is a pure, synchronous validation (data-model.md "Neutral keyboard plan") — no
+/// `Plan.rows` is a pure, synchronous validation of the neutral keyboard plan — no
 /// `task`/`async` involved — so a fail-fast unwrap here is an ordinary (non-monadic) `let`, keeping
 /// the async `SendKeyboardPlan` call that follows a clean `let!` with no CE-desugaring ambiguity.
 let private planOrFail (rows: PlanButton list list) : ToolKeyboard =
@@ -79,7 +79,7 @@ let restartPersistenceTests =
         "RestartPersistence"
         [
 
-          testCaseAsync "a pre-restart button still routes to the (freshly re-registered) bound tool after a restart (SC-004)"
+          testCaseAsync "a pre-restart button still routes to the (freshly re-registered) bound tool after a restart"
           <| async {
               do!
                   task {

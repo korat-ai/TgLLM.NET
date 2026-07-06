@@ -1,6 +1,4 @@
-/// T014: failing FsCheck property tests for `Routing.decide` (data-model.md "Inbound: a press").
-/// Written before `TgLLM.Core.Routing` exists — this file MUST fail to compile until T015
-/// implements `RouteDecision`/`Routing.decide` (Red).
+/// FsCheck property tests for `Routing.decide`, covering the inbound-press routing decision.
 module TgLLM.Core.Tests.RoutingTests
 
 open System
@@ -17,8 +15,8 @@ let private validLabel =
     | Ok label -> label
     | Error e -> failwithf "test setup: unreachable %A" e
 
-/// `Routing.decide` only inspects `press.Token` (data-model.md), so the other fields are fixed,
-/// valid sample data — these properties are about token resolution, not press-field validation.
+/// `Routing.decide` only inspects `press.Token`, so the other fields are fixed, valid sample data
+/// — these properties are about token resolution, not press-field validation.
 let private samplePress (token: CallbackToken) : ButtonPress =
     { Token = token
       QueryId = UMX.tag<callbackQueryId> "sample-query-id"

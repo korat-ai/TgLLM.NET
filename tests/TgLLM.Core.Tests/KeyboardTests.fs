@@ -1,6 +1,5 @@
-/// T010: failing tests for `Keyboard.create` validation (data-model.md "KeyboardSpec (agent-facing)
-/// → RegisteredKeyboard (wire-facing)"). Written before `TgLLM.Core.Keyboard` exists — this file
-/// MUST fail to compile until T011 implements it (Red).
+/// Tests for `Keyboard.create` validation, covering the KeyboardSpec (agent-facing)
+/// → RegisteredKeyboard (wire-facing) transformation.
 module TgLLM.Core.Tests.KeyboardTests
 
 open System.Threading.Tasks

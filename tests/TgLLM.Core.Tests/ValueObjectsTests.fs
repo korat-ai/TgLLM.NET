@@ -1,6 +1,4 @@
-/// T006: failing Expecto tests for the `ButtonLabel` / `MessageText` smart constructors
-/// (data-model.md "Value objects"). Written before `TgLLM.Core.Values` exists — this file MUST
-/// fail to compile until T007 implements `ButtonLabel`/`MessageText` (Red).
+/// Expecto tests for the `ButtonLabel` / `MessageText` smart constructors.
 module TgLLM.Core.Tests.ValueObjectsTests
 
 open Expecto

@@ -1,4 +1,4 @@
-/// T034: both-transports acceptance (SC-008, FR-013). The polling path is proven end-to-end in
+/// Both-transports acceptance. The polling path is proven end-to-end in
 /// `FSharpPollingAcceptanceTests`; this exercises the webhook path end-to-end through the real
 /// `MapTelegramWebhook` ASP.NET Core endpoint — an update delivered by HTTP POST runs the SAME hook
 /// code and produces the same reply + ack. Also checks the secret-token gate (mismatch → 401) and
@@ -66,7 +66,7 @@ let bothTransportsTests =
         "BothTransports"
         [
 
-          testCaseAsync "webhook delivery runs the same hook and replies (SC-008), and gates on the secret token"
+          testCaseAsync "webhook delivery runs the same hook and replies, and gates on the secret token"
           <| async {
               do!
                   task {

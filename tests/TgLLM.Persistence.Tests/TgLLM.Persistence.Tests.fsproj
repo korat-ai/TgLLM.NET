@@ -5,7 +5,7 @@
     <GenerateProgramFile>false</GenerateProgramFile>
   </PropertyGroup>
 
-  <!-- T025 (US3): real FileBindingStore round-trip + restart tests, replacing the T001 placeholder. -->
+  <!-- Real FileBindingStore round-trip + restart tests. -->
   <ItemGroup>
     <Compile Include="FileBindingStoreTests.fs" />
     <Compile Include="Program.fs" />

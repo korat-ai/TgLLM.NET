@@ -1,7 +1,5 @@
-/// T019: failing FsCheck model-based ordering property for `PerChatChannelDispatcher`
-/// (contracts/core-ports.md "IPressDispatcher", research.md D6). Written before
-/// `TgLLM.Core.PerChatChannelDispatcher` exists — this file MUST fail to compile until T020
-/// implements it (Red).
+/// FsCheck model-based ordering property for `PerChatChannelDispatcher`, the `IPressDispatcher`
+/// implementation.
 module TgLLM.Core.Tests.DispatcherTests
 
 open System

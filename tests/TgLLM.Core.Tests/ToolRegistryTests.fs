@@ -1,6 +1,4 @@
-/// T008: failing tests for `InMemoryToolRegistry` (data-model.md "Ports"). Written before
-/// `TgLLM.Core.Tools` exists — this file MUST fail to compile until T009 implements
-/// `IToolRegistry`/`InMemoryToolRegistry` (Red).
+/// Tests for `InMemoryToolRegistry`, the `IToolRegistry` implementation.
 module TgLLM.Core.Tests.ToolRegistryTests
 
 open System.Threading

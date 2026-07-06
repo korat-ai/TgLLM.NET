@@ -1,4 +1,4 @@
-/// T025: tests for `LongPollingUpdateSource` against the fake Bot API server. Verifies it deletes
+/// Tests for `LongPollingUpdateSource` against the fake Bot API server. Verifies it deletes
 /// any webhook before polling, yields mapped `AgentEvent`s, and advances the offset by
 /// `update_id + 1` (confirm-by-offset) on the next poll.
 module TgLLM.Integration.Tests.LongPollingTests

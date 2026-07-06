@@ -5,7 +5,7 @@ using Xunit;
 
 namespace TgLLM.CSharp.Tests;
 
-/// <summary>T020: C# façade behavior tests for the Tool Router surface (contracts/tool-router.md).</summary>
+/// <summary>C# façade behavior tests for the Tool Router surface.</summary>
 public class ToolRegistryTests
 {
     [Fact]
@@ -76,7 +76,7 @@ public class PlanBuilderTests
 }
 
 /// <summary>
-/// Idiom-leak canary re-run over the EXTENDED surface (T020, Principle II): the shared canary in
+/// Idiom-leak canary re-run over the EXTENDED surface (Principle II): the shared canary in
 /// <see cref="IdiomLeakCanaryTests"/> already scans every exported type/member of the
 /// <c>TgLLM.CSharp</c> assembly by reflection — no hardcoded type list — so it automatically covers
 /// the new Tool Router types (<see cref="ToolRegistry"/>, <see cref="KeyboardPlan"/>,

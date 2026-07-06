@@ -1,5 +1,5 @@
-/// Regression tests for review finding #10 (003-tool-router-extensions): `TgBot.SendKeyboardPlan`
-/// must fail fast when a plan has a tool button but no Tool Router was ever wired in
+/// Regression tests: `TgBot.SendKeyboardPlan` must fail fast when a plan has a tool button but no
+/// Tool Router was ever wired in
 /// (`TgBotConfig.WithTools`) — otherwise the button reaches the wire, gets tapped, and silently
 /// no-ops forever (no `ToolDispatch` exists to ever resolve its binding; `wireBot` only builds one
 /// when `common.Tools` is `Some`).
@@ -18,7 +18,7 @@ let private config (server: FakeBotApiServer) : TgBotConfig =
 [<Tests>]
 let sendKeyboardPlanGuardTests =
     testList
-        "TgBot.SendKeyboardPlan guards against a dead keyboard (review finding #10)"
+        "TgBot.SendKeyboardPlan guards against a dead keyboard"
         [
 
           testCaseAsync "sending a plan with a tool button, with NO Tool Router wired in, fails fast"

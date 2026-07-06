@@ -20,8 +20,8 @@ open TgLLM.Core
 /// `timeoutSeconds = 0` (short polling) so the fake server answers immediately.
 ///
 /// `initialBackoff`/`maxBackoff` (default 1s/30s; tests override both to keep the retry path fast)
-/// govern the bounded-exponential retry a transient `GetUpdates` failure gets (review finding #1,
-/// 003-tool-router-extensions) — see the `pump` doc comment below.
+/// govern the bounded-exponential retry a transient `GetUpdates` failure gets — see the `pump` doc
+/// comment below.
 [<Sealed>]
 type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int, ?initialBackoff: TimeSpan, ?maxBackoff: TimeSpan) =
 
@@ -39,7 +39,7 @@ type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int, ?
             let writer = channel.Writer
 
             /// A transient `GetUpdates` failure (network blip, Bot API 5xx/429, ...) must not
-            /// permanently kill update ingestion (review finding #1) — completing the channel WITH
+            /// permanently kill update ingestion — completing the channel WITH
             /// the exception (the old behavior) faults every future read on the consumer side
             /// forever, i.e. one bad poll kills the bot for good. Instead: retry with a bounded
             /// exponential backoff, resetting to `initialBackoff` after any successful poll so only

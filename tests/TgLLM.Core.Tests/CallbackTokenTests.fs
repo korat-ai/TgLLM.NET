@@ -1,6 +1,4 @@
-/// T008: failing FsCheck property tests for the `CallbackToken` codec (data-model.md
-/// "CallbackToken", research.md D8). Written before `TgLLM.Core.CallbackToken` exists — this file
-/// MUST fail to compile until T009 implements the type (Red).
+/// FsCheck property tests for the `CallbackToken` codec.
 module TgLLM.Core.Tests.CallbackTokenTests
 
 open System

@@ -1,9 +1,9 @@
-/// US3 (T038–T040): routing correctness, per-chat ordering, and failure isolation exercised through
+/// Routing correctness, per-chat ordering, and failure isolation exercised through
 /// the REAL engine (UpdateProcessor + PerChatChannelDispatcher + InMemoryHookStore) driven by an
 /// in-memory update source and a recording Bot API client — deterministic and fast, no HTTP.
 ///
-/// Consolidated into one file (shared harness) rather than the three separate files nominally named
-/// in tasks.md, to avoid duplicating the fakes across projects.
+/// Consolidated into one file (shared harness) rather than several separate files, to avoid
+/// duplicating the fakes across projects.
 module TgLLM.Integration.Tests.RoutingAtScaleTests
 
 open System.Collections.Concurrent
@@ -45,15 +45,15 @@ type private RecordingApi() =
             Interlocked.Increment(&acks) |> ignore
             Task.CompletedTask
 
-        /// This suite drives `UpdateProcessor` without a `?toolDispatch` (US1's engine-at-scale
+        /// This suite drives `UpdateProcessor` without a `?toolDispatch` (these engine-at-scale
         /// tests exercise the slice-1 ack-first path only), so the deferred-ack overload is never
         /// actually invoked here — implemented to satisfy `IBotApiClient`.
         member _.AnswerCallback(_, _, _, _) =
             Interlocked.Increment(&acks) |> ignore
             Task.CompletedTask
 
-        /// Edit* (feature 002-llm-tool-router, T021) are only reachable via the deferred-ack tool
-        /// path, never exercised in this ack-first-only suite — implemented to satisfy `IBotApiClient`.
+        /// Edit* are only reachable via the deferred-ack tool path, never exercised in this
+        /// ack-first-only suite — implemented to satisfy `IBotApiClient`.
         member _.EditMessageText(_, _, _, _, _) = Task.CompletedTask
         member _.EditMessageReplyMarkup(_, _, _, _) = Task.CompletedTask
 
@@ -116,7 +116,7 @@ let routingAtScaleTests =
         "RoutingAtScale"
         [
 
-          testCaseAsync "≥100 interleaved taps each run only their own hook, zero cross-invocation (SC-002)"
+          testCaseAsync "≥100 interleaved taps each run only their own hook, zero cross-invocation"
           <| async {
               do!
                   task {
@@ -150,7 +150,7 @@ let routingAtScaleTests =
                   |> Async.AwaitTask
           }
 
-          testCaseAsync "per-chat taps run in arrival order (SC-007)"
+          testCaseAsync "per-chat taps run in arrival order"
           <| async {
               do!
                   task {
@@ -192,7 +192,7 @@ let routingAtScaleTests =
                   |> Async.AwaitTask
           }
 
-          testCaseAsync "a throwing hook is isolated and observed; later presses still run (SC-006)"
+          testCaseAsync "a throwing hook is isolated and observed; later presses still run"
           <| async {
               do!
                   task {

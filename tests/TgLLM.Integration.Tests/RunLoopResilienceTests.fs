@@ -1,5 +1,5 @@
-/// Regression tests for review finding #1 (003-tool-router-extensions, BLOCKER — availability): a
-/// single transient error must not permanently kill update ingestion. Exercises the REAL production
+/// Regression tests: a single transient error must not permanently kill update ingestion (an
+/// availability blocker). Exercises the REAL production
 /// chain — `UpdateProcessor.RunAsync` driven by a REAL `LongPollingUpdateSource` against
 /// `FakeBotApiServer` — rather than a fake `IUpdateSource`, since the fix lives in
 /// `LongPollingUpdateSource`'s own retry/backoff (it must never surface a transient failure as a
@@ -40,7 +40,7 @@ type private ImmediateDispatcher() =
 [<Tests>]
 let runLoopResilienceTests =
     testList
-        "UpdateProcessor run-loop resilience (review finding #1)"
+        "UpdateProcessor run-loop resilience"
         [
 
           testCaseAsync

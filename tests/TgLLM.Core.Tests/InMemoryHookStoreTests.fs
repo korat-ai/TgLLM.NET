@@ -1,6 +1,4 @@
-/// T017: failing tests for `InMemoryHookStore` (contracts/core-ports.md "IHookStore"). Written
-/// before `TgLLM.Core.InMemoryHookStore` exists — this file MUST fail to compile until T018
-/// implements it (Red).
+/// Tests for `InMemoryHookStore` (the `IHookStore` implementation).
 module TgLLM.Core.Tests.InMemoryHookStoreTests
 
 open System.Threading
@@ -9,8 +7,8 @@ open Expecto
 open FSharp.UMX
 open TgLLM.Core
 
-// `InMemoryHookStore`'s contract guarantees synchronous completion (contracts/core-ports.md:
-// "completes synchronously (hence ValueTask)"), so blocking on the returned `ValueTask` here is a
+// `InMemoryHookStore`'s contract guarantees synchronous completion (it completes synchronously,
+// hence `ValueTask`), so blocking on the returned `ValueTask` here is a
 // deliberate, low-risk test-only simplification — not a pattern for production code paths
 // (Always-Rule: avoid `.Result`/blocking on genuinely asynchronous work).
 let private run (vt: ValueTask) = vt.GetAwaiter().GetResult()

@@ -1,7 +1,7 @@
-/// T018: F# façade acceptance over long polling (US1 scenarios). Drives the real Tool Router façade
+/// F# façade acceptance over long polling. Drives the real Tool Router façade
 /// end-to-end against the fake Bot API server: register tools, send a plan naming them (with args),
-/// simulate a tap, and assert the exact bound tool runs with its arg (SC-002); a plan naming an
-/// unregistered tool is acked with no tool run (SC-005). Mirrors
+/// simulate a tap, and assert the exact bound tool runs with its arg; a plan naming an
+/// unregistered tool is acked with no tool run. Mirrors
 /// `FSharpPollingAcceptanceTests.fs`'s structure for the slice-1 hook API.
 module TgLLM.Integration.Tests.ToolRouterAcceptanceTests
 
@@ -26,7 +26,7 @@ let private at (i: int) (node: JsonNode) : JsonNode =
 let private asString (node: JsonNode) : string = node.AsValue().GetValue<string>()
 
 /// `reply_markup.inline_keyboard[row][col].callback_data` of a recorded `sendMessage` body — the
-/// opaque token the library assigned to that button (the agent never sees it; FR-011).
+/// opaque token the library assigned to that button (the agent never sees it).
 let private callbackDataAt (row: int) (col: int) (sendBody: JsonNode) : string =
     sendBody
     |> field "reply_markup"
@@ -52,7 +52,7 @@ let toolRouterAcceptanceTests =
         "ToolRouterAcceptance"
         [
 
-          testCaseAsync "a plan-sent tool button runs the exact bound tool with its arg (SC-002)"
+          testCaseAsync "a plan-sent tool button runs the exact bound tool with its arg"
           <| async {
               do!
                   task {
@@ -94,7 +94,7 @@ let toolRouterAcceptanceTests =
                   |> Async.AwaitTask
           }
 
-          testCaseAsync "a plan naming an unregistered tool is acked, and no tool runs (SC-005)"
+          testCaseAsync "a plan naming an unregistered tool is acked, and no tool runs"
           <| async {
               do!
                   task {
@@ -127,7 +127,7 @@ let toolRouterAcceptanceTests =
                               do! Task.Delay 10
                               tries <- tries + 1
 
-                          Expect.isNonEmpty (server.RequestsFor "answerCallbackQuery") "the unresolvable press is still acked (FR-010)"
+                          Expect.isNonEmpty (server.RequestsFor "answerCallbackQuery") "the unresolvable press is still acked"
                           Expect.isFalse anyToolRan "no tool ran for the unregistered name"
                   }
                   |> Async.AwaitTask

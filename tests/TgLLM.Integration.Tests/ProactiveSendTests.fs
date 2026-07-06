@@ -1,5 +1,5 @@
-/// T035 (US2, SC-005): an agent sends a keyboard triggered by something OUTSIDE the chat — no
-/// preceding user message — and its buttons route to hooks exactly as for a reply-sent keyboard.
+/// An agent sends a keyboard triggered by something OUTSIDE the chat — no preceding user message —
+/// and its buttons route to hooks exactly as for a reply-sent keyboard.
 module TgLLM.Integration.Tests.ProactiveSendTests
 
 open System.Text.Json.Nodes

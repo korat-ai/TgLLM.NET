@@ -1,6 +1,4 @@
-/// T010: failing tests for `InMemoryBindingStore` (data-model.md "Tool binding"). Written before
-/// `TgLLM.Core.Tools` exists — this file MUST fail to compile until T011 implements
-/// `IBindingStore`/`InMemoryBindingStore` (Red).
+/// Tests for `InMemoryBindingStore`, the `IBindingStore` implementation covering tool bindings.
 module TgLLM.Core.Tests.BindingStoreTests
 
 open System.Threading

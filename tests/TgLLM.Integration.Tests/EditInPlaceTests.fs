@@ -1,10 +1,10 @@
-/// T023/T024: US2 (edit the pressed message in place + toast/alert) exercised end-to-end against the
-/// fake Bot API server, mirroring `ToolRouterAcceptanceTests.fs`'s structure. T023: a tool that edits
-/// the pressed message's text and replaces its keyboard changes the SAME message (no new `sendMessage`,
-/// SC-003); a tool that calls `Answer(text, alert)` makes `answerCallbackQuery` carry that text/alert.
-/// T024: editing a vanished message (the fake server returns `"message to edit not found"`) is caught
-/// and surfaced via the observer (here: the `ILogger` `LoggingHookObserver` bridges to) without
-/// crashing the bot — proven by the ack STILL happening afterwards.
+/// Edit the pressed message in place + toast/alert, exercised end-to-end against the fake Bot API
+/// server, mirroring `ToolRouterAcceptanceTests.fs`'s structure. A tool that edits the pressed
+/// message's text and replaces its keyboard changes the SAME message (no new `sendMessage`); a tool
+/// that calls `Answer(text, alert)` makes `answerCallbackQuery` carry that text/alert. Editing a
+/// vanished message (the fake server returns `"message to edit not found"`) is caught and surfaced
+/// via the observer (here: the `ILogger` `LoggingHookObserver` bridges to) without crashing the bot
+/// — proven by the ack STILL happening afterwards.
 module TgLLM.Integration.Tests.EditInPlaceTests
 
 open System
@@ -62,7 +62,7 @@ let private config (server: FakeBotApiServer) (tools: ToolRegistry) : TgBotConfi
     (TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools tools
 
 /// A minimal `ILogger` fake that records `LogError` calls, so a test can observe
-/// `LoggingHookObserver.OnHookFailed` firing (T024) without a dedicated `IHookObserver` seam on the
+/// `LoggingHookObserver.OnHookFailed` firing without a dedicated `IHookObserver` seam on the
 /// public façade — `TgBotConfig.WithLogger` is the only publicly wired way to plug in an observer.
 type private NoopScope() =
     interface IDisposable with
@@ -94,7 +94,7 @@ let editInPlaceTests =
         "EditInPlace"
         [
 
-          testCaseAsync "a tapped tool edits the pressed message in place (text + keyboard); no new message is sent (SC-003)"
+          testCaseAsync "a tapped tool edits the pressed message in place (text + keyboard); no new message is sent"
           <| async {
               do!
                   task {
@@ -158,7 +158,7 @@ let editInPlaceTests =
                           Expect.equal
                               (List.length (server.RequestsFor "sendMessage"))
                               1
-                              "editing in place sent NO new message — only the original SendKeyboardPlan sendMessage (SC-003)"
+                              "editing in place sent NO new message — only the original SendKeyboardPlan sendMessage"
                   }
                   |> Async.AwaitTask
           }

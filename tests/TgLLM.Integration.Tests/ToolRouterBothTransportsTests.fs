@@ -1,6 +1,6 @@
-/// T034 (Phase 8, closing SC-007 for the Tool Router): the SAME US1 tool-routing scenario — register
-/// tools, send a plan naming them (with an arg), tap → the bound tool runs with its arg — run once
-/// over long polling and once over webhooks, asserting IDENTICAL tool behavior across both
+/// The SAME tool-routing scenario — register tools, send a plan naming them (with an arg), tap →
+/// the bound tool runs with its arg — run once over long polling and once over webhooks, asserting
+/// IDENTICAL tool behavior across both
 /// transports. Mirrors `BothTransportsTests.fs`'s webhook-hosting pattern and
 /// `ToolRouterAcceptanceTests.fs`'s tool-routing assertions.
 module TgLLM.Integration.Tests.ToolRouterBothTransportsTests
@@ -46,7 +46,7 @@ let private planOrFail (rows: PlanButton list list) : ToolKeyboard =
     | Ok p -> p
     | Error e -> failtestf "plan should be valid: %A" e
 
-/// Runs the US1 tool-routing scenario over LONG POLLING and returns the arg the tool observed.
+/// Runs the tool-routing scenario over LONG POLLING and returns the arg the tool observed.
 let private runOverPolling () : Task<string> =
     task {
         use! server = FakeBotApiServer.start ()
@@ -91,7 +91,7 @@ let private post (http: HttpClient) (url: string) (json: string) (secret: string
     request.Headers.Add("X-Telegram-Bot-Api-Secret-Token", secret)
     http.SendAsync request
 
-/// Runs the SAME US1 tool-routing scenario over WEBHOOKS and returns the arg the tool observed.
+/// Runs the SAME tool-routing scenario over WEBHOOKS and returns the arg the tool observed.
 let private runOverWebhook () : Task<string> =
     task {
         use! botApi = FakeBotApiServer.start ()
@@ -133,7 +133,7 @@ let toolRouterBothTransportsTests =
         "ToolRouterBothTransports"
         [
 
-          testCaseAsync "the US1 tool-routing scenario (bound tool + arg) behaves identically over long polling and webhooks (SC-007)"
+          testCaseAsync "the tool-routing scenario (bound tool + arg) behaves identically over long polling and webhooks"
           <| async {
               do!
                   task {
@@ -141,7 +141,7 @@ let toolRouterBothTransportsTests =
                       let! webhookArg = runOverWebhook ()
 
                       // Same tool code, same registry/binding-store/dispatch machinery on both
-                      // sides — only the transport differs (FR-013); each scenario asserts its OWN
+                      // sides — only the transport differs; each scenario asserts its OWN
                       // transport routed the tap to the bound tool with exactly ITS OWN arg, which
                       // together is the "identical behavior across transports" this test closes.
                       Expect.equal polledArg "over-polling" "the polling transport routed to the bound tool with its own arg"

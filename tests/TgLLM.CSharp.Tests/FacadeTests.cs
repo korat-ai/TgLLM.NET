@@ -38,7 +38,7 @@ public class KeyboardBuilderTests
 }
 
 /// <summary>
-/// Idiom-leak canary (T033, Principle II): no member of the C# façade's public surface may reference
+/// Idiom-leak canary (Principle II): no member of the C# façade's public surface may reference
 /// a type from FSharp.Core (FSharpFunc / FSharpOption / FSharpValueOption / FSharpResult / FSharpList).
 /// </summary>
 public class IdiomLeakCanaryTests

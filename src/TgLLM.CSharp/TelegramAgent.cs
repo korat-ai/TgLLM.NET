@@ -55,7 +55,7 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// in here (e.g. via <c>Task.WaitAsync</c>) would risk abandoning a partially-started
     /// <c>TgBot</c> — one that has already begun ingesting updates in the background — with no
     /// reference left to dispose it, which is worse than the current no-op. Documented explicitly
-    /// (review finding #6) rather than silently ignored.
+    /// rather than silently ignored.
     /// </param>
     public static async Task<TelegramAgent> StartPollingAsync(TelegramAgentOptions options, CancellationToken ct = default)
     {
@@ -94,7 +94,7 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// Accepted for API-shape consistency, but NOT currently honored — same reason as
     /// <see cref="StartPollingAsync"/>'s <c>ct</c>: <c>TgLLM.FSharp.TgBot.startWebhook</c> has no
     /// per-call cancellation seam, and abandoning a partially-started <c>TgBot</c> would leak it.
-    /// Documented explicitly (review finding #6) rather than silently ignored.
+    /// Documented explicitly rather than silently ignored.
     /// </param>
     public static async Task<TelegramAgent> StartWebhookAsync(TelegramAgentOptions options, CancellationToken ct = default)
     {
@@ -139,7 +139,7 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// request itself — <c>TgLLM.FSharp.TgBot</c>'s send methods have no per-call cancellation
     /// seam of their own, so the send may still complete in the background after this call
     /// returns. Threaded via <see cref="Task.WaitAsync(CancellationToken)"/> rather than silently
-    /// ignored (review finding #6).
+    /// ignored.
     /// </param>
     public Task<long> SendKeyboardAsync(long chatId, string text, Keyboard keyboard, CancellationToken ct = default) =>
         _bot.SendKeyboard(chatId, text, keyboard.Spec).WaitAsync(ct);

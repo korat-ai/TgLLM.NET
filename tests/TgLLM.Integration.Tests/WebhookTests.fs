@@ -1,6 +1,6 @@
-/// T029: tests for the webhook update source — secret-token verification, `Update` parsing, and
+/// Tests for the webhook update source — secret-token verification, `Update` parsing, and
 /// that a pushed callback-query update surfaces as a mapped `ButtonPressed` on `Updates` (the same
-/// domain event long polling produces, FR-013).
+/// domain event long polling produces).
 module TgLLM.Integration.Tests.WebhookTests
 
 open System.Collections.Generic

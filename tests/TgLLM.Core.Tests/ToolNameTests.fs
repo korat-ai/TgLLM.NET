@@ -1,6 +1,4 @@
-/// T003: failing tests for `ToolName.create` (non-empty after trim) and `ToolError` cases
-/// (data-model.md "ToolName", "ToolError"). Written before `TgLLM.Core.Tools` exists — this file
-/// MUST fail to compile until T004 implements `ToolName`/`ToolError` (Red).
+/// Tests for `ToolName.create` (non-empty after trim) and `ToolError` cases.
 module TgLLM.Core.Tests.ToolNameTests
 
 open Expecto

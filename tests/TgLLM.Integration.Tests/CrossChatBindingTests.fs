@@ -1,5 +1,5 @@
-/// Regression test for review finding #2 (003-tool-router-extensions): Telegram `message_id` is
-/// unique only PER CHAT, so `MessageBindingTracker` keying by bare `MessageId` let a tool's
+/// Regression test: Telegram `message_id` is unique only PER CHAT, so `MessageBindingTracker`
+/// keying by bare `MessageId` let a tool's
 /// `ctx.EditKeyboardAsync` in one chat delete ANOTHER chat's live bindings whenever both chats'
 /// keyboard messages happened to share the same per-chat message_id (e.g. each chat's first-ever
 /// sent message — now representable end-to-end since `FakeBotApiServer` assigns `message_id`
@@ -67,7 +67,7 @@ let private config (server: FakeBotApiServer) (tools: ToolRegistry) : TgBotConfi
 [<Tests>]
 let crossChatBindingTests =
     testList
-        "MessageBindingTracker cross-chat isolation (review finding #2)"
+        "MessageBindingTracker cross-chat isolation"
         [
 
           testCaseAsync

@@ -124,8 +124,8 @@ module ToolPlan =
         validateRows keyboard.Rows |> Result.map (fun _ -> keyboard)
 
     /// Whether `keyboard` contains at least one `ToolButton` (as opposed to being made entirely of
-    /// `UrlButton`s). Used by `TgBot.SendKeyboardPlan` (review finding #10, 003-tool-router-extensions)
-    /// to fail fast when a plan with tool buttons is sent without a Tool Router wired in: such
+    /// `UrlButton`s). Used by `TgBot.SendKeyboardPlan` to fail fast when a plan with tool buttons is
+    /// sent without a Tool Router wired in: such
     /// buttons would otherwise reach the wire, get tapped, and silently no-op forever — no
     /// `ToolDispatch` exists to ever resolve their bindings, so every press falls through to the
     /// slice-1 `IHookStore` path and is reported only as an unknown/stale token (or nothing at all,
@@ -225,8 +225,8 @@ type InMemoryBindingStore() =
 /// AFTER a send/edit reaches the wire — the map only ever reflects PAST sends, so it can never
 /// affect the request that is currently producing it.
 ///
-/// Keyed by `(ChatId, MessageId)`, NOT `MessageId` alone (review finding #2,
-/// 003-tool-router-extensions): Telegram's `message_id` is unique only PER CHAT, so two different
+/// Keyed by `(ChatId, MessageId)`, NOT `MessageId` alone: Telegram's `message_id` is unique only
+/// PER CHAT, so two different
 /// chats' keyboard messages can legitimately share the same `MessageId` (e.g. each chat's
 /// first-ever sent message). A bare-`MessageId` key would let an edit in one chat find — and
 /// therefore remove — another chat's still-live bindings the instant their message ids collided;
@@ -304,7 +304,7 @@ module ToolKeyboardOps =
     /// (the edit path: a tool that re-renders its own keyboard, e.g. a paginator/counter, must not
     /// leak one row per edit); `None` skips this (a fresh send has nothing stale to remove). `chat`
     /// is required (not bundled into `staleMessageId`) because `MessageId` alone is ambiguous
-    /// across chats (review finding #2) — every caller already has a `ChatId` in hand (the press's
+    /// across chats — every caller already has a `ChatId` in hand (the press's
     /// own chat, or the chat a fresh send targets). The old tokens are looked up and removed BEFORE
     /// the new ones are saved; `tracker.Record` runs only AFTER `send` completes, matching
     /// `MessageBindingTracker`'s own "reflects past sends only" contract. An invalid `plan` is a

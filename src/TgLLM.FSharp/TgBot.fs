@@ -159,7 +159,7 @@ type TgBot
     /// here: a fresh send has no previous binding to remove.
     ///
     /// Fails fast if `plan` has a tool button but NO Tool Router was ever wired in
-    /// (`TgBotConfig.WithTools`/`TgWebhookConfig.WithTools`, review finding #10) — without this
+    /// (`TgBotConfig.WithTools`/`TgWebhookConfig.WithTools`) — without this
     /// check, such a button would reach the wire, get tapped, and silently no-op forever (no
     /// `ToolDispatch` could ever resolve its binding). A URL-only plan is always fine, regardless of
     /// wiring.
@@ -257,8 +257,8 @@ type TgBot
         let processor = UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
         let cts = new CancellationTokenSource()
 
-        // A faulted run loop must be surfaced via `observer`, not silently swallowed at `Dispose`
-        // (review finding #1) — `DisposeAsync`'s own `try ... with _ -> ()` around `runTask` stays
+        // A faulted run loop must be surfaced via `observer`, not silently swallowed at `Dispose` —
+        // `DisposeAsync`'s own `try ... with _ -> ()` around `runTask` stays
         // as a defensive backstop only, since this wrapper already reports (and then completes
         // normally) for every ordinary failure. `OperationCanceledException` is the expected
         // shutdown path (`DisposeAsync` cancels `cts`), not a failure worth reporting.

@@ -221,8 +221,8 @@ type UpdateProcessor
                 | ValueNone -> return HookStoreResolution
         }
 
-    /// Dispatches on BOTH the resolution AND its `PressResolution.ackPolicy` jointly (review
-    /// finding #5) — not just the resolution alone — so the policy mapping is actually consulted,
+    /// Dispatches on BOTH the resolution AND its `PressResolution.ackPolicy` jointly — not just the
+    /// resolution alone — so the policy mapping is actually consulted,
     /// not merely a parallel, never-read spec. The two "impossible" combinations
     /// (`Deferred`+`HookStoreResolution`, `AckFirst`+`ToolResolution`) can only fire if
     /// `PressResolution.ackPolicy`'s mapping is ever changed without updating the branches below (or
@@ -259,9 +259,9 @@ type UpdateProcessor
                         try
                             do! processPress ct press
                         with ex ->
-                            // One press's processing must never take down the WHOLE run loop
-                            // (review finding #1) — e.g. `AnswerCallback` itself throwing on the
-                            // ack-first path, before any hook/tool ever runs. Reuses `OnHookFailed`:
+                            // One press's processing must never take down the WHOLE run loop — e.g.
+                            // `AnswerCallback` itself throwing on the ack-first path, before any
+                            // hook/tool ever runs. Reuses `OnHookFailed`:
                             // from the observer's point of view "this press's processing blew up"
                             // is the same signal regardless of whether the failure came from a hook
                             // body (already caught inside `buildWork`/`buildToolWork`) or from

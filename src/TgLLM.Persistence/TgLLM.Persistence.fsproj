@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <Description>Durable (file-based) IBindingStore implementation for TgLLM.NET's Tool Router (US3). Core stays IO-agnostic (Principle III); this leaf project does the IO.</Description>
+    <Description>Durable (file-based) IBindingStore implementation for TgLLM.NET's Tool Router. Core stays IO-agnostic (Principle III); this leaf project does the IO.</Description>
   </PropertyGroup>
 
   <!-- The durable `FileBindingStore : IBindingStore` (System.Text.Json on disk). -->

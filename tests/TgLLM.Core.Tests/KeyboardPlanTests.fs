@@ -1,7 +1,5 @@
-/// T012: failing FsCheck property tests for `KeyboardPlan.assign` (data-model.md "Pure planning
-/// step"). Written before the real implementation lands in T013 — `assign` already exists as a
-/// stub-free member of `KeyboardPlan` module by the time this compiles (T011 already implements
-/// `Keyboard.create`; T013 is `KeyboardPlan.assign`), so this file is Red until T013 is done.
+/// FsCheck property tests for `KeyboardPlan.assign`, the pure planning step that assigns callback
+/// tokens to a validated keyboard spec.
 module TgLLM.Core.Tests.KeyboardPlanTests
 
 open System.Threading.Tasks
@@ -39,9 +37,9 @@ let keyboardPlanTests =
 
                 let shapePreserved = List.map List.length registeredRows = rowButtonCounts
 
-                // `KeyboardPlan.assign` only ever produces `Callback` buttons (T007: `Url` buttons
-                // are a Tool Router concept — see `ToolPlan.plan` in Tools.fs); a `Url` case here
-                // would itself be a test failure, not a case to special-case away.
+                // `KeyboardPlan.assign` only ever produces `Callback` buttons (`Url` buttons are a
+                // Tool Router concept — see `ToolPlan.plan` in Tools.fs); a `Url` case here would
+                // itself be a test failure, not a case to special-case away.
                 let labelsPreserved =
                     List.forall2
                         (fun (regRow: RegisteredButton list) (rawRow: ButtonSpec list) ->

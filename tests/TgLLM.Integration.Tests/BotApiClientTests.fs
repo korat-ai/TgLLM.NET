@@ -1,6 +1,4 @@
-/// T023: failing tests for `TelegramBotApiClient` against a fake Telegram HTTP handler
-/// (`FakeBotApiServer`). Written before `TgLLM.BotApi.TelegramBotApiClient` exists — this file
-/// MUST fail to compile until T024 implements it (Red).
+/// Tests for `TelegramBotApiClient` against a fake Telegram HTTP handler (`FakeBotApiServer`).
 module TgLLM.Integration.Tests.BotApiClientTests
 
 open System.Text.Json
@@ -25,7 +23,7 @@ let private messageText (text: string) : MessageText =
 
 /// A real `TelegramBotClient` pointed at the fake server's loopback port — exactly what
 /// production code constructs, just with `baseUrl` overridden (`TelegramBotClientOptions`'s
-/// second constructor parameter; verified via Telegram.Bot's own source, research.md D7).
+/// second constructor parameter; verified via Telegram.Bot's own source).
 let private makeClient (server: FakeBotApiServer) : ITelegramBotClient =
     // Must look like a real bot token (`{digits}:{rest}`, per `TelegramBotClientOptions`'s own
     // validation) even though nothing ever checks it beyond shape — the fake server doesn't

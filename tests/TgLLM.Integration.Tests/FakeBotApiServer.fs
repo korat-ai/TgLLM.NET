@@ -1,6 +1,6 @@
 /// Shared fake Telegram Bot API HTTP server (a real Kestrel host on a loopback port), reused by
-/// every BotApi-facing integration test in this project: T023 (`BotApiClientTests`), T025
-/// (`LongPollingTests`), T028 (`FSharpPollingAcceptanceTests`) and later agents' T029+/T034 tests.
+/// every BotApi-facing integration test in this project: `BotApiClientTests`, `LongPollingTests`,
+/// `FSharpPollingAcceptanceTests`, and the transport/tool-routing acceptance suites.
 module TgLLM.Integration.Tests.FakeBotApiServer
 
 open System
@@ -29,13 +29,12 @@ type RecordedRequest =
 /// `BaseRequestUrl = "{baseUrl}/bot{token}"` and `MethodName` is the exact lowerCamelCase Bot API
 /// method name (`"sendMessage"`, `"getUpdates"`, `"answerCallbackQuery"`, `"deleteWebhook"`, ...) —
 /// verified against Telegram.Bot's own source (`TelegramBotClientOptions.cs`, `TelegramBotClient.cs`,
-/// `RequestBase.cs`; research.md D7, Principle V), not assumed. This server exposes exactly that one
+/// `RequestBase.cs`; Principle V), not assumed. This server exposes exactly that one
 /// route, `POST /bot{token}/{method}`, and replies with the Bot API's `{"ok":true,"result":...}`
 /// envelope every real Telegram.Bot request expects.
-/// One canned response queued for a Bot API method (feature 002-llm-tool-router, T024): either a
-/// success `result` payload (`EnqueueResult`) or a Bot-API-shaped ERROR (`EnqueueError`) — needed to
-/// simulate `"message to edit not found"`/`"message is not modified"` (research.md D1) without a
-/// real vanished message.
+/// One canned response queued for a Bot API method: either a success `result` payload
+/// (`EnqueueResult`) or a Bot-API-shaped ERROR (`EnqueueError`) — needed to simulate
+/// `"message to edit not found"`/`"message is not modified"` without a real vanished message.
 type internal CannedResponse =
     | Success of resultJson: string
     | Failure of errorCode: int * description: string
@@ -64,7 +63,7 @@ type FakeBotApiServer
         responses.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue(Success resultJson)
 
     /// Queues a canned Bot-API ERROR (`{"ok":false,"error_code":...,"description":...}`, HTTP 400)
-    /// to be returned by the NEXT call to `methodName` (feature 002-llm-tool-router, T024) — e.g.
+    /// to be returned by the NEXT call to `methodName` — e.g.
     /// `server.EnqueueError("editMessageText", 400, "Bad Request: message to edit not found")`
     /// simulates editing a vanished message. Telegram.Bot's own client throws `ApiRequestException`
     /// for any `ok:false` response, regardless of HTTP status (Principle V, verified against its
@@ -90,16 +89,16 @@ module FakeBotApiServer =
         match methodName with
         | "getUpdates" -> "[]"
         | "sendMessage" ->
-            // Telegram's `message_id` is unique only PER CHAT (review finding #2,
-            // 003-tool-router-extensions) — a global counter here would hide that real-world shape
-            // and let a cross-chat collision bug pass every test. Keying the counter by `chat_id`
-            // means two different chats' first sent message both legitimately land on message_id 1,
-            // exactly like the real Bot API, so tests can represent (and catch) that collision.
+            // Telegram's `message_id` is unique only PER CHAT — a global counter here would hide
+            // that real-world shape and let a cross-chat collision bug pass every test. Keying the
+            // counter by `chat_id` means two different chats' first sent message both legitimately
+            // land on message_id 1, exactly like the real Bot API, so tests can represent (and
+            // catch) that collision.
             let chatIdStr = field "chat_id" "0"
             $"""{{"message_id":{nextMessageId chatIdStr},"date":0,"chat":{{"id":{chatIdStr},"type":"private"}}}}"""
         | "editMessageText"
         | "editMessageReplyMarkup" ->
-            // Telegram.Bot deserializes the result as a `Message`, feature 002-llm-tool-router T021/T023:
+            // Telegram.Bot deserializes the result as a `Message`:
             // a real `editMessageText`/`editMessageReplyMarkup` echoes back the SAME `message_id` (the
             // request always carries it — unlike `sendMessage`, which allocates a fresh one).
             $"""{{"message_id":{field "message_id" "0"},"date":0,"chat":{{"id":{field "chat_id" "0"},"type":"private"}}}}"""
@@ -172,8 +171,8 @@ module FakeBotApiServer =
         }
 
 /// Builds Bot-API-shaped JSON for canned `getUpdates` responses — reused by every long-polling
-/// integration test (T025 `LongPollingTests`, T028 `FSharpPollingAcceptanceTests`) that needs to
-/// hand the fake server a batch of `Update`s.
+/// integration test (`LongPollingTests`, `FSharpPollingAcceptanceTests`) that needs to hand the
+/// fake server a batch of `Update`s.
 module TelegramJson =
 
     /// One `callback_query` update with the minimum fields Bot API requires on

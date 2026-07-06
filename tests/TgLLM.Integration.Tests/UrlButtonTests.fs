@@ -1,8 +1,8 @@
-/// T029: US4 (URL buttons alongside tool buttons) exercised end-to-end. A plan mixing a URL button
+/// URL buttons alongside tool buttons, exercised end-to-end. A plan mixing a URL button
 /// and a tool button sends a keyboard whose URL button carries the url (no `callback_data`/
-/// token/binding — research.md D3: a URL tap is handled entirely client-side, so there is nothing
+/// token/binding — a URL tap is handled entirely client-side, so there is nothing
 /// for the library to route) while the tool button still routes on tap exactly like
-/// `ToolRouterAcceptanceTests.fs`'s US1 scenario. Mirrors that file's structure.
+/// `ToolRouterAcceptanceTests.fs`'s scenario. Mirrors that file's structure.
 module TgLLM.Integration.Tests.UrlButtonTests
 
 open System.Text.Json.Nodes
@@ -74,13 +74,13 @@ let urlButtonTests =
                           let sentKeyboard = (server.RequestsFor "sendMessage").Head.Body |> Option.get
 
                           // The URL button: carries `url`, NO `callback_data` (no token, no binding —
-                          // there is nothing to route; research.md D3).
+                          // there is nothing to route).
                           let urlButton = sentKeyboard |> buttonAt 0 1
                           Expect.equal (urlButton |> field "text" |> asString) "Docs" "the URL button's label reached the wire"
                           Expect.equal (urlButton |> field "url" |> asString) "https://example.test/docs" "the URL button's url reached the wire"
                           Expect.isFalse (urlButton |> hasField "callback_data") "a URL button carries no callback_data (no token/binding)"
 
-                          // The tool button still routes on tap, exactly like the plain US1 scenario.
+                          // The tool button still routes on tap, exactly like the plain scenario.
                           let approveButton = sentKeyboard |> buttonAt 0 0
                           Expect.isTrue (approveButton |> hasField "callback_data") "the tool button DOES carry callback_data (its token)"
                           let approveToken = approveButton |> field "callback_data" |> asString

@@ -1,10 +1,8 @@
-/// Regression tests for review finding #2 (003-tool-router-extensions): Telegram `message_id` is
-/// unique only PER CHAT, so `MessageBindingTracker` keying by bare `MessageId` let a paginator/
-/// counter tool's `ctx.EditKeyboardAsync` in one chat find — and therefore remove — ANOTHER chat's
-/// live bindings whenever the two chats' keyboard messages happened to share the same message_id
-/// (e.g. each chat's first-ever sent message). Written before the tracker is re-keyed to
-/// `(ChatId, MessageId)` — this file MUST fail to compile until `Record`/`TryGetPrevious` take a
-/// `ChatId` too (Red).
+/// Regression tests: Telegram `message_id` is unique only PER CHAT, so `MessageBindingTracker`
+/// keying by bare `MessageId` let a paginator/counter tool's `ctx.EditKeyboardAsync` in one chat
+/// find — and therefore remove — ANOTHER chat's live bindings whenever the two chats' keyboard
+/// messages happened to share the same message_id (e.g. each chat's first-ever sent message). The
+/// tracker is keyed by `(ChatId, MessageId)`, and `Record`/`TryGetPrevious` take a `ChatId` too.
 module TgLLM.Core.Tests.MessageBindingTrackerTests
 
 open FSharp.UMX

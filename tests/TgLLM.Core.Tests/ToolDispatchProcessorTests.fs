@@ -1,9 +1,7 @@
-/// T015: failing tests for `UpdateProcessor`'s deferred-ack tool path (data-model.md "Tool dispatch
-/// (the deferred-ack tool path) + processor wiring", research.md D2/D6). Written before T016 wires
-/// the optional `?toolDispatch` collaborator into `UpdateProcessor` — this file MUST fail to compile
-/// until then (Red). Uses REAL in-memory collaborators (`InMemoryToolRegistry`/`InMemoryBindingStore`,
-/// already green from the Foundational phase) plus in-memory fakes for the transport-facing ports,
-/// mirroring `UpdateProcessorTests.fs`'s fakes.
+/// Tests for `UpdateProcessor`'s deferred-ack tool path — the optional `?toolDispatch` collaborator
+/// wired into `UpdateProcessor`. Uses REAL in-memory collaborators (`InMemoryToolRegistry`/
+/// `InMemoryBindingStore`) plus in-memory fakes for the transport-facing ports, mirroring
+/// `UpdateProcessorTests.fs`'s fakes.
 module TgLLM.Core.Tests.ToolDispatchProcessorTests
 
 open System
@@ -63,7 +61,7 @@ type private AckCall =
     | AckFirst of CallbackQueryId
     | AckDeferred of CallbackQueryId * string option * bool
 
-/// One recorded `EditMessageText`/`EditMessageReplyMarkup` call (feature 002-llm-tool-router, T022).
+/// One recorded `EditMessageText`/`EditMessageReplyMarkup` call.
 type private EditCall =
     | EditText of ChatId * MessageId * string * RegisteredKeyboard option
     | EditKeyboard of ChatId * MessageId * RegisteredKeyboard option
@@ -245,7 +243,7 @@ let toolDispatchProcessorTests =
             Expect.isEmpty dispatcher.Enqueued "no tool and no hook ran"
             Expect.equal observer.Unknown [ press ] "the observer hears about the unresolvable press"
 
-        testCase "a tool that calls EditTextAsync edits the pressed message in place, keyboard untouched (T022)" <| fun _ ->
+        testCase "a tool that calls EditTextAsync edits the pressed message in place, keyboard untouched" <| fun _ ->
             let token = CallbackToken.generate ()
             let press = samplePress token 1L
             let tool: Tool = fun ctx -> ctx.EditTextAsync "Approved!"
@@ -267,7 +265,7 @@ let toolDispatchProcessorTests =
                 [ EditText(press.Chat, press.MessageId, "Approved!", None) ]
                 "the pressed message was edited in place, current keyboard left untouched (None)"
 
-        testCase "a tool that calls EditKeyboardAsync re-plans, saves the new binding, and edits the keyboard only (T022)" <| fun _ ->
+        testCase "a tool that calls EditKeyboardAsync re-plans, saves the new binding, and edits the keyboard only" <| fun _ ->
             let token = CallbackToken.generate ()
             let press = samplePress token 1L
             let replacementPlan: ToolKeyboard = { Rows = [ [ ToolButton("Undo", "undo", None) ] ] }

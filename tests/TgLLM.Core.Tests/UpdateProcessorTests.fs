@@ -1,6 +1,4 @@
-/// T021: failing tests for `UpdateProcessor`'s ack-first policy, using in-memory fakes
-/// (contracts/core-ports.md "UpdateProcessor"). Written before `TgLLM.Core.UpdateProcessor`
-/// exists — this file MUST fail to compile until T022 implements it (Red).
+/// Tests for `UpdateProcessor`'s ack-first policy, using in-memory fakes.
 module TgLLM.Core.Tests.UpdateProcessorTests
 
 open System
@@ -49,9 +47,9 @@ type private FakeUpdateSource(events: AgentEvent list) =
                         member _.DisposeAsync() = ValueTask.CompletedTask } }
 
 /// Records `AnswerCallback`/`SendText` calls instead of talking to Telegram. `throwForQueries`
-/// (review finding #1, 003-tool-router-extensions) simulates a transient `AnswerCallback` failure
-/// for specific query ids — every existing call site omits it (empty by default), so this is a
-/// pure addition, unchanged behavior for every pre-existing test.
+/// simulates a transient `AnswerCallback` failure for specific query ids — every existing call
+/// site omits it (empty by default), so this is a pure addition, unchanged behavior for every
+/// pre-existing test.
 type private FakeBotApiClient(?throwForQueries: CallbackQueryId list) =
     let throwFor = defaultArg throwForQueries [] |> Set.ofList
     let answered = ResizeArray<CallbackQueryId>()
@@ -80,8 +78,8 @@ type private FakeBotApiClient(?throwForQueries: CallbackQueryId list) =
             answered.Add query
             Task.CompletedTask
 
-        /// Edit* (feature 002-llm-tool-router, T021) are only reachable via the deferred-ack tool
-        /// path, never exercised in this ack-first-only suite — implemented to satisfy `IBotApiClient`.
+        /// Edit* are only reachable via the deferred-ack tool path, never exercised in this
+        /// ack-first-only suite — implemented to satisfy `IBotApiClient`.
         member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.CompletedTask
         member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.CompletedTask
 
@@ -127,7 +125,7 @@ let updateProcessorTests =
 
             (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
 
-            Expect.equal api.Answered [ press.QueryId ] "the unknown press is still acknowledged (FR-007, FR-010)"
+            Expect.equal api.Answered [ press.QueryId ] "the unknown press is still acknowledged"
             Expect.isEmpty dispatcher.Enqueued "no hook is enqueued for an unknown token"
             Expect.equal observer.Unknown [ press ] "the observer is told about the unknown token"
             Expect.isEmpty observer.Failed "no failure is reported for a merely-unknown token"
@@ -234,7 +232,7 @@ let updateProcessorTests =
                 "the slice-1 hook-store resolution acks immediately, before any hook runs"
 
         testCase
-            "a press whose own processing throws (AnswerCallback itself failing) is reported via OnHookFailed, and RunAsync keeps processing later presses (review finding #1)"
+            "a press whose own processing throws (AnswerCallback itself failing) is reported via OnHookFailed, and RunAsync keeps processing later presses"
         <| fun _ ->
             let throwingToken = CallbackToken.generate ()
             let okToken = CallbackToken.generate ()

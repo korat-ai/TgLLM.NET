@@ -1,9 +1,7 @@
-/// T025: failing tests for `FileBindingStore` (data-model.md "Tool binding", research.md D5).
-/// Written before `TgLLM.Persistence.FileBindingStore` exists — this file MUST fail to compile until
-/// T026 implements it (Red). Covers the plain `IBindingStore` contract (Save → TryGet, Remove) PLUS
-/// the restart guarantee itself: re-opening the SAME file in a brand-new instance still resolves
-/// bindings saved by a previous instance (SC-004, at the unit level — `RestartPersistenceTests.fs`,
-/// T028, proves it end-to-end through the real bot).
+/// Tests for `FileBindingStore`, covering the tool binding contract. Covers the plain
+/// `IBindingStore` contract (Save → TryGet, Remove) PLUS the restart guarantee itself: re-opening
+/// the SAME file in a brand-new instance still resolves bindings saved by a previous instance (at
+/// the unit level — `RestartPersistenceTests.fs` proves it end-to-end through the real bot).
 module TgLLM.Persistence.Tests.FileBindingStoreTests
 
 open System
@@ -69,7 +67,7 @@ let fileBindingStoreTests =
             finally
                 File.Delete path
 
-        testCase "re-opening the SAME file in a NEW instance still resolves a previously saved binding (SC-004)" <| fun _ ->
+        testCase "re-opening the SAME file in a NEW instance still resolves a previously saved binding" <| fun _ ->
             let path = tempPath ()
 
             try

@@ -1,6 +1,4 @@
-/// T006: failing FsCheck property tests for `ToolPlan.plan` (data-model.md "Pure kernel"). Written
-/// before the real implementation lands in T007 — this file MUST fail to compile until `Tools.fs`
-/// exists (Red).
+/// FsCheck property tests for `ToolPlan.plan`, the pure planning kernel.
 module TgLLM.Core.Tests.ToolPlanTests
 
 open Expecto
@@ -109,7 +107,7 @@ let toolPlanTests =
 
             List.distinct outputTokens |> List.length = buttonCount
 
-        testCase "an empty/whitespace URL is rejected with InvalidUrl (T030, research.md D3)" <| fun _ ->
+        testCase "an empty/whitespace URL is rejected with InvalidUrl" <| fun _ ->
             let rows = [ [ UrlButton("Docs", "   ") ] ]
             let tokens = List.empty<CallbackToken>
 
@@ -117,13 +115,13 @@ let toolPlanTests =
             | Error(InvalidUrl "   ") -> ()
             | other -> failwithf "expected Error (InvalidUrl \"   \"), got %A" other
 
-        testCase "Plan.validate also rejects an empty URL (façade's build-time check, contracts/tool-router.md Plan.rows)" <| fun _ ->
+        testCase "Plan.validate also rejects an empty URL (façade's build-time check on Plan.rows)" <| fun _ ->
             match ToolPlan.validate { Rows = [ [ UrlButton("Docs", "") ] ] } with
             | Error(InvalidUrl "") -> ()
             | other -> failwithf "expected Error (InvalidUrl \"\"), got %A" other
 
-        // ToolPlan.hasToolButtons (review finding #10, 003-tool-router-extensions): `TgBot.SendKeyboardPlan`
-        // uses this to fail fast when a plan has tool buttons but no Tool Router is wired in.
+        // ToolPlan.hasToolButtons: `TgBot.SendKeyboardPlan` uses this to fail fast when a plan has
+        // tool buttons but no Tool Router is wired in.
         testCase "hasToolButtons is false for a URL-only plan" <| fun _ ->
             let keyboard: ToolKeyboard = { Rows = [ [ UrlButton("Docs", "https://example.test") ] ] }
             Expect.isFalse (ToolPlan.hasToolButtons keyboard) "a plan made entirely of URL buttons never needs a Tool Router"
