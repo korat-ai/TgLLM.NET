@@ -142,7 +142,10 @@ let private observer: IA2uiObserver =
         member _.OnA2uiError(error: A2uiError) = printfn $"[a2ui] {A2uiError.describe error}"
 
         member _.OnMalformedAction(descriptor: ActionDescriptor) =
-            printfn $"[a2ui] '{descriptor.Name}' on surface '{descriptor.SurfaceId}' wanted a response but carried no actionId — dropped" }
+            printfn $"[a2ui] '{descriptor.Name}' on surface '{descriptor.SurfaceId}' wanted a response but carried no actionId — dropped"
+
+        member _.OnStaleSurfaceAction(descriptor: ActionDescriptor) =
+            printfn $"[a2ui] '{descriptor.Name}' was tapped for surface '{descriptor.SurfaceId}', which this process no longer tracks — dropped" }
 
 /// Renders 'deploy-1', edits it in place, deletes it; sends and tears down the LocalOpenUrl demo
 /// surface 'docs-1'; then sends and tears down 'rating-1', whose unsupported `Slider` only ever

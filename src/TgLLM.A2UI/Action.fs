@@ -54,11 +54,23 @@ type IA2uiObserver =
     /// ONLY way such a tap-time condition is ever surfaced.
     abstract OnMalformedAction: descriptor: ActionDescriptor -> unit
 
+    /// A well-formed tap whose `SurfaceId` this renderer's `SurfaceRegistry` no longer tracks — the
+    /// binding that routed it here is durable (`TgLLM.Persistence`), but `SurfaceRegistry` itself is
+    /// in-memory, per-process (see its own doc comment), so this is GUARANTEED to happen after a
+    /// restart for any surface still on-screen from before it, and can also happen for an explicitly
+    /// `deleteSurface`d one whose keyboard the presser hadn't dismissed yet. There is no live data
+    /// model to resolve the action's context against, so it is NOT delivered to the sink — but the
+    /// deserialized descriptor itself (`Name`/`SurfaceId`) is perfectly readable, so this is reported
+    /// rather than dropped with no trace, the same "surfaced, not silently wrong" policy
+    /// `OnMalformedAction` above already applies to a different tap-time condition.
+    abstract OnStaleSurfaceAction: descriptor: ActionDescriptor -> unit
+
 /// Reports nothing — the default when a caller has no need to observe A2UI-level conditions.
 type NoopA2uiObserver() =
     interface IA2uiObserver with
         member _.OnA2uiError(_error: A2uiError) = ()
         member _.OnMalformedAction(_descriptor: ActionDescriptor) = ()
+        member _.OnStaleSurfaceAction(_descriptor: ActionDescriptor) = ()
 
 /// The observability seam beyond a single tap's own malformed-action report
 /// (`IA2uiObserver.OnMalformedAction` above): every message-level condition the F# façade's
@@ -107,10 +119,14 @@ module A2uiActionTool =
         /// A well-formed descriptor requesting a response (`WantResponse = true`) with no
         /// `ActionId` to correlate that response to — reported to `observer` INSTEAD of `sink`.
         | ReportMalformed of ActionDescriptor
-        /// An unparseable argument, or a descriptor whose surface is no longer tracked (deleted, or
-        /// never rendered by this process — see `SurfaceRegistry`'s in-memory, per-process scope):
-        /// there is no live data model to resolve context against, and nothing concrete (no name,
-        /// no surface) worth reporting either.
+        /// A well-formed descriptor whose surface is no longer tracked (deleted, or never rendered
+        /// by THIS process — see `SurfaceRegistry`'s in-memory, per-process scope, guaranteed after a
+        /// restart for any surface still on-screen from before it): no live data model to resolve
+        /// context against, so not delivered to `sink` — but reported to `observer` instead, since
+        /// the descriptor's own `Name`/`SurfaceId` are perfectly readable.
+        | ReportStaleSurface of ActionDescriptor
+        /// No argument at all, or an unparseable one: nothing concrete (no name, no surface) worth
+        /// reporting.
         | Nothing
 
     let private decide (registry: SurfaceRegistry) (clock: Clock) (argJson: string | null) : PressOutcome =
@@ -130,7 +146,7 @@ module A2uiActionTool =
             | Some descriptor when descriptor.WantResponse && Option.isNone descriptor.ActionId -> ReportMalformed descriptor
             | Some descriptor ->
                 match registry.TryGetDataModel descriptor.SurfaceId with
-                | None -> Nothing
+                | None -> ReportStaleSurface descriptor
                 | Some dataModel ->
                     let resolvedContext =
                         descriptor.Context |> List.map (fun (key, pointer) -> key, JsonPointer.tryResolve dataModel pointer)
@@ -147,14 +163,16 @@ module A2uiActionTool =
     /// Builds the internal `a2ui-action` tool: on a press, deserializes the tapped button's
     /// `ActionDescriptor` (the tool's structured argument), resolves its context against the
     /// pressed button's OWN surface (looked up in `registry` by `descriptor.SurfaceId`), and hands
-    /// the resulting `A2uiAction` to `sink` — or, for a malformed descriptor, to `observer` instead
-    /// (see `PressOutcome`/`decide` above for the full decision).
+    /// the resulting `A2uiAction` to `sink` — or, for a malformed descriptor or one whose surface is
+    /// no longer tracked, to `observer` instead (see `PressOutcome`/`decide` above for the full
+    /// decision).
     let create (registry: SurfaceRegistry) (sink: ActionSink) (clock: Clock) (observer: IA2uiObserver) : Tool =
         fun (ctx: PressContext) ->
             task {
                 match decide registry clock ctx.Arg with
                 | Nothing -> ()
                 | ReportMalformed descriptor -> observer.OnMalformedAction descriptor
+                | ReportStaleSurface descriptor -> observer.OnStaleSurfaceAction descriptor
                 | Deliver action -> do! sink action
             }
             :> Task

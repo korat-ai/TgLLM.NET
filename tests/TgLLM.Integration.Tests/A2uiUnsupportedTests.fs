@@ -27,7 +27,8 @@ let private recordingObserver () : IA2uiObserver * ResizeArray<A2uiError> =
 
     { new IA2uiObserver with
         member _.OnA2uiError(error: A2uiError) = errors.Add error
-        member _.OnMalformedAction(_descriptor: ActionDescriptor) = () },
+        member _.OnMalformedAction(_descriptor: ActionDescriptor) = ()
+        member _.OnStaleSurfaceAction(_descriptor: ActionDescriptor) = () },
     errors
 
 let private buildBot (server: FakeBotApiServer) : Task<TgBot> =

@@ -70,13 +70,16 @@ let private recordingSink () : ActionSink * ResizeArray<A2uiAction> =
                    Task.CompletedTask),
     received
 
-let private recordingObserver () : IA2uiObserver * ResizeArray<ActionDescriptor> =
-    let recorded = ResizeArray<ActionDescriptor>()
+let private recordingObserver () : IA2uiObserver * ResizeArray<ActionDescriptor> * ResizeArray<ActionDescriptor> =
+    let malformed = ResizeArray<ActionDescriptor>()
+    let stale = ResizeArray<ActionDescriptor>()
 
     { new IA2uiObserver with
         member _.OnA2uiError(_error: A2uiError) = ()
-        member _.OnMalformedAction(descriptor: ActionDescriptor) = recorded.Add descriptor },
-    recorded
+        member _.OnMalformedAction(descriptor: ActionDescriptor) = malformed.Add descriptor
+        member _.OnStaleSurfaceAction(descriptor: ActionDescriptor) = stale.Add descriptor },
+    malformed,
+    stale
 
 let private stringContextValue (context: (string * JsonNode option) list) (key: string) : string option =
     context
@@ -103,7 +106,7 @@ let actionTests =
                     liveSurface registry 1L "deploy-1" """{ "env": "prod" }"""
 
                     let sink, received = recordingSink ()
-                    let observer, malformed = recordingObserver ()
+                    let observer, malformed, _stale = recordingObserver ()
                     let fixedNow = DateTimeOffset(2026, 7, 7, 12, 0, 0, TimeSpan.Zero)
                     let clock: Clock = fun () -> fixedNow
 
@@ -128,20 +131,23 @@ let actionTests =
                 |> Async.AwaitTask
         }
 
-        testCaseAsync "resolving context against a surface no longer tracked is a silent no-op (nothing left to resolve against)"
+        testCaseAsync "a tap on a surface no longer tracked (e.g. after a restart) is surfaced to the observer, not silently dropped"
         <| async {
             do!
                 task {
                     let argJson = buttonArgJson "gone-surface" "approve" [] false None
                     let registry = SurfaceRegistry(Catalog.telegramBasic) // never populated
                     let sink, received = recordingSink ()
-                    let observer, malformed = recordingObserver ()
+                    let observer, malformed, stale = recordingObserver ()
 
                     let tool = A2uiActionTool.create registry sink (fun () -> DateTimeOffset.UnixEpoch) observer
                     do! tool (pressContext argJson)
 
                     Expect.equal received.Count 0 "no live surface means no data model to resolve against"
-                    Expect.equal malformed.Count 0 "an untracked surface is not itself a malformed action"
+                    Expect.equal malformed.Count 0 "an untracked surface is not itself a MALFORMED action"
+                    Expect.equal stale.Count 1 "the stale-surface tap was surfaced exactly once"
+                    Expect.equal stale[0].Name "approve" "the surfaced descriptor is the one that was tapped"
+                    Expect.equal stale[0].SurfaceId "gone-surface" "the surfaced descriptor carries the untracked surface's own id"
                 }
                 |> Async.AwaitTask
         }
@@ -156,7 +162,7 @@ let actionTests =
                     liveSurface registry 2L "deploy-1" "{}"
 
                     let sink, received = recordingSink ()
-                    let observer, malformed = recordingObserver ()
+                    let observer, malformed, _stale = recordingObserver ()
 
                     let tool = A2uiActionTool.create registry sink (fun () -> DateTimeOffset.UnixEpoch) observer
                     do! tool (pressContext argJson)
@@ -181,7 +187,7 @@ let actionTests =
                     liveSurface registry 3L "deploy-1" "{}"
 
                     let sink, received = recordingSink ()
-                    let observer, malformed = recordingObserver ()
+                    let observer, malformed, _stale = recordingObserver ()
 
                     let tool = A2uiActionTool.create registry sink (fun () -> DateTimeOffset.UnixEpoch) observer
                     do! tool (pressContext argJson)

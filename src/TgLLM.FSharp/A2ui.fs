@@ -31,6 +31,13 @@ type LoggingA2uiObserver(logger: ILogger) =
                 [| descriptor.Name :> obj; descriptor.SurfaceId :> obj |]
             )
 
+        member _.OnStaleSurfaceAction(descriptor: ActionDescriptor) =
+            logger.LogWarning(
+                "A2UI action {Name} was tapped for surface {SurfaceId}, which this process no longer \
+                 tracks (a restart, or the surface was already deleted) — dropped rather than delivered",
+                [| descriptor.Name :> obj; descriptor.SurfaceId :> obj |]
+            )
+
 /// One ingested A2UI surface, live over a running bot. Built by `A2ui.renderer`/`A2ui.rendererWithObserver`.
 [<Sealed>]
 type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2uiObserver) =

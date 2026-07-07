@@ -12,7 +12,8 @@ let private recordingObserver () : IA2uiObserver * ResizeArray<A2uiError> * Resi
 
     { new IA2uiObserver with
         member _.OnA2uiError(error: A2uiError) = errors.Add error
-        member _.OnMalformedAction(descriptor: ActionDescriptor) = malformedActions.Add descriptor },
+        member _.OnMalformedAction(descriptor: ActionDescriptor) = malformedActions.Add descriptor
+        member _.OnStaleSurfaceAction(_descriptor: ActionDescriptor) = () },
     errors,
     malformedActions
 

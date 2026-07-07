@@ -83,10 +83,15 @@ internal sealed class CSharpA2uiObserverBridge : TgLLM.A2UI.IA2uiObserver
             TgLLM.FSharp.A2uiErrorBridge.kind(error),
             TgLLM.FSharp.A2uiErrorBridge.description(error)));
 
-    // A malformed tap-time action has no C#-facing observer surface (yet) — this bridge only ever
-    // carries A2uiError conditions to a C# caller; OnMalformedAction is a required interface member
-    // with nothing to forward to, so it's a deliberate no-op rather than a partial implementation.
+    // A malformed (or stale-surface) tap-time action has no C#-facing observer surface (yet) — this
+    // bridge only ever carries A2uiError conditions to a C# caller; OnMalformedAction/
+    // OnStaleSurfaceAction are required interface members with nothing to forward to, so they're
+    // deliberate no-ops rather than a partial implementation.
     public void OnMalformedAction(TgLLM.A2UI.ActionDescriptor descriptor)
+    {
+    }
+
+    public void OnStaleSurfaceAction(TgLLM.A2UI.ActionDescriptor descriptor)
     {
     }
 }
