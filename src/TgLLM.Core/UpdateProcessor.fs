@@ -61,6 +61,19 @@ type private DeferredAckState =
       /// finished running (whether it won or lost the ack race).
       Finish: unit -> Task }
 
+/// Internal signal ONLY (review #4): `UpdateProcessor.makeEditKeyboardAction`'s `send` closure
+/// raises this when the edit-keyboard call classifies as `EditNotFound`, so it reaches
+/// `ToolKeyboardOps.deliver`'s EXISTING throw-triggered compensation (removes the just-saved
+/// replacement bindings) exactly as any other `send` failure would — `deliver` itself has no idea
+/// "edit not found" is a soft, non-fatal outcome for anything BUT tool-button bindings; a FRESH
+/// send (`TgBot.SendKeyboardPlan`) has no `EditOutcome` to classify at all. Caught right back in
+/// `makeEditKeyboardAction`, turned into the SAME soft, observable `OnEditFailed` report
+/// `EditNotFound` gets on every other edit path, and NEVER escapes to the tool author — without
+/// this, the replacement keyboard's bindings were saved (before the edit's outcome was even known)
+/// but never compensated, orphaning them against a message that no longer exists. Must be declared
+/// at module (not type) level — F# disallows an `exception` inside a class body.
+exception private EditKeyboardNotFoundSignal
+
 /// The engine that turns an inbound button press into ack + hook/tool execution.
 /// `PressContext` itself lives in Domain.fs — see the compile-order comment in
 /// TgLLM.Core.fsproj for why.
@@ -207,25 +220,38 @@ type UpdateProcessor
     /// `Anyone`/no notice override/no expiry/not single-use — a tool's own re-rendered keyboard
     /// carries none of these send-time options (only a fresh `SendKeyboardPlan` accepts them).
     let makeEditKeyboardAction (press: ButtonPress) (dispatch: ToolDispatch) (workCt: CancellationToken) (plan: ToolKeyboard) : Task =
-        ToolKeyboardOps.deliver
-            "PressContext.EditKeyboardAsync"
-            CallbackToken.generate
-            dispatch.Store
-            dispatch.Tracker
-            press.Chat
-            (Some press.MessageId)
-            Anyone
-            None
-            None
-            false
-            (fun registeredKeyboard ->
-                task {
-                    let! outcome = api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
-                    reportEditOutcome press outcome
-                    return press.MessageId
-                })
-            workCt
-            plan
+        task {
+            try
+                do!
+                    ToolKeyboardOps.deliver
+                        "PressContext.EditKeyboardAsync"
+                        CallbackToken.generate
+                        dispatch.Store
+                        dispatch.Tracker
+                        press.Chat
+                        (Some press.MessageId)
+                        Anyone
+                        None
+                        None
+                        false
+                        (fun registeredKeyboard ->
+                            task {
+                                let! outcome = api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
+
+                                match outcome with
+                                | EditApplied
+                                | EditNotModified -> return press.MessageId
+                                | EditNotFound -> return raise EditKeyboardNotFoundSignal
+                            })
+                        workCt
+                        plan
+                    :> Task
+            with EditKeyboardNotFoundSignal ->
+                // `deliver`'s own compensation already ran (removed the just-saved replacement
+                // bindings) by the time this is caught — report the SAME soft, observable outcome
+                // any other edit path reports; never surfaced to the tool author.
+                reportEditOutcome press EditNotFound
+        }
         :> Task
 
     /// The enqueued work itself: runs the tool, then sends its (or the watchdog's) ack and stops

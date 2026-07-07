@@ -8,6 +8,7 @@ module TgLLM.Integration.Tests.EditErrorTests
 
 open System
 open System.Text.Json.Nodes
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open Expecto
@@ -233,6 +234,79 @@ let editErrorTests =
 
                           Expect.isEmpty logger.Errors "a soft edit-keyboard failure is not a hard (OnHookFailed) failure"
                           Expect.isNonEmpty logger.Warnings "a vanished message is surfaced as a soft, observed failure on the keyboard-edit path too"
+                  }
+                  |> Async.AwaitTask
+          }
+
+          testCaseAsync
+              "EditKeyboardAsync on \"message to edit not found\" compensates: the just-saved replacement binding is NOT left orphaned in the store"
+          <| async {
+              do!
+                  task {
+                      use! server = FakeBotApiServer.start ()
+                      // A store this test can inspect directly, standing in for whatever store
+                      // backs a real bot — the orphan this test guards against would leak into
+                      // ANY configured store, not just the in-memory default.
+                      let store = InMemoryBindingStore() :> IBindingStore
+                      let ranPastEdit = TaskCompletionSource()
+
+                      let tools =
+                          ToolRegistry
+                              .create()
+                              .Register(
+                                  "approve",
+                                  fun ctx ->
+                                      task {
+                                          match Plan.rows [ [ Plan.tool "Undo" "undo" ] ] with
+                                          | Error e -> failtestf "replacement plan should be valid: %A" e
+                                          | Ok replacementPlan -> do! ctx.EditKeyboardAsync replacementPlan // must not throw
+
+                                          ranPastEdit.TrySetResult() |> ignore
+                                      }
+                              )
+
+                      server.EnqueueError("editMessageReplyMarkup", 400, "Bad Request: message to edit not found")
+
+                      use! bot =
+                          TgBot.startPolling (
+                              (TgBotConfig.create "123456789:TEST-fake-token")
+                                  .WithBaseUrl(server.BaseUrl)
+                                  .WithTools(tools)
+                                  .WithBindingStore(store)
+                          )
+
+                      match Plan.rows [ [ Plan.tool "Approve" "approve" ] ] with
+                      | Error e -> failtestf "plan should be valid: %A" e
+                      | Ok plan ->
+                          let! _ = bot.SendKeyboardPlan(UMX.tag<chatId> 704L, MessageText.unsafe "Deploy?", plan)
+
+                          let sentKeyboard = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                          let approveToken = callbackDataAt 0 0 sentKeyboard
+
+                          server.EnqueueResult(
+                              "getUpdates",
+                              TelegramJson.batch
+                                  [ TelegramJson.callbackQueryUpdate 1 "q-keyboard-not-found-orphan" approveToken 704L 45 903L "Dee" ]
+                          )
+
+                          do! pollUntil 5000 (fun () -> server.RequestsFor "answerCallbackQuery" |> List.isEmpty |> not)
+                          do! ranPastEdit.Task
+
+                          // The edit attempt still reached the wire (and failed there) — recorded
+                          // regardless of the fake server's canned error response — so the token it
+                          // would have bound is recoverable from the request body.
+                          let attemptedEdit = (server.RequestsFor "editMessageReplyMarkup").Head.Body |> Option.get
+                          let orphanCandidateToken = callbackDataAt 0 0 attemptedEdit
+
+                          match CallbackToken.tryParse orphanCandidateToken with
+                          | ValueNone -> failtestf "the attempted edit's callback_data did not parse as a CallbackToken: %s" orphanCandidateToken
+                          | ValueSome token ->
+                              let! stillBound = (store.TryGet(token, CancellationToken.None)).AsTask()
+
+                              Expect.equal
+                                  stillBound
+                                  ValueNone
+                                  "the replacement binding the failed edit would have shown must be compensated (removed), not left orphaned forever"
                   }
                   |> Async.AwaitTask
           } ]
