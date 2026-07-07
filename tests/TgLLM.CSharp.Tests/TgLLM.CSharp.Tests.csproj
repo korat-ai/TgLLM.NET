@@ -21,6 +21,8 @@
          suite, so this project's owner-authorization acceptance test doesn't reimplement an
          equivalent Kestrel-hosted fake from scratch. -->
     <ProjectReference Include="..\TgLLM.Integration.Tests\TgLLM.Integration.Tests.fsproj" />
+    <!-- LiteDbBindingStore.OpenAt, for the LiteDB restart-persistence acceptance test. -->
+    <ProjectReference Include="..\..\src\TgLLM.Persistence.LiteDb\TgLLM.Persistence.LiteDb.fsproj" />
   </ItemGroup>
 
 </Project>

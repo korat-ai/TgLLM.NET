@@ -31,6 +31,7 @@
     <Compile Include="ToolRouterBothTransportsTests.fs" />
     <Compile Include="ClientButtonsTests.fs" />
     <Compile Include="ToolRoutingAtScaleTests.fs" />
+    <Compile Include="LifecycleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -54,6 +55,7 @@
     <ProjectReference Include="..\..\src\TgLLM.FSharp\TgLLM.FSharp.fsproj" />
     <ProjectReference Include="..\..\src\TgLLM.CSharp\TgLLM.CSharp.csproj" />
     <ProjectReference Include="..\..\src\TgLLM.Persistence\TgLLM.Persistence.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.Persistence.LiteDb\TgLLM.Persistence.LiteDb.fsproj" />
   </ItemGroup>
 
 </Project>
