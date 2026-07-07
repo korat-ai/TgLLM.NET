@@ -292,25 +292,80 @@ module ToolPlan =
             let registeredRows = validatedRows |> List.map (List.map assignButton)
             RegisteredKeyboard registeredRows, List.rev bindings)
 
+/// Advisory metadata supplied at tool registration, used only to build the manifest below —
+/// never to constrain routing (`TryResolve` ignores it entirely). Both fields are optional: a
+/// tool registered with neither still registers, routes, and appears in the manifest by name
+/// alone.
+type ToolMetadata =
+    { Description: string option
+      /// An opaque argument-schema text (conventionally JSON Schema). Carried verbatim — the
+      /// registry never parses or validates it.
+      ArgSchema: string option }
+
+/// One entry in a `ToolManifest`: a registered tool's name plus its optional description and
+/// argument schema. `Parameters` carries `ToolMetadata.ArgSchema` under the name a function-calling
+/// API expects.
+type ToolManifestEntry =
+    { Name: string
+      Description: string option
+      Parameters: string option }
+
+/// The registry's self-description: every registered tool, in registration order, with no
+/// vendor-specific wrapping — a host adapts this shape to whatever function-calling API its LLM
+/// expects.
+type ToolManifest = { Tools: ToolManifestEntry list }
+
 /// Registers named tools and resolves them by name. Add-or-replace by design (mirrors slice-1's
-/// `IHookStore.Register` semantics for re-sends).
+/// `IHookStore.Register` semantics for re-sends). `metadata` is advisory: omitting it (or leaving
+/// its fields `None`) still registers and routes the tool identically — it only affects what
+/// `Manifest` reports for that name.
 type IToolRegistry =
-    abstract Register: name: ToolName * tool: Tool -> unit
+    abstract Register: name: ToolName * tool: Tool * ?metadata: ToolMetadata -> unit
     abstract TryResolve: name: ToolName -> Tool voption
+    abstract Manifest: unit -> ToolManifest
 
 /// Default `IToolRegistry`: a `ConcurrentDictionary` keyed by `ToolName`. Mirrors
 /// `InMemoryHookStore`'s shape, but keyed by name (stable across sends) rather than by per-button
-/// `CallbackToken`.
+/// `CallbackToken`. Registration order is tracked separately (`order`, guarded by `orderGate`) so
+/// `Manifest` reports tools in a stable, deterministic sequence rather than whatever order the
+/// underlying `ConcurrentDictionary` happens to enumerate; re-registering an already-known name
+/// replaces its tool/metadata in place without moving or duplicating its position.
 type InMemoryToolRegistry() =
     let tools = ConcurrentDictionary<ToolName, Tool>()
+    let metadataByName = ConcurrentDictionary<ToolName, ToolMetadata option>()
+    let order = ResizeArray<ToolName>()
+    let orderGate = obj ()
 
     interface IToolRegistry with
-        member _.Register(name: ToolName, tool: Tool) : unit = tools[name] <- tool
+        member _.Register(name: ToolName, tool: Tool, ?metadata: ToolMetadata) : unit =
+            let isNewName = not (tools.ContainsKey name)
+            tools[name] <- tool
+            metadataByName[name] <- metadata
+
+            if isNewName then
+                lock orderGate (fun () -> order.Add name)
 
         member _.TryResolve(name: ToolName) : Tool voption =
             match tools.TryGetValue name with
             | true, tool -> ValueSome tool
             | false, _ -> ValueNone
+
+        member _.Manifest() : ToolManifest =
+            let registeredNames = lock orderGate (fun () -> order |> List.ofSeq)
+
+            let entries =
+                registeredNames
+                |> List.map (fun toolName ->
+                    let metadata =
+                        match metadataByName.TryGetValue toolName with
+                        | true, m -> m
+                        | false, _ -> None
+
+                    { Name = ToolName.value toolName
+                      Description = metadata |> Option.bind (fun m -> m.Description)
+                      Parameters = metadata |> Option.bind (fun m -> m.ArgSchema) })
+
+            { Tools = entries }
 
 /// Serializable button->tool bindings. In-memory default here; a durable (file-based)
 /// implementation lives in the separate `TgLLM.Persistence` leaf project (Core stays
