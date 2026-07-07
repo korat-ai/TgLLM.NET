@@ -52,7 +52,11 @@ type SurfaceRegistry(catalog: Catalog) =
 
     /// The effect implied by `surface`'s CURRENT state: not yet renderable (no `root`) is
     /// `NoEffect`; renderable and never sent is `SendNew`; renderable and already sent is
-    /// `EditExisting` against its recorded message.
+    /// `EditExisting` against its recorded message. This single decision point is also what makes a
+    /// burst of `Apply` calls for the SAME surface coalesce: every call re-decides against the
+    /// latest merged state, so at most one call in the burst ever sees `MessageId = None` (and thus
+    /// produces the lone `SendNew`) — every call after that sees the recorded message and produces
+    /// an `EditExisting` carrying the state as of THAT call, never a second send.
     let effectFor (surface: LiveSurface) : Result<RenderEffect, A2uiError> =
         if not (hasRoot surface.Components) then
             Ok NoEffect
