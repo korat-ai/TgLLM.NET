@@ -10,6 +10,7 @@
     <ProjectReference Include="..\TgLLM.BotApi\TgLLM.BotApi.fsproj" />
     <ProjectReference Include="..\TgLLM.Webhooks\TgLLM.Webhooks.fsproj" />
     <ProjectReference Include="..\TgLLM.FSharp\TgLLM.FSharp.fsproj" />
+    <ProjectReference Include="..\TgLLM.A2UI\TgLLM.A2UI.fsproj" />
   </ItemGroup>
 
 </Project>

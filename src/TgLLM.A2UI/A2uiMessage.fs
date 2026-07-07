@@ -18,6 +18,19 @@ type A2uiError =
     /// An `updateComponents`/`updateDataModel`/`deleteSurface` for a surface id that isn't live.
     | UnknownSurface of surfaceId: string
 
+/// Plain-English descriptions of `A2uiError` — used where a caller wants a readable message
+/// rather than pattern-matching the DU itself (e.g. the C# façade's `A2uiIngestResult`, which
+/// carries no F# idioms on its public surface).
+module A2uiError =
+
+    let describe (error: A2uiError) : string =
+        match error with
+        | MalformedMessage detail -> $"malformed A2UI message: {detail}"
+        | UnknownCatalog catalogId -> $"unknown catalog: {catalogId}"
+        | UnsupportedComponent(componentType, id) -> $"unsupported component '{componentType}' (id {id})"
+        | DuplicateSurface surfaceId -> $"surface '{surfaceId}' already exists (createSurface is create-once)"
+        | UnknownSurface surfaceId -> $"unknown surface: {surfaceId}"
+
 /// One parsed A2UI adjacency-list node, not yet narrowed to a catalog — `Component.toTelegramBasic`
 /// does that. `Fields` carries the node's own JSON object verbatim (its `id`/`component`
 /// properties included), so a catalog mapper can read whichever properties its component type
@@ -131,6 +144,14 @@ module A2uiMessage =
         with
         | :? JsonException as ex -> Error ex.Message
         | :? ArgumentNullException -> Error "input is null"
+
+    /// The surface every `A2uiMessage` case addresses — every case carries exactly one.
+    let surfaceId (msg: A2uiMessage) : string =
+        match msg with
+        | CreateSurface(surfaceId, _, _, _) -> surfaceId
+        | UpdateComponents(surfaceId, _) -> surfaceId
+        | UpdateDataModel(surfaceId, _, _) -> surfaceId
+        | DeleteSurface surfaceId -> surfaceId
 
     /// Total: parses one A2UI agent->renderer JSON message. Bad JSON, a missing/wrong `version`,
     /// an envelope carrying zero or more than one recognized message key, or a missing/malformed

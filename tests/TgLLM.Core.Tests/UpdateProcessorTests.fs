@@ -62,7 +62,14 @@ type private FakeBotApiClient(?throwForQueries: CallbackQueryId list) =
             sentTexts.Add(chat, text)
             Task.FromResult(UMX.tag<messageId> 0L)
 
+        /// Parse-mode overload — this suite never exercises it, mirrors the plain overload's
+        /// bookkeeping so it stays observable the same way if a future test ever does.
+        member _.SendText(chat, text, _parseMode, _ct) =
+            sentTexts.Add(chat, text)
+            Task.FromResult(UMX.tag<messageId> 0L)
+
         member _.SendKeyboard(_chat, _text, _keyboard, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
+        member _.SendKeyboard(_chat, _text, _keyboard, _parseMode, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
 
         member _.AnswerCallback(query, _ct) =
             if throwFor.Contains query then

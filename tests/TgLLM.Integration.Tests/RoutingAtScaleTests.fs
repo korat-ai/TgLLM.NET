@@ -39,7 +39,9 @@ type private RecordingApi() =
 
     interface IBotApiClient with
         member _.SendText(_, _, _) = Task.FromResult(UMX.tag<messageId> 1L)
+        member _.SendText(_, _, _, _) = Task.FromResult(UMX.tag<messageId> 1L)
         member _.SendKeyboard(_, _, _, _) = Task.FromResult(UMX.tag<messageId> 1L)
+        member _.SendKeyboard(_, _, _, _, _) = Task.FromResult(UMX.tag<messageId> 1L)
 
         member _.AnswerCallback(_, _) =
             Interlocked.Increment(&acks) |> ignore

@@ -17,6 +17,11 @@
     <Compile Include="ToolRouter.fs" />
     <Compile Include="TgBot.fs" />
     <Compile Include="CSharpSupport.fs" />
+    <!--
+      A2ui.fs compiles LAST: it needs `TgBot` (this bot's own send path + Tool Router) and the
+      TgLLM.A2UI leaf's parse/registry/action types together.
+    -->
+    <Compile Include="A2ui.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -28,6 +33,7 @@
     <ProjectReference Include="..\TgLLM.Core\TgLLM.Core.fsproj" />
     <ProjectReference Include="..\TgLLM.BotApi\TgLLM.BotApi.fsproj" />
     <ProjectReference Include="..\TgLLM.Webhooks\TgLLM.Webhooks.fsproj" />
+    <ProjectReference Include="..\TgLLM.A2UI\TgLLM.A2UI.fsproj" />
   </ItemGroup>
 
 </Project>

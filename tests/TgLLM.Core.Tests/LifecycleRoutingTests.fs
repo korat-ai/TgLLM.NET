@@ -68,7 +68,9 @@ type private FakeBotApiClient() =
 
     interface IBotApiClient with
         member _.SendText(_chat, _text, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
+        member _.SendText(_chat, _text, _parseMode, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
         member _.SendKeyboard(_chat, _text, _keyboard, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
+        member _.SendKeyboard(_chat, _text, _keyboard, _parseMode, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
 
         member _.AnswerCallback(query, _ct) =
             calls.Add(AckFirst query)

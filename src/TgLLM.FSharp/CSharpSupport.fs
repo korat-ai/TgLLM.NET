@@ -6,8 +6,33 @@ namespace TgLLM.FSharp
 open System
 open System.Collections.Generic
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Threading.Tasks
 open TgLLM.Core
+open TgLLM.A2UI
+
+/// C#-facing bridge for `TgLLM.A2UI.A2uiAction`: unwraps its `string option`/JSON-typed context
+/// values into plain BCL shapes the C# façade's `A2uiRenderer` can build its own DTO from without
+/// touching `FSharpOption`/`JsonNode` pattern matching itself.
+module A2uiActionBridge =
+
+    /// One resolved context entry, stringified: an already-string JSON leaf passes through as-is;
+    /// any other JSON shape (number/bool/object/array) uses its JSON text; an unresolved context
+    /// path (`None`) is the empty string — the same "never a throw, always some string" contract
+    /// `DynString.resolve` uses for bound text/labels. A `struct` tuple, not `System.Tuple`, so a
+    /// C# `foreach (var (key, value) in ...)` deconstructs it natively.
+    let private contextEntry (key: string, value: JsonNode option) : struct (string * string) =
+        match value with
+        | None -> struct (key, "")
+        | Some(:? JsonValue as v) when v.GetValueKind() = JsonValueKind.String -> struct (key, v.GetValue<string>())
+        | Some node -> struct (key, node.ToJsonString())
+
+    /// `action.Context`, stringified and as a plain array — see `contextEntry`.
+    let contextEntries (action: A2uiAction) : struct (string * string) array =
+        action.Context |> List.map contextEntry |> List.toArray
+
+    /// `action.ActionId` as a nullable `string`, never `FSharpOption`.
+    let actionId (action: A2uiAction) : string | null = action.ActionId |> Option.toObj
 
 type Keyboards =
 

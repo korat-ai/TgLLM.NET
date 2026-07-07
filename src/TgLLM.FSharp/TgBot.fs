@@ -189,6 +189,7 @@ type TgBot
         tracker: MessageBindingTracker,
         dispatcher: IPressDispatcher,
         toolDispatch: ToolDispatch option,
+        tools: ToolRegistry option,
         clock: Clock,
         cts: CancellationTokenSource,
         runTask: Task,
@@ -200,6 +201,27 @@ type TgBot
         AgentOps.sendKeyboard store api CallbackToken.generate chat text keyboard cts.Token
 
     member _.SendText(chat: ChatId, text: MessageText) : Task<MessageId> = api.SendText(chat, text, cts.Token)
+
+    /// Parse-mode overload: sends exactly like the overload above, plus a Bot API `parse_mode`
+    /// (e.g. `Some MarkdownV2` for an already-escaped MarkdownV2 body). `None` behaves identically
+    /// to the overload above.
+    member _.SendText(chat: ChatId, text: MessageText, parseMode: ParseMode option) : Task<MessageId> =
+        api.SendText(chat, text, parseMode, cts.Token)
+
+    /// This bot's own Tool Router registry, if one was wired in (`TgBotConfig.WithTools`/
+    /// `TgWebhookConfig.WithTools`) — `None` means no Tool Router exists, exactly the condition
+    /// `SendKeyboardPlan` itself already fails fast on for a plan with tool buttons. Exposed so a
+    /// collaborator built AFTER this bot (e.g. an A2UI renderer) can register further tools into
+    /// the SAME registry `ToolDispatch` already resolves presses against, rather than needing its
+    /// own separate wiring seam.
+    member _.Tools: ToolRegistry option = tools
+
+    /// This bot's own "now" (`TgBotConfig.WithClock`, defaulting to real UTC time) — the SAME
+    /// clock `SendKeyboardPlan`'s `expiresIn` stamps against and `UpdateProcessor` reads expiry/
+    /// redelivery-dedup decisions from. Exposed for the same reason as `Tools`: a collaborator
+    /// built after this bot that needs a deterministic "now" (e.g. an A2UI action's timestamp)
+    /// should share this bot's own clock rather than reading ambient wall-clock time.
+    member _.Clock: Clock = clock
 
     /// Send a keyboard built from a neutral Tool Router plan; presses route to the tools
     /// registered via `TgBotConfig.WithTools`. Delegates to the shared `ToolKeyboardOps.deliver`
@@ -232,7 +254,8 @@ type TgBot
             ?owner: OwnerScope,
             ?deniedNotice: string,
             ?expiresIn: TimeSpan,
-            ?singleUse: bool
+            ?singleUse: bool,
+            ?parseMode: ParseMode
         ) : Task<MessageId> =
         if toolDispatch.IsNone && ToolPlan.hasToolButtons plan then
             invalidOp
@@ -260,7 +283,7 @@ type TgBot
              | _ -> None)
             expiresAt
             (defaultArg singleUse false)
-            (fun registeredKeyboard -> api.SendKeyboard(chat, text, registeredKeyboard, cts.Token))
+            (fun registeredKeyboard -> api.SendKeyboard(chat, text, registeredKeyboard, parseMode, cts.Token))
             cts.Token
             plan
 
@@ -273,7 +296,8 @@ type TgBot
             ?owner: OwnerScope,
             ?deniedNotice: string,
             ?expiresIn: TimeSpan,
-            ?singleUse: bool
+            ?singleUse: bool,
+            ?parseMode: ParseMode
         ) : Task<MessageId> =
         this.SendKeyboardPlan(
             chat,
@@ -282,7 +306,8 @@ type TgBot
             ?owner = owner,
             ?deniedNotice = deniedNotice,
             ?expiresIn = expiresIn,
-            ?singleUse = singleUse
+            ?singleUse = singleUse,
+            ?parseMode = parseMode
         )
 
     /// C#-friendly overloads that accept a raw string (validated with `MessageText.unsafe`), so the
@@ -385,7 +410,7 @@ type TgBot
                 | ex -> observer.OnRunLoopFailed ex
             }
 
-        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, clock, cts, runTask, evictionSweeper, webhookSource)
+        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, common.Tools, clock, cts, runTask, evictionSweeper, webhookSource)
 
     /// Start ingesting updates via long polling (deletes any configured webhook first). The returned
     /// bot is already polling in the background.

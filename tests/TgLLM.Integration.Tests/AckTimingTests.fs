@@ -80,7 +80,9 @@ type private TimestampingBotApiClient(clock: Stopwatch) =
 
     interface IBotApiClient with
         member _.SendText(_chat, _text, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
+        member _.SendText(_chat, _text, _parseMode, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
         member _.SendKeyboard(_chat, _text, _keyboard, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
+        member _.SendKeyboard(_chat, _text, _keyboard, _parseMode, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
         member _.AnswerCallback(_query, _ct) = Task.CompletedTask
 
         member _.AnswerCallback(query, _text, _showAlert, _ct) =

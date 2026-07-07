@@ -44,6 +44,37 @@ module JsonPointer =
         else
             pointer.Substring(1).Split('/') |> Array.map decodeToken |> Array.fold step (Some root)
 
+    /// Sets (`value = Some _`) or removes (`value = None`) the property at `pointer` within
+    /// `root`, mutating `root` in place and returning it. Scoped to the common "data model is a
+    /// JSON object tree" shape: `pointer`'s PARENT segments must already resolve to a
+    /// `JsonObject` — this never fabricates a missing intermediate container (RFC 6902 "add"
+    /// semantics, or writing through an array index, are out of scope) and never replaces the
+    /// document root itself (`pointer = ""` has no parent to mutate). Any of those cases — same as
+    /// an unresolved path for `tryResolve` — leaves `root` unchanged: documented, never a throw.
+    let trySet (root: JsonNode) (pointer: string) (value: JsonNode option) : JsonNode =
+        if pointer = "" || not (pointer.StartsWith "/") then
+            root
+        else
+            let lastSlash = pointer.LastIndexOf '/'
+            let parentPointer = pointer.Substring(0, lastSlash)
+            let leaf = decodeToken (pointer.Substring(lastSlash + 1))
+
+            match tryResolve root parentPointer with
+            | Some(:? JsonObject as parentObj) ->
+                match value with
+                | Some v ->
+                    // A `JsonNode` can only ever belong to ONE parent in its own tree — `value`
+                    // typically still belongs to the `A2uiMessage` envelope it was parsed from, so
+                    // round-tripping it through its own text hands `parentObj` an unattached clone
+                    // rather than throwing "the node already has a parent".
+                    match JsonNode.Parse(v.ToJsonString()) with
+                    | null -> ()
+                    | cloned -> parentObj[leaf] <- cloned
+                | None -> parentObj.Remove(leaf) |> ignore
+
+                root
+            | _ -> root
+
 module DynString =
 
     /// Resolves a `DynString` against `dataModel`. `Literal` returns itself, ignoring the data

@@ -150,3 +150,50 @@ public class IdiomLeakCanaryTests
             "F# types leaked into the C# store extension point:\n" + string.Join("\n", offenders.Select(t => t.FullName)));
     }
 }
+
+/// <summary>
+/// Idiom-leak canary re-run over the A2UI surface (Principle II): the shared
+/// <see cref="IdiomLeakCanaryTests.Public_surface_references_no_FSharpCore_types"/> already scans
+/// every exported type/member of the <c>TgLLM.CSharp</c> assembly by reflection, so it automatically
+/// covers <see cref="A2uiRenderer"/>/<see cref="A2uiAction"/>/<see cref="A2uiIngestResult"/>/
+/// <see cref="Catalog"/>/<see cref="ActionSink"/> once they exist. This test only pins down that
+/// those specific members are present and public, so a future refactor that accidentally drops one
+/// fails loudly here rather than only via the broad scan.
+/// </summary>
+public class A2uiSurfaceTests
+{
+    [Fact]
+    public void A2ui_types_are_part_of_the_public_TgLLM_CSharp_surface()
+    {
+        var assembly = typeof(TelegramAgent).Assembly;
+        var exported = assembly.GetExportedTypes();
+
+        Assert.Contains(typeof(A2uiRenderer), exported);
+        Assert.Contains(typeof(A2uiAction), exported);
+        Assert.Contains(typeof(A2uiIngestResult), exported);
+        Assert.Contains(typeof(Catalog), exported);
+        Assert.Contains(typeof(ActionSink), exported);
+    }
+
+    [Fact]
+    public void A2uiRenderer_exposes_public_Create_IngestAsync_and_Catalog_members()
+    {
+        var createMethod = typeof(A2uiRenderer).GetMethod(nameof(A2uiRenderer.Create));
+        var ingestMethod = typeof(A2uiRenderer).GetMethod(nameof(A2uiRenderer.IngestAsync));
+        var catalogProperty = typeof(A2uiRenderer).GetProperty(nameof(A2uiRenderer.Catalog));
+
+        Assert.NotNull(createMethod);
+        Assert.NotNull(ingestMethod);
+        Assert.NotNull(catalogProperty);
+        Assert.Equal(typeof(Catalog), catalogProperty!.PropertyType);
+    }
+
+    [Fact]
+    public void A2uiAction_Context_is_a_plain_string_dictionary_not_an_F_sharp_shape()
+    {
+        var contextProperty = typeof(A2uiAction).GetProperty(nameof(A2uiAction.Context));
+
+        Assert.NotNull(contextProperty);
+        Assert.Equal(typeof(IReadOnlyDictionary<string, string>), contextProperty!.PropertyType);
+    }
+}

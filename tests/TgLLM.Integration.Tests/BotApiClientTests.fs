@@ -145,6 +145,59 @@ let botApiClientTests =
             }
             |> fun t -> t.GetAwaiter().GetResult()
 
+        testCase "SendText with an explicit parse mode sends parse_mode on the wire" <| fun _ ->
+            task {
+                use! server = FakeBotApiServer.start ()
+                let api: IBotApiClient = TelegramBotApiClient(makeClient server)
+
+                let! _ = api.SendText(UMX.tag<chatId> 43L, messageText "*bold*", Some MarkdownV2, CancellationToken.None)
+
+                match server.RequestsFor "sendMessage" with
+                | [ request ] ->
+                    let body = request.Body |> Option.get
+                    Expect.equal (body |> field "text" |> asString) "*bold*" "text is sent unchanged"
+                    Expect.equal (body |> field "parse_mode" |> asString) "MarkdownV2" "parse_mode is sent"
+                | other -> failwithf "expected exactly one sendMessage call, got %d" (List.length other)
+            }
+            |> fun t -> t.GetAwaiter().GetResult()
+
+        testCase "SendText with no parse mode sends no parse_mode field, same as the plain overload" <| fun _ ->
+            task {
+                use! server = FakeBotApiServer.start ()
+                let api: IBotApiClient = TelegramBotApiClient(makeClient server)
+
+                let! _ = api.SendText(UMX.tag<chatId> 44L, messageText "plain", None, CancellationToken.None)
+
+                match server.RequestsFor "sendMessage" with
+                | [ request ] ->
+                    let body = request.Body |> Option.get
+                    Expect.isNone (body.["parse_mode"] |> Option.ofObj) "no parse_mode key is sent"
+                | other -> failwithf "expected exactly one sendMessage call, got %d" (List.length other)
+            }
+            |> fun t -> t.GetAwaiter().GetResult()
+
+        testCase "SendKeyboard with an explicit parse mode sends parse_mode alongside reply_markup" <| fun _ ->
+            task {
+                use! server = FakeBotApiServer.start ()
+                let api: IBotApiClient = TelegramBotApiClient(makeClient server)
+                let token = CallbackToken.generate ()
+                let keyboard = RegisteredKeyboard [ [ Callback(label "Yes", token) ] ]
+
+                let! _ = api.SendKeyboard(UMX.tag<chatId> 45L, messageText "Deploy?", keyboard, Some MarkdownV2, CancellationToken.None)
+
+                match server.RequestsFor "sendMessage" with
+                | [ request ] ->
+                    let body = request.Body |> Option.get
+                    Expect.equal (body |> field "parse_mode" |> asString) "MarkdownV2" "parse_mode is sent"
+
+                    let firstButton =
+                        body |> field "reply_markup" |> field "inline_keyboard" |> at 0 |> at 0
+
+                    Expect.equal (firstButton |> field "text" |> asString) "Yes" "button text still reaches reply_markup"
+                | other -> failwithf "expected exactly one sendMessage call, got %d" (List.length other)
+            }
+            |> fun t -> t.GetAwaiter().GetResult()
+
         testCase "AnswerCallback posts answerCallbackQuery with the query id" <| fun _ ->
             task {
                 use! server = FakeBotApiServer.start ()

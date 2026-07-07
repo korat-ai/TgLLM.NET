@@ -58,6 +58,14 @@ public sealed class TelegramAgent : IAsyncDisposable
     private TelegramAgent(TgBot bot) => _bot = bot;
 
     /// <summary>
+    /// The underlying F# façade bot. Internal — a seam for other <c>TgLLM.CSharp</c> types built
+    /// ON TOP of an already-running agent (e.g. <see cref="A2uiRenderer"/>) to reach the SAME
+    /// send path / Tool Router this agent itself uses, rather than needing their own separate
+    /// wiring.
+    /// </summary>
+    internal TgBot Bot => _bot;
+
+    /// <summary>
     /// Start ingesting updates via long polling.
     /// </summary>
     /// <param name="options">Bot configuration.</param>
@@ -229,9 +237,19 @@ public sealed class TelegramAgent : IAsyncDisposable
         // `Nullable<TimeSpan>` explicitly: `null` -> `None`, a value -> `Some value`. `singleUse` is
         // a non-nullable `bool` (already defaulted to `false` at this boundary), so it flows through
         // the same implicit `bool -> FSharpOption<bool>` conversion `owner` uses, no explicit
-        // wrapping needed.
+        // wrapping needed. `parseMode` has no C#-facing parameter on THIS method — it's
+        // `FSharpOption<ParseMode>.None` unconditionally, same as every pre-A2UI call site; the
+        // A2UI façade sends through its own path instead of `SendKeyboardPlanAsync`.
         _bot
-            .SendKeyboardPlan(chatId, text, plan.Plan, owner ?? Owner.Anyone, deniedNotice!, OptionModule.OfNullable(expiresIn), singleUse)
+            .SendKeyboardPlan(
+                chatId,
+                text,
+                plan.Plan,
+                owner ?? Owner.Anyone,
+                deniedNotice!,
+                OptionModule.OfNullable(expiresIn),
+                singleUse,
+                FSharpOption<TgLLM.Core.ParseMode>.None)
             .WaitAsync(ct);
 
     /// <summary>

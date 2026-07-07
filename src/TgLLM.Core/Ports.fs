@@ -55,13 +55,33 @@ type EditOutcome =
     | EditNotModified
     | EditNotFound
 
+/// The Telegram message formatting mode for a sent message's text (Bot API `parse_mode`).
+/// Wherever this type appears it is wrapped in `option`, and `None` sends exactly like the
+/// overload that takes no parse mode at all — plain text, no formatting, no escaping obligation
+/// on the caller. Legacy `Markdown` is deliberately not offered here (core.telegram.org marks it
+/// deprecated in favor of `MarkdownV2`).
+type ParseMode =
+    | MarkdownV2
+    | Html
+
 /// The outbound Bot API seam. Implementation: `TelegramBotApiClient` (`TgLLM.BotApi`) over
 /// Telegram.Bot; maps `RegisteredKeyboard` to `InlineKeyboardMarkup`.
 type IBotApiClient =
     abstract SendText: chat: ChatId * text: MessageText * ct: CancellationToken -> Task<MessageId>
 
+    /// Overload: send with an explicit parse mode. `None` behaves identically to the overload
+    /// above (plain text) — additive, every pre-existing call site keeps using the overload above,
+    /// unchanged.
+    abstract SendText: chat: ChatId * text: MessageText * parseMode: ParseMode option * ct: CancellationToken -> Task<MessageId>
+
     abstract SendKeyboard:
         chat: ChatId * text: MessageText * keyboard: RegisteredKeyboard * ct: CancellationToken -> Task<MessageId>
+
+    /// Overload: send with an explicit parse mode, same "`None` = identical to the overload above"
+    /// contract as `SendText`'s pair.
+    abstract SendKeyboard:
+        chat: ChatId * text: MessageText * keyboard: RegisteredKeyboard * parseMode: ParseMode option * ct: CancellationToken ->
+            Task<MessageId>
 
     /// Acknowledges a callback query (stops the client spinner). MUST be called for EVERY press,
     /// including unknown/stale ones.

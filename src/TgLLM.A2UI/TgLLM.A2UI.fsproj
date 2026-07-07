@@ -20,6 +20,8 @@
     <Compile Include="Markdown.fs" />
     <Compile Include="Catalog.fs" />
     <Compile Include="Renderer.fs" />
+    <Compile Include="SurfaceRegistry.fs" />
+    <Compile Include="Action.fs" />
   </ItemGroup>
 
   <ItemGroup>

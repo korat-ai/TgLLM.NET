@@ -7,6 +7,13 @@ open System.Text.Json.Nodes
 open Expecto
 open TgLLM.A2UI
 
+/// `JsonValue.Create` is annotated as possibly returning `null`, but never does for a non-null
+/// string literal — narrowed here once so the tests below stay in non-nullable `JsonNode` territory.
+let private jsonString (s: string) : JsonNode =
+    match JsonValue.Create s with
+    | null -> failwith "JsonValue.Create of a non-null string literal is never null"
+    | v -> v
+
 let private dataModel: JsonNode =
     JsonNode.Parse(
         """
@@ -90,4 +97,34 @@ let dynStringTests =
 
         testCase "JsonPointer.tryResolve on a missing path returns None" <| fun _ ->
             Expect.equal (JsonPointer.tryResolve dataModel "/missing") None "a missing property is None, not an exception"
+
+        testCase "JsonPointer.trySet on an existing top-level path replaces the value" <| fun _ ->
+            let model = JsonNode.Parse("""{ "title": "old" }""") |> Option.ofObj |> Option.get
+            JsonPointer.trySet model "/title" (Some(jsonString "new")) |> ignore
+            Expect.equal (DynString.resolve model (Bound "/title")) "new" "the leaf value is replaced"
+
+        testCase "JsonPointer.trySet on a missing top-level path adds it" <| fun _ ->
+            let model = JsonNode.Parse("""{}""") |> Option.ofObj |> Option.get
+            JsonPointer.trySet model "/title" (Some(jsonString "new")) |> ignore
+            Expect.equal (DynString.resolve model (Bound "/title")) "new" "a new top-level key is set"
+
+        testCase "JsonPointer.trySet on a nested path replaces the value" <| fun _ ->
+            let model = JsonNode.Parse("""{ "nested": { "user": { "name": "Ada" } } }""") |> Option.ofObj |> Option.get
+            JsonPointer.trySet model "/nested/user/name" (Some(jsonString "Grace")) |> ignore
+            Expect.equal (DynString.resolve model (Bound "/nested/user/name")) "Grace" "a nested leaf value is replaced"
+
+        testCase "JsonPointer.trySet with value=None removes the leaf" <| fun _ ->
+            let model = JsonNode.Parse("""{ "title": "old" }""") |> Option.ofObj |> Option.get
+            JsonPointer.trySet model "/title" None |> ignore
+            Expect.equal (JsonPointer.tryResolve model "/title") None "the leaf no longer resolves"
+
+        testCase "JsonPointer.trySet whose parent doesn't resolve to an object leaves the document unchanged" <| fun _ ->
+            let model = JsonNode.Parse("""{ "title": "old" }""") |> Option.ofObj |> Option.get
+            let unchanged = JsonPointer.trySet model "/missing/deeper" (Some(jsonString "x"))
+            Expect.equal (DynString.resolve unchanged (Bound "/title")) "old" "the document is untouched when the parent doesn't resolve"
+
+        testCase "JsonPointer.trySet on the root pointer leaves the document unchanged" <| fun _ ->
+            let model = JsonNode.Parse("""{ "title": "old" }""") |> Option.ofObj |> Option.get
+            let unchanged = JsonPointer.trySet model "" (Some(jsonString "x"))
+            Expect.equal (DynString.resolve unchanged (Bound "/title")) "old" "there is no parent to mutate for the root pointer"
     ]

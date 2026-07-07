@@ -34,6 +34,7 @@
     <Compile Include="LifecycleTests.fs" />
     <Compile Include="SendKeyboardPlanExpirySingleUseTests.fs" />
     <Compile Include="BindingEvictionSweepWiringTests.fs" />
+    <Compile Include="A2uiRenderTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -58,6 +59,7 @@
     <ProjectReference Include="..\..\src\TgLLM.CSharp\TgLLM.CSharp.csproj" />
     <ProjectReference Include="..\..\src\TgLLM.Persistence\TgLLM.Persistence.fsproj" />
     <ProjectReference Include="..\..\src\TgLLM.Persistence.LiteDb\TgLLM.Persistence.LiteDb.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.A2UI\TgLLM.A2UI.fsproj" />
   </ItemGroup>
 
 </Project>

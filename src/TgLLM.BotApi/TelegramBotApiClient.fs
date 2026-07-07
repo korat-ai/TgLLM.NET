@@ -46,6 +46,18 @@ module Mapping =
     /// assembly via reflection (Principle V) — `InlineKeyboardButton.WithWebApp(string, WebAppInfo)`
     /// and `InlineKeyboardButton.WithCopyText(string, CopyTextButton)` are its only two factories
     /// for these button kinds.
+    /// `TgLLM.Core.ParseMode option` -> Telegram.Bot's own `ParseMode` enum (verified against the
+    /// installed Telegram.Bot 22.10.1 assembly, Principle V): `None` (no formatting requested)
+    /// maps to `Telegram.Bot.Types.Enums.ParseMode.None`, the exact value `sendMessage`'s
+    /// `parseMode` parameter already defaults to when a call site omits it entirely — so routing
+    /// every send through this mapping, even for the "no parse mode" case, changes nothing on the
+    /// wire.
+    let toTelegramParseMode (mode: TgLLM.Core.ParseMode option) : Telegram.Bot.Types.Enums.ParseMode =
+        match mode with
+        | None -> Telegram.Bot.Types.Enums.ParseMode.None
+        | Some TgLLM.Core.ParseMode.MarkdownV2 -> Telegram.Bot.Types.Enums.ParseMode.MarkdownV2
+        | Some TgLLM.Core.ParseMode.Html -> Telegram.Bot.Types.Enums.ParseMode.Html
+
     let toInlineKeyboardMarkup (RegisteredKeyboard rows) : InlineKeyboardMarkup =
         rows
         |> List.map (fun row ->
@@ -185,6 +197,47 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
                     client.SendMessage(
                         chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
                         text = MessageText.value text,
+                        replyMarkup = (markup :> ReplyMarkup),
+                        cancellationToken = ct
+                    )
+
+                return UMX.tag<messageId> (int64 message.MessageId)
+            }
+
+        /// Parse-mode overload: identical to the plain `SendText` above except it also passes
+        /// `parseMode` through to `sendMessage` (`Mapping.toTelegramParseMode`) — the A2UI renderer
+        /// requests `MarkdownV2` here; every other call site keeps using the overload above.
+        member _.SendText(chat: ChatId, text: MessageText, parseMode: TgLLM.Core.ParseMode option, ct: CancellationToken) : Task<MessageId> =
+            task {
+                let! message =
+                    client.SendMessage(
+                        chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                        text = MessageText.value text,
+                        parseMode = Mapping.toTelegramParseMode parseMode,
+                        cancellationToken = ct
+                    )
+
+                return UMX.tag<messageId> (int64 message.MessageId)
+            }
+
+        /// Parse-mode overload: identical to the plain `SendKeyboard` above except it also passes
+        /// `parseMode` through to `sendMessage`.
+        member _.SendKeyboard
+            (
+                chat: ChatId,
+                text: MessageText,
+                keyboard: RegisteredKeyboard,
+                parseMode: TgLLM.Core.ParseMode option,
+                ct: CancellationToken
+            ) : Task<MessageId> =
+            task {
+                let markup = Mapping.toInlineKeyboardMarkup keyboard
+
+                let! message =
+                    client.SendMessage(
+                        chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                        text = MessageText.value text,
+                        parseMode = Mapping.toTelegramParseMode parseMode,
                         replyMarkup = (markup :> ReplyMarkup),
                         cancellationToken = ct
                     )
