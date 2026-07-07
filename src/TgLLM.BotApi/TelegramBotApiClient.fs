@@ -37,7 +37,7 @@ module Mapping =
     /// `RegisteredKeyboard` -> Telegram.Bot's `InlineKeyboardMarkup`: one `InlineKeyboardButton`
     /// per registered button. `Callback` buttons get `callback_data` set to the button's opaque
     /// `CallbackToken` (never the label or any agent state); `Url` buttons get a plain client-side
-    /// link; `WebApp`/`CopyText` (US3) map to their own Telegram.Bot factories — `url`/
+    /// link; `WebApp`/`CopyText` map to their own Telegram.Bot factories — `url`/
     /// `callback_data`/`web_app`/`copy_text` are all mutually exclusive on one button, so each of
     /// these four cases maps to its own distinct Telegram.Bot factory method, never more than one.
     ///

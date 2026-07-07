@@ -1,5 +1,5 @@
-/// Tests for `ProcessedQueryTracker.TryBegin` — the at-most-once redelivery dedup guard (research
-/// D6): the FIRST time a `callback_query.id` is seen, processing may proceed (true); any REPEAT
+/// Tests for `ProcessedQueryTracker.TryBegin` — the at-most-once redelivery dedup guard:
+/// the FIRST time a `callback_query.id` is seen, processing may proceed (true); any REPEAT
 /// within its TTL is dropped (false), so a redelivered update never invokes a tool twice. Backed
 /// by a bounded, TTL'd seen-set (an injected `Clock`, never ambient `DateTimeOffset.Now`), so a
 /// long-lived bot's memory doesn't grow forever even if ids are never naturally reused.

@@ -72,7 +72,7 @@ let botApiClientTests =
                 Expect.equal btnNo.CallbackData (CallbackToken.value tokenNo) "second button's callback_data is its token"
             | other -> failwithf "expected exactly one row of two buttons, got %A" other
 
-        testCase "Mapping.toInlineKeyboardMarkup maps WebApp/CopyText buttons to their own Telegram.Bot factories (US3)" <| fun _ ->
+        testCase "Mapping.toInlineKeyboardMarkup maps WebApp/CopyText buttons to their own Telegram.Bot factories" <| fun _ ->
             let registered =
                 RegisteredKeyboard [
                     [ WebApp(label "Open", "https://example.test/app")

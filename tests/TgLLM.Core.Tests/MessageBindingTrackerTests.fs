@@ -74,7 +74,7 @@ let messageBindingTrackerTests =
 
             Expect.equal (tracker.TryGetPrevious(chat, messageId)) (Some secondTokens) "the latest Record wins for the same key"
 
-        // Eviction seam (research D7(b)): a long-lived bot must not grow this tracker's index
+        // Eviction seam: a long-lived bot must not grow this tracker's index
         // unbounded (one entry per DISTINCT (chat, messageId) forever). `capacity` bounds it; once
         // exceeded, the OLDEST-recorded distinct key is dropped first (FIFO by first sight).
         testCase "recording within capacity keeps every distinct (chat, messageId) entry" <| fun _ ->

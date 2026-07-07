@@ -190,7 +190,7 @@ type TgBot
     /// (`UpdateProcessor.makeEditKeyboardAction`) can find and remove them. `staleMessageId = None`
     /// here: a fresh send has no previous binding to remove.
     ///
-    /// `owner` (US1) scopes every tool button on this keyboard to that presser; omitted (or
+    /// `owner` scopes every tool button on this keyboard to that presser; omitted (or
     /// `Owner.anyone`) preserves slice-2 behavior — any presser resolves the button, unchanged.
     /// `deniedNotice` overrides the notice a refused non-owner sees; omitted uses the built-in
     /// default (`OwnerScope.DefaultDeniedNotice`).

@@ -1,4 +1,4 @@
-/// Tests for `FileBindingStore.EvictExpired` (US4, research D5/D7 — the eviction seam extended to
+/// Tests for `FileBindingStore.EvictExpired` (the eviction seam extended to
 /// the durable file store): sweeps the in-memory index for bindings whose `ExpiresAt` has passed,
 /// removes them, persists the result, and returns the count. Same in-process contract as
 /// `InMemoryBindingStore.EvictExpired` (`BindingStoreEvictionTests.fs` in `TgLLM.Core.Tests`) —

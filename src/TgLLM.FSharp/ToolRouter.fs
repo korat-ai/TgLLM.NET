@@ -111,7 +111,7 @@ type ToolRegistry private (registry: IToolRegistry) =
 
     static member create() : ToolRegistry = ToolRegistry(InMemoryToolRegistry() :> IToolRegistry)
 
-/// Idiomatic F# constructors for `TgLLM.Core.OwnerScope` (US1) — passed to
+/// Idiomatic F# constructors for `TgLLM.Core.OwnerScope` — passed to
 /// `TgBot.SendKeyboardPlan`'s `?owner` parameter. `OwnerScope` itself is a plain Core DU (fine to
 /// use directly), so this module is a small naming convenience, not a wrapper type.
 module Owner =

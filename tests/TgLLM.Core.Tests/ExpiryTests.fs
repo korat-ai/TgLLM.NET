@@ -1,7 +1,7 @@
-/// Tests for the expiry decision (research D5): `Expiry.isLive` is a pure function of `now` and an
+/// Tests for the expiry decision: `Expiry.isLive` is a pure function of `now` and an
 /// optional expiry instant — no ambient `DateTimeOffset.Now` anywhere in Core; "now" is always fed
-/// in by the caller (the future resolve/dispatch step injects it via `Clock`, US4, out of scope
-/// here). `None` (no expiry) always lives; `Some exp` lives strictly BEFORE `exp` and is refused AT
+/// in by the caller (the future resolve/dispatch step injects it via `Clock`).
+/// `None` (no expiry) always lives; `Some exp` lives strictly BEFORE `exp` and is refused AT
 /// and after `exp` — the boundary instant itself already counts as expired, not live (a deliberate
 /// choice, not left implicit: "expires at 5:00" reads as "no longer valid from 5:00 onward").
 module TgLLM.Core.Tests.ExpiryTests

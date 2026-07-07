@@ -1,4 +1,4 @@
-/// Tests for `UpdateProcessor`'s owner check (US1): after a tool press resolves to a bound tool,
+/// Tests for `UpdateProcessor`'s owner check: after a tool press resolves to a bound tool,
 /// but BEFORE that tool is ever enqueued, the presser is compared to the binding's `Owner`. A
 /// non-owner press is refused — acked with a notice, no tool runs, the observer hears about it; the
 /// owner's own press (and any press on an `Anyone`-scoped binding) runs the tool normally.

@@ -289,7 +289,7 @@ type UpdateProcessor
                 ()
         }
 
-    /// The owner check (US1) for an owner-scoped tool button, run AFTER resolution but BEFORE the
+    /// The owner check for an owner-scoped tool button, run AFTER resolution but BEFORE the
     /// tool is ever enqueued: refuses a press whose user doesn't match `binding.Owner`
     /// (`OwnerScope.isAllowed`) with a notice — the binding's own `DeniedNotice` override if the
     /// host set one at send time, else the built-in `OwnerScope.DefaultDeniedNotice` — and reports
@@ -366,7 +366,7 @@ type UpdateProcessor
 
                 match PressResolution.ackPolicy resolution, resolution with
                 | Deferred, ToolResolution(tool, binding, dispatch) ->
-                    // Owner check (US1) — AFTER resolution, BEFORE the tool is ever enqueued: a
+                    // Owner check — AFTER resolution, BEFORE the tool is ever enqueued: a
                     // non-owner (or unidentifiable) presser is refused here and never reaches
                     // `startDeferredAck`/`buildToolWork` at all.
                     if OwnerScope.isAllowed binding.Owner (Some press.User.Id) then

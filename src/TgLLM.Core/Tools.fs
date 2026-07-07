@@ -26,12 +26,12 @@ open System.Threading.Tasks
 type ToolError =
     | EmptyToolName
     | UnknownTool of name: string
-    /// Also covers a `WebAppButton` whose url is missing/non-https (US3, research D4) — same class
+    /// Also covers a `WebAppButton` whose url is missing/non-https — same class
     /// of problem (a bad url), so it reuses this case rather than growing a near-duplicate one.
     | InvalidUrl of value: string
     | InvalidKeyboard of KeyboardError
     /// A `CopyTextButton` whose text is outside the Bot API's 1..256-character `copy_text` limit
-    /// (US3, research D4, vendor-verified against core.telegram.org).
+    /// (vendor-verified against core.telegram.org).
     | InvalidCopyText of text: string
 
 /// The name a tool is registered and referenced under. Single-case, smart-constructed like
@@ -49,10 +49,10 @@ module ToolName =
 
     let value (ToolName s) : string = s
 
-/// Who may press a tool (callback) button (US1, research D1). `Anyone` (the default, unset) keeps
+/// Who may press a tool (callback) button. `Anyone` (the default, unset) keeps
 /// slice-1/2 behavior: any presser resolves the button. `User uid` restricts tool presses to that
 /// exact user — enforced ONLY on tool buttons (client-side `UrlButton`/`WebAppButton`/
-/// `CopyTextButton` carry no scope at all, research D4). `[<Struct>]` like `ButtonLabel`/`ToolName`:
+/// `CopyTextButton` carry no scope at all). `[<Struct>]` like `ButtonLabel`/`ToolName`:
 /// a small, frequently-compared value.
 [<Struct>]
 type OwnerScope =
@@ -80,12 +80,12 @@ module OwnerScope =
 
 /// "Now", injected rather than read ambiently — the expiry decision (`Expiry.isLive`) and
 /// `ProcessedQueryTracker`'s TTL bookkeeping both take one of these instead of ever calling
-/// `DateTimeOffset.Now`/`UtcNow` themselves, so Core stays deterministic and property-testable
-/// (research D5). The façade/host supplies the real clock (`fun () -> DateTimeOffset.UtcNow`) when
-/// wiring the resolve/dispatch step (US4, out of scope here).
+/// `DateTimeOffset.Now`/`UtcNow` themselves, so Core stays deterministic and property-testable.
+/// The façade/host supplies the real clock (`fun () -> DateTimeOffset.UtcNow`) when
+/// wiring the resolve/dispatch step.
 type Clock = unit -> DateTimeOffset
 
-/// The pure expiry decision for a `ToolBinding.ExpiresAt` (US4, research D5).
+/// The pure expiry decision for a `ToolBinding.ExpiresAt`.
 module Expiry =
 
     /// `None` (no expiry set) always lives. `Some expiresAt` lives strictly BEFORE `expiresAt` and
@@ -107,9 +107,9 @@ type Tool = PressContext -> Task
 /// `ToolBinding` can be serialized and persisted — hence it derives structural
 /// equality/comparison (useful for tests and durable-store round-trip checks), unlike
 /// `HookBinding`/`RouteDecision`, which hold function values and can't.
-/// Evolved additively once for US1/US2/US4 (research D1/D5/D6): `Owner`/`ExpiresAt`/`SingleUse`
+/// Evolved additively: `Owner`/`ExpiresAt`/`SingleUse`
 /// are NEW fields, on top of slice-2's exact `{ Token; ToolName; Arg }` shape. `Arg` stays `string
-/// option` — an opaque, possibly-JSON payload (research D3) — Core never depends on
+/// option` — an opaque, possibly-JSON payload — Core never depends on
 /// System.Text.Json. `DeniedNotice` is a further additive field (not part of that original
 /// three-field evolution): the per-keyboard override of the notice a non-owner sees on refusal —
 /// stored alongside `Owner` for the same reason `Owner` itself is stored on the binding rather
@@ -121,14 +121,14 @@ type ToolBinding =
     { Token: CallbackToken
       ToolName: ToolName
       Arg: string option
-      /// NEW — who may press this binding's button (US1). Defaults to `Anyone`.
+      /// NEW — who may press this binding's button. Defaults to `Anyone`.
       Owner: OwnerScope
-      /// NEW — when this binding stops resolving (US4). Defaults to `None` (never expires).
+      /// NEW — when this binding stops resolving. Defaults to `None` (never expires).
       ExpiresAt: DateTimeOffset option
-      /// NEW — whether the first successful press consumes this binding (US4, confirm-once mode,
-      /// research D6). Defaults to `false`.
+      /// NEW — whether the first successful press consumes this binding (confirm-once mode).
+      /// Defaults to `false`.
       SingleUse: bool
-      /// NEW (US1) — this keyboard's own override of the notice shown to a refused (non-owner)
+      /// NEW — this keyboard's own override of the notice shown to a refused (non-owner)
       /// presser. `None` uses `OwnerScope.DefaultDeniedNotice` at refusal time.
       DeniedNotice: string option }
 
@@ -160,9 +160,9 @@ module ToolPlan =
     type private ValidatedButton =
         | ValidTool of label: ButtonLabel * toolName: ToolName * arg: string option
         | ValidUrl of label: ButtonLabel * url: string
-        /// US3 (research D4): a validated `WebAppButton` — `url` has already been confirmed https.
+        /// A validated `WebAppButton` — `url` has already been confirmed https.
         | ValidWebApp of label: ButtonLabel * url: string
-        /// US3 (research D4): a validated `CopyTextButton` — `text` has already been confirmed
+        /// A validated `CopyTextButton` — `text` has already been confirmed
         /// 1..256 characters.
         | ValidCopyText of label: ButtonLabel * text: string
 
@@ -480,7 +480,7 @@ type MessageBindingTracker(?capacity: int) =
         | true, tokens -> Some tokens
         | false, _ -> None
 
-/// At-most-once redelivery dedup (US4, research D6): a bounded, TTL'd set of recently-processed
+/// At-most-once redelivery dedup: a bounded, TTL'd set of recently-processed
 /// `callback_query.id`s. `TryBegin` is `true` the FIRST time an id is seen — safe to process — and
 /// `false` on any repeat within the TTL (Telegram, and this library's own webhook transport under
 /// retry, can redeliver an update; a repeat resolves as "already done", never a second tool

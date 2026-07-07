@@ -1,4 +1,4 @@
-/// Tests for `ToolBinding`'s additive evolution (US1/US2/US4 foundation): `Owner`/`ExpiresAt`/
+/// Tests for `ToolBinding`'s additive evolution: `Owner`/`ExpiresAt`/
 /// `SingleUse` are new fields, defaulting to `Anyone`/`None`/`false` — the exact slice-2 shape, so
 /// every already-green slice-2 binding is unaffected. `ToolBinding.create` is the
 /// one-stop constructor for the common (token, toolName, arg) case that fills in those defaults —

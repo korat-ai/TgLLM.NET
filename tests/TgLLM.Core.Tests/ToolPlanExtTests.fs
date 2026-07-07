@@ -1,5 +1,5 @@
 /// FsCheck property tests for the extended `ToolPlan.plan`/`validate`: `WebAppButton`/
-/// `CopyTextButton` (US3 foundation) plus the review's property gaps folded into this slice
+/// `CopyTextButton` plus the review's property gaps folded into this slice
 /// (duplicate input-token consumption, `validate` Ok ⇒ `plan` Ok, url/webapp/copytext
 /// passthrough). `ToolPlanTests.fs` already covers `ToolButton`/`UrlButton`'s own shape/token/
 /// binding invariants in isolation — this file is additive, not a re-run of those.

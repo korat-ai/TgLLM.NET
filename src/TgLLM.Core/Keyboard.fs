@@ -22,9 +22,9 @@ type KeyboardSpec = private KeyboardSpec of (ButtonLabel * Hook) list list
 type RegisteredButton =
     | Callback of label: ButtonLabel * token: CallbackToken
     | Url of label: ButtonLabel * url: string
-    /// Wire-facing counterpart of `WebAppButton` (US3) — client-side, carries no `CallbackToken`.
+    /// Wire-facing counterpart of `WebAppButton` — client-side, carries no `CallbackToken`.
     | WebApp of label: ButtonLabel * url: string
-    /// Wire-facing counterpart of `CopyTextButton` (US3) — client-side, carries no `CallbackToken`.
+    /// Wire-facing counterpart of `CopyTextButton` — client-side, carries no `CallbackToken`.
     | CopyText of label: ButtonLabel * text: string
 
 /// The wire-facing keyboard shape; the transport layer maps this to Telegram.Bot's

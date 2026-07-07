@@ -27,7 +27,7 @@ open TgLLM.Core
 /// module has no public functions/types besides `FileBindingStore` itself, so `BindingDto` is
 /// unreachable from outside this assembly in practice despite the accessibility modifier.
 ///
-/// `OwnerUserId`/`DeniedNotice` (US1) round-trip `ToolBinding.Owner`/`DeniedNotice`: `null` ⇒
+/// `OwnerUserId`/`DeniedNotice` round-trip `ToolBinding.Owner`/`DeniedNotice`: `null` ⇒
 /// `Anyone`/no override; a non-null `OwnerUserId` ⇒ `User uid`. `ExpiresAt`/`SingleUse` round-
 /// trip the same way: a row written before either field existed on this shape deserializes
 /// `ExpiresAt` as `null` and `SingleUse` as its type default (`false`, since `System.Text.Json`

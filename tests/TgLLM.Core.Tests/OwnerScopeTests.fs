@@ -1,7 +1,7 @@
-/// Tests for `OwnerScope` (US1 foundation) and its pure "is this presser allowed?" decision:
+/// Tests for `OwnerScope` and its pure "is this presser allowed?" decision:
 /// `Anyone` always allows; `User uid` allows only that exact user and refuses every other
 /// (including a missing/anonymous presser). Enforcement of this decision at resolve/dispatch time
-/// is US1 (out of scope here) — this file covers only the pure kernel function.
+/// is out of scope here — this file covers only the pure kernel function.
 module TgLLM.Core.Tests.OwnerScopeTests
 
 open Expecto
