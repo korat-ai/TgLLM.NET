@@ -151,9 +151,29 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// <param name="chatId">The target chat.</param>
     /// <param name="text">The message text sent alongside the keyboard.</param>
     /// <param name="plan">The neutral Tool Router keyboard plan.</param>
+    /// <param name="owner">
+    /// Scopes every tool button on this keyboard to that presser (see <see cref="Owner"/>);
+    /// <c>null</c> (the default) means <see cref="Owner.Anyone"/> — any presser resolves the
+    /// button, unchanged behavior.
+    /// </param>
+    /// <param name="deniedNotice">
+    /// Overrides the notice a refused non-owner presser sees; <c>null</c> (the default) uses the
+    /// library's built-in notice.
+    /// </param>
     /// <param name="ct">Same semantics as <see cref="SendKeyboardAsync"/>'s <c>ct</c>.</param>
-    public Task<long> SendKeyboardPlanAsync(long chatId, string text, KeyboardPlan plan, CancellationToken ct = default) =>
-        _bot.SendKeyboardPlan(chatId, text, plan.Plan).WaitAsync(ct);
+    public Task<long> SendKeyboardPlanAsync(
+        long chatId,
+        string text,
+        KeyboardPlan plan,
+        TgLLM.Core.OwnerScope? owner = null,
+        string? deniedNotice = null,
+        CancellationToken ct = default) =>
+        // `deniedNotice` reaches the F# optional parameter through its generated
+        // `string -> FSharpOption<string>` implicit conversion, which itself maps a `null` argument
+        // to `None` (the same "no override" the F# façade's own callers get by omitting the
+        // argument) — the `!` here silences a nullable-reference-type false positive on that
+        // conversion, not an actual null-safety gap.
+        _bot.SendKeyboardPlan(chatId, text, plan.Plan, owner ?? Owner.Anyone, deniedNotice!).WaitAsync(ct);
 
     /// <summary>
     /// Send a plain text message to a chat; returns the sent message id.

@@ -9,6 +9,7 @@
 namespace TgLLM.FSharp
 
 open System.Threading.Tasks
+open FSharp.UMX
 open TgLLM.Core
 
 /// A fluent, mutable tool registry: wraps a plain `TgLLM.Core.IToolRegistry` so F# consumers can
@@ -33,6 +34,18 @@ type ToolRegistry private (registry: IToolRegistry) =
         | Error e -> invalidArg (nameof name) $"ToolRegistry.Register: invalid tool name ({e})"
 
     static member create() : ToolRegistry = ToolRegistry(InMemoryToolRegistry() :> IToolRegistry)
+
+/// Idiomatic F# constructors for `TgLLM.Core.OwnerScope` (US1) — passed to
+/// `TgBot.SendKeyboardPlan`'s `?owner` parameter. `OwnerScope` itself is a plain Core DU (fine to
+/// use directly), so this module is a small naming convenience, not a wrapper type.
+module Owner =
+
+    /// Any presser in the chat may tap the keyboard's tool buttons — slice-2 behavior, unchanged.
+    let anyone: OwnerScope = Anyone
+
+    /// Only this Telegram user may tap the keyboard's tool buttons; every other (or unidentifiable)
+    /// presser is refused with a notice.
+    let user (id: int64) : OwnerScope = User(UMX.tag<userId> id)
 
 /// Turns an LLM's button/tool/arg decision into the neutral `ToolKeyboard` plan. The library
 /// ships no vendor LLM parsers — the host maps its own LLM output into calls to

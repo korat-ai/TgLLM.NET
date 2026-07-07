@@ -8,6 +8,7 @@ open System
 open System.IO
 open System.Threading
 open Expecto
+open FSharp.UMX
 open TgLLM.Core
 open TgLLM.Persistence
 
@@ -153,6 +154,68 @@ let fileBindingStoreTests =
                     ((reopened.TryGet(tokenB, CancellationToken.None)).GetAwaiter().GetResult())
                     (ValueSome bindingB)
                     "the second binding of the batch persisted"
+            finally
+                File.Delete path
+
+        testCase "a saved owner-scoped (User) binding reloads with its Owner intact after a reopen (restart)" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                let token = CallbackToken.generate ()
+                let owner = User(UMX.tag<userId> 777L)
+                let binding = { ToolBinding.create token (toolName "approve") None with Owner = owner }
+
+                let firstInstance = FileBindingStore.openAt path :> IBindingStore
+                (firstInstance.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
+
+                // Simulate a restart: nothing but the file on disk connects the two instances.
+                let secondInstance = FileBindingStore.openAt path :> IBindingStore
+                let result = (secondInstance.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal
+                    result
+                    (ValueSome binding)
+                    "the owner scope (not just the rest of the binding) survives a restart through the file store"
+            finally
+                File.Delete path
+
+        testCase "a binding with no owner override still reloads as Anyone after a reopen (backward compat)" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                let token = CallbackToken.generate ()
+                let binding = ToolBinding.create token (toolName "approve") None
+
+                let firstInstance = FileBindingStore.openAt path :> IBindingStore
+                (firstInstance.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
+
+                let secondInstance = FileBindingStore.openAt path :> IBindingStore
+                let result = (secondInstance.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                match result with
+                | ValueSome reloaded -> Expect.equal reloaded.Owner Anyone "an unscoped binding still reloads as Anyone"
+                | ValueNone -> failwith "expected the binding to reload"
+            finally
+                File.Delete path
+
+        testCase "a saved custom DeniedNotice reloads intact after a reopen (restart)" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                let token = CallbackToken.generate ()
+
+                let binding =
+                    { ToolBinding.create token (toolName "approve") None with
+                        Owner = User(UMX.tag<userId> 42L)
+                        DeniedNotice = Some "Ask Alice instead." }
+
+                let firstInstance = FileBindingStore.openAt path :> IBindingStore
+                (firstInstance.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
+
+                let secondInstance = FileBindingStore.openAt path :> IBindingStore
+                let result = (secondInstance.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal result (ValueSome binding) "the custom notice override survives a restart alongside the owner scope"
             finally
                 File.Delete path
     ]

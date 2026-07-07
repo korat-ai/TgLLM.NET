@@ -158,12 +158,19 @@ type TgBot
     /// (`UpdateProcessor.makeEditKeyboardAction`) can find and remove them. `staleMessageId = None`
     /// here: a fresh send has no previous binding to remove.
     ///
+    /// `owner` (US1) scopes every tool button on this keyboard to that presser; omitted (or
+    /// `Owner.anyone`) preserves slice-2 behavior — any presser resolves the button, unchanged.
+    /// `deniedNotice` overrides the notice a refused non-owner sees; omitted uses the built-in
+    /// default (`OwnerScope.DefaultDeniedNotice`).
+    ///
     /// Fails fast if `plan` has a tool button but NO Tool Router was ever wired in
     /// (`TgBotConfig.WithTools`/`TgWebhookConfig.WithTools`) — without this
     /// check, such a button would reach the wire, get tapped, and silently no-op forever (no
     /// `ToolDispatch` could ever resolve its binding). A URL-only plan is always fine, regardless of
     /// wiring.
-    member _.SendKeyboardPlan(chat: ChatId, text: MessageText, plan: ToolKeyboard) : Task<MessageId> =
+    member _.SendKeyboardPlan
+        (chat: ChatId, text: MessageText, plan: ToolKeyboard, ?owner: OwnerScope, ?deniedNotice: string)
+        : Task<MessageId> =
         if toolDispatch.IsNone && ToolPlan.hasToolButtons plan then
             invalidOp
                 "TgBot.SendKeyboardPlan: this plan has a tool button, but no Tool Router is wired in \
@@ -178,13 +185,17 @@ type TgBot
             tracker
             chat
             None
+            (defaultArg owner Anyone)
+            deniedNotice
             (fun registeredKeyboard -> api.SendKeyboard(chat, text, registeredKeyboard, cts.Token))
             cts.Token
             plan
 
     /// C#-friendly overload that accepts a raw string (validated with `MessageText.unsafe`).
-    member this.SendKeyboardPlan(chat: ChatId, text: string, plan: ToolKeyboard) : Task<MessageId> =
-        this.SendKeyboardPlan(chat, MessageText.unsafe text, plan)
+    member this.SendKeyboardPlan
+        (chat: ChatId, text: string, plan: ToolKeyboard, ?owner: OwnerScope, ?deniedNotice: string)
+        : Task<MessageId> =
+        this.SendKeyboardPlan(chat, MessageText.unsafe text, plan, ?owner = owner, ?deniedNotice = deniedNotice)
 
     /// C#-friendly overloads that accept a raw string (validated with `MessageText.unsafe`), so the
     /// C# façade never touches the F# `MessageText` type.

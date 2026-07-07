@@ -72,6 +72,12 @@ module OwnerScope =
         | User uid, Some pressingUser -> uid = pressingUser
         | User _, None -> false
 
+    /// The built-in English notice a refused presser sees when the keyboard's own send-time
+    /// notice override (`ToolBinding.DeniedNotice`) was left unset. Overridable per keyboard —
+    /// see `ToolKeyboardOps.deliver`'s `deniedNotice` parameter — this is only the fallback.
+    [<Literal>]
+    let DefaultDeniedNotice = "This button isn't for you."
+
 /// "Now", injected rather than read ambiently — the expiry decision (`Expiry.isLive`) and
 /// `ProcessedQueryTracker`'s TTL bookkeeping both take one of these instead of ever calling
 /// `DateTimeOffset.Now`/`UtcNow` themselves, so Core stays deterministic and property-testable
@@ -104,7 +110,13 @@ type Tool = PressContext -> Task
 /// Evolved additively once for US1/US2/US4 (research D1/D5/D6): `Owner`/`ExpiresAt`/`SingleUse`
 /// are NEW fields, on top of slice-2's exact `{ Token; ToolName; Arg }` shape. `Arg` stays `string
 /// option` — an opaque, possibly-JSON payload (research D3) — Core never depends on
-/// System.Text.Json.
+/// System.Text.Json. `DeniedNotice` is a further additive field (not part of that original
+/// three-field evolution): the per-keyboard override of the notice a non-owner sees on refusal —
+/// stored alongside `Owner` for the same reason `Owner` itself is stored on the binding rather
+/// than kept only in the sending process's memory: a host-configured notice must still be shown
+/// after a restart, when nothing but the durable store connects the press to the keyboard that
+/// produced it. `None` means "no override" — the refusal path falls back to
+/// `OwnerScope.DefaultDeniedNotice`, so this field costs nothing for a keyboard that never sets it.
 type ToolBinding =
     { Token: CallbackToken
       ToolName: ToolName
@@ -115,13 +127,16 @@ type ToolBinding =
       ExpiresAt: DateTimeOffset option
       /// NEW — whether the first successful press consumes this binding (US4, confirm-once mode,
       /// research D6). Defaults to `false`.
-      SingleUse: bool }
+      SingleUse: bool
+      /// NEW (US1) — this keyboard's own override of the notice shown to a refused (non-owner)
+      /// presser. `None` uses `OwnerScope.DefaultDeniedNotice` at refusal time.
+      DeniedNotice: string option }
 
 module ToolBinding =
 
     /// The slice-2-shaped constructor: `token`/`toolName`/`arg` are the only fields a caller not
-    /// yet using owner-scoping/expiry/single-use needs to supply — `Owner`/`ExpiresAt`/`SingleUse`
-    /// are filled with their defaults (`Anyone`/`None`/`false`), so a binding built this way is
+    /// yet using owner-scoping/expiry/single-use/notice needs to supply — every new field is
+    /// filled with its default (`Anyone`/`None`/`false`/`None`), so a binding built this way is
     /// indistinguishable from a slice-2 binding that never had those fields at all.
     let create (token: CallbackToken) (toolName: ToolName) (arg: string option) : ToolBinding =
         { Token = token
@@ -129,7 +144,8 @@ module ToolBinding =
           Arg = arg
           Owner = Anyone
           ExpiresAt = None
-          SingleUse = false }
+          SingleUse = false
+          DeniedNotice = None }
 
 /// The pure kernel of the Tool Router (an FsCheck property-test target). Mirrors slice-1's
 /// `Keyboard.create` -> `KeyboardPlan.assign` split, but combined into one function: unlike
@@ -528,6 +544,15 @@ module ToolKeyboardOps =
     /// `MessageBindingTracker`'s own "reflects past sends only" contract. An invalid `plan` is a
     /// programmer error by the caller (Always-Rule 6) — fails fast (`invalidArg`, tagged with
     /// `context` for a useful message) rather than threading a `Result` through this API.
+    ///
+    /// `owner`/`deniedNotice` (US1) apply uniformly to EVERY tool binding this one call produces —
+    /// a keyboard has ONE owner scope, shared by all its tool buttons, not a per-button setting
+    /// (`ToolPlan.plan` itself stays owner-agnostic, defaulting every binding to `Anyone`/`None`;
+    /// this is a deliberate post-processing step here rather than a `ToolPlan.plan` parameter, so
+    /// `plan`'s own signature — and every already-green call site, including the FsCheck property
+    /// suites — stays untouched). `TgBot.SendKeyboardPlan` passes the host's chosen scope;
+    /// `UpdateProcessor`'s edit-in-place wiring (`ctx.EditKeyboardAsync`) passes `Anyone`/`None`,
+    /// since a tool's own replacement keyboard isn't scoped in this slice.
     let deliver
         (context: string)
         (tokenGen: unit -> CallbackToken)
@@ -535,6 +560,8 @@ module ToolKeyboardOps =
         (tracker: MessageBindingTracker)
         (chat: ChatId)
         (staleMessageId: MessageId option)
+        (owner: OwnerScope)
+        (deniedNotice: string option)
         (send: RegisteredKeyboard -> Task<MessageId>)
         (ct: CancellationToken)
         (plan: ToolKeyboard)
@@ -542,7 +569,8 @@ module ToolKeyboardOps =
         task {
             match ToolPlan.plan (Seq.initInfinite (fun _ -> tokenGen ())) plan with
             | Error e -> return invalidArg (nameof plan) $"{context}: invalid plan ({e})"
-            | Ok(registeredKeyboard, bindings) ->
+            | Ok(registeredKeyboard, unscopedBindings) ->
+                let bindings = unscopedBindings |> List.map (fun b -> { b with Owner = owner; DeniedNotice = deniedNotice })
                 do! store.Save(bindings, ct)
 
                 let! messageId =

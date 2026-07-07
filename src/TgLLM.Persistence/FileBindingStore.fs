@@ -12,6 +12,7 @@ open System.IO
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
+open FSharp.UMX
 open TgLLM.Core
 
 /// The on-disk JSON shape of one `ToolBinding`. `ToolBinding`'s own fields are library-internal
@@ -25,13 +26,33 @@ open TgLLM.Core
 /// project ships no `.fsi` signature file to hide a public type from other assemblies anyway — this
 /// module has no public functions/types besides `FileBindingStore` itself, so `BindingDto` is
 /// unreachable from outside this assembly in practice despite the accessibility modifier.
-type BindingDto = { Token: string; ToolName: string; Arg: string | null }
+///
+/// `OwnerUserId`/`DeniedNotice` (US1) round-trip `ToolBinding.Owner`/`DeniedNotice`: `null` ⇒
+/// `Anyone`/no override; a non-null `OwnerUserId` ⇒ `User uid`. A row written before this slice
+/// (no such properties in its JSON) deserializes both as `null` — `Anyone`/no override — which is
+/// exactly `ToolBinding.create`'s own default, so an old file loads unchanged. `ExpiresAt`/
+/// `SingleUse` still do NOT round-trip (accepted, documented limitation — wiring the full field
+/// through the on-disk shape is US4 scope, not this owner-persistence fix). `[<NoComparison>]`:
+/// `Nullable<int64>` doesn't satisfy F#'s auto-derived structural `comparison` constraint (it isn't
+/// needed here — this DTO is never ordered/compared, only (de)serialized).
+[<NoComparison>]
+type BindingDto =
+    { Token: string
+      ToolName: string
+      Arg: string | null
+      OwnerUserId: Nullable<int64>
+      DeniedNotice: string | null }
 
 module BindingDto =
     let ofDomain (binding: ToolBinding) : BindingDto =
         { Token = CallbackToken.value binding.Token
           ToolName = ToolName.value binding.ToolName
-          Arg = binding.Arg |> Option.toObj }
+          Arg = binding.Arg |> Option.toObj
+          OwnerUserId =
+            match binding.Owner with
+            | Anyone -> Nullable()
+            | User uid -> Nullable(UMX.untag uid)
+          DeniedNotice = binding.DeniedNotice |> Option.toObj }
 
     /// `None` for a row this store could never have written itself (a hand-edited or corrupted
     /// file) — skipped on load rather than failing the whole `openAt` call. There is no caller here
@@ -42,12 +63,16 @@ module BindingDto =
     let toDomain (dto: BindingDto) : ToolBinding option =
         match CallbackToken.tryParse dto.Token, ToolName.create dto.ToolName with
         | ValueSome token, Ok toolName ->
-            // `BindingDto` itself doesn't carry Owner/ExpiresAt/SingleUse yet (this store's on-disk
-            // shape isn't extended with the new fields yet) —
-            // every row this store has ever written is therefore slice-2-shaped, so
-            // `ToolBinding.create`'s defaults (Anyone/None/false) are exactly correct, not a
-            // temporary shortcut.
-            Some(ToolBinding.create token toolName (dto.Arg |> Option.ofObj))
+            let owner = if dto.OwnerUserId.HasValue then User(UMX.tag<userId> dto.OwnerUserId.Value) else Anyone
+
+            // `ExpiresAt`/`SingleUse` aren't in `BindingDto` yet (still US4 scope) — every row this
+            // store has ever written is slice-2/US1-shaped for those two fields, so
+            // `ToolBinding.create`'s defaults (`None`/`false`) are exactly correct, not a temporary
+            // shortcut.
+            Some
+                { ToolBinding.create token toolName (dto.Arg |> Option.ofObj) with
+                    Owner = owner
+                    DeniedNotice = dto.DeniedNotice |> Option.ofObj }
         | _ -> None
 
 /// Durable, JSON-on-disk `IBindingStore`. `openAt` is the only public constructor path (mirrors

@@ -176,7 +176,9 @@ type UpdateProcessor
     /// `PressContext.EditKeyboardAsync`'s backing closure: re-plans the replacement layout and
     /// saves/tracks its bindings via the shared `ToolKeyboardOps.deliver` (Tools.fs) — same
     /// before-the-wire ordering guarantee, and the same stale-binding cleanup, as
-    /// `TgBot.SendKeyboardPlan` uses for a fresh send.
+    /// `TgBot.SendKeyboardPlan` uses for a fresh send. Always scopes the replacement keyboard to
+    /// `Anyone`/no notice override — a tool's own re-rendered keyboard isn't owner-scoped in this
+    /// slice (only a fresh `SendKeyboardPlan` accepts an owner).
     let makeEditKeyboardAction (press: ButtonPress) (dispatch: ToolDispatch) (workCt: CancellationToken) (plan: ToolKeyboard) : Task =
         ToolKeyboardOps.deliver
             "PressContext.EditKeyboardAsync"
@@ -185,6 +187,8 @@ type UpdateProcessor
             dispatch.Tracker
             press.Chat
             (Some press.MessageId)
+            Anyone
+            None
             (fun registeredKeyboard ->
                 task {
                     do! api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
@@ -246,6 +250,23 @@ type UpdateProcessor
                 ()
         }
 
+    /// The owner check (US1) for an owner-scoped tool button, run AFTER resolution but BEFORE the
+    /// tool is ever enqueued: refuses a press whose user doesn't match `binding.Owner`
+    /// (`OwnerScope.isAllowed`) with a notice — the binding's own `DeniedNotice` override if the
+    /// host set one at send time, else the built-in `OwnerScope.DefaultDeniedNotice` — and reports
+    /// it via `IHookObserver.OnUnknownToken`, the SAME signal `processHookStorePress` already uses
+    /// for an unknown/stale press: a non-owner press is a different REASON for refusal, not a
+    /// different observable CONSEQUENCE (either way, no hook/tool ever ran, and the caller learns
+    /// "this press resolved to nothing actionable"). No tool runs, and — unlike the deferred-ack
+    /// path this replaces — the ack fires here immediately: there is no tool work to defer it
+    /// past, so this mirrors `processHookStorePress`'s own ack-first shape for the same reason.
+    let refuseNonOwnerPress (ct: CancellationToken) (press: ButtonPress) (binding: ToolBinding) : Task =
+        task {
+            let notice = binding.DeniedNotice |> Option.defaultValue OwnerScope.DefaultDeniedNotice
+            do! api.AnswerCallback(press.QueryId, Some notice, false, ct)
+            observer.OnUnknownToken(press)
+        }
+
     /// Ack-first: resolve, then `AnswerCallback` immediately regardless of outcome, THEN — only if
     /// a hook was found — enqueue it. Unknown/stale/malformed tokens are acked with no hook and no
     /// error; the observer just hears about it. This is slice-1's original `processPress` body,
@@ -292,11 +313,17 @@ type UpdateProcessor
 
             match PressResolution.ackPolicy resolution, resolution with
             | Deferred, ToolResolution(tool, binding, dispatch) ->
-                // Start the watchdog NOW (press arrival) — review #3 — not once the per-chat
-                // dispatcher eventually RUNS the enqueued work; see `startDeferredAck`'s own doc
-                // comment for why.
-                let ackState = startDeferredAck press ct
-                do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch ackState)
+                // Owner check (US1) — AFTER resolution, BEFORE the tool is ever enqueued: a
+                // non-owner (or unidentifiable) presser is refused here and never reaches
+                // `startDeferredAck`/`buildToolWork` at all.
+                if OwnerScope.isAllowed binding.Owner (Some press.User.Id) then
+                    // Start the watchdog NOW (press arrival) — not once the per-chat dispatcher
+                    // eventually RUNS the enqueued work; see `startDeferredAck`'s own doc comment
+                    // for why.
+                    let ackState = startDeferredAck press ct
+                    do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch ackState)
+                else
+                    do! refuseNonOwnerPress ct press binding
             | AckFirst, HookStoreResolution -> do! processHookStorePress ct press
             | Deferred, HookStoreResolution
             | AckFirst, ToolResolution _ ->

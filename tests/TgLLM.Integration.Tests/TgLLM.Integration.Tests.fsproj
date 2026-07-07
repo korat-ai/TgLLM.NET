@@ -18,6 +18,7 @@
     <Compile Include="EditInPlaceTests.fs" />
     <Compile Include="CrossChatBindingTests.fs" />
     <Compile Include="RestartPersistenceTests.fs" />
+    <Compile Include="OwnerAuthorizationTests.fs" />
     <Compile Include="UrlButtonTests.fs" />
     <Compile Include="WebhookTests.fs" />
     <Compile Include="BothTransportsTests.fs" />

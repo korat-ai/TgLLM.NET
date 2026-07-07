@@ -5,6 +5,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="FsCheck.Xunit.v3" />
@@ -13,6 +17,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\TgLLM.CSharp\TgLLM.CSharp.csproj" />
+    <!-- Reuses the fake Bot API server (FakeBotApiServer.fs) already proven by the F# integration
+         suite, so this project's owner-authorization acceptance test doesn't reimplement an
+         equivalent Kestrel-hosted fake from scratch. -->
+    <ProjectReference Include="..\TgLLM.Integration.Tests\TgLLM.Integration.Tests.fsproj" />
   </ItemGroup>
 
 </Project>

@@ -429,7 +429,7 @@ let toolDispatchProcessorTests =
                 task { return failwith "simulated send failure" }
 
             let deliverTask =
-                ToolKeyboardOps.deliver "test" tokenGen store tracker chat (Some staleMessageId) failingSend CancellationToken.None plan
+                ToolKeyboardOps.deliver "test" tokenGen store tracker chat (Some staleMessageId) Anyone None failingSend CancellationToken.None plan
 
             let mutable caught: exn option = None
 

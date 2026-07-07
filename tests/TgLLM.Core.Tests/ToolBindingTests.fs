@@ -18,7 +18,7 @@ let private toolName (s: string) : ToolName =
 let toolBindingTests =
     testList "ToolBinding" [
 
-        testCase "ToolBinding.create defaults Owner=Anyone, ExpiresAt=None, SingleUse=false (backward compat)" <| fun _ ->
+        testCase "ToolBinding.create defaults Owner=Anyone, ExpiresAt=None, SingleUse=false, DeniedNotice=None (backward compat)" <| fun _ ->
             let token = CallbackToken.generate ()
             let name = toolName "approve"
 
@@ -30,9 +30,10 @@ let toolBindingTests =
                   Arg = Some "42"
                   Owner = Anyone
                   ExpiresAt = None
-                  SingleUse = false }
+                  SingleUse = false
+                  DeniedNotice = None }
 
-            Expect.equal created expected "a slice-2-shaped binding (no owner/expiry/single-use) equals the fully-defaulted record"
+            Expect.equal created expected "a slice-2-shaped binding (no owner/expiry/single-use/notice) equals the fully-defaulted record"
 
         testCase "ToolBinding.create with no arg still defaults the new fields" <| fun _ ->
             let token = CallbackToken.generate ()
@@ -43,4 +44,5 @@ let toolBindingTests =
             Expect.equal created.Owner Anyone "Owner defaults to Anyone"
             Expect.equal created.ExpiresAt None "ExpiresAt defaults to None (never expires)"
             Expect.equal created.SingleUse false "SingleUse defaults to false"
+            Expect.equal created.DeniedNotice None "DeniedNotice defaults to None (built-in fallback used at refusal time)"
     ]
