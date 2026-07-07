@@ -189,7 +189,15 @@ module A2ui =
     /// have a Tool Router wired in (`TgBotConfig.WithTools`/`TgWebhookConfig.WithTools`) — without
     /// one, a rendered surface's own tool buttons would reach the wire, get tapped, and silently
     /// no-op forever, exactly the condition `TgBot.SendKeyboardPlan` itself already fails fast on for
-    /// any other tool plan.
+    /// any other tool plan. Also requires `a2ui-action` not already be registered on `bot`'s Tool
+    /// Router: `IToolRegistry.Register` is add-or-replace by design (mirrors slice-1's own
+    /// `IHookStore.Register` semantics for re-sends), which is exactly right for a HOST re-registering
+    /// its OWN tool, but wrong for a SECOND `A2ui.renderer`/`A2ui.rendererWithObserver` call on the
+    /// SAME bot — that would silently replace the first renderer's `a2ui-action` closure (which
+    /// captured the FIRST renderer's own `SurfaceRegistry`) with the second's, orphaning every surface
+    /// the first renderer ever sent: a tap on one of those surfaces would route through a registry
+    /// that has never heard of it (`SurfaceRegistry.TryGetDataModel` misses, `PressOutcome.Nothing`,
+    /// dropped without a trace — see `Action.fs`'s `A2uiActionTool.decide`).
     let private build (bot: TgBot) (sink: ActionSink) (observer: IA2uiObserver) : A2uiRenderer =
         match bot.Tools with
         | None ->
@@ -199,13 +207,21 @@ module A2ui =
                  taps — without one, every tap would silently no-op forever, since no ToolDispatch \
                  could ever resolve its binding."
         | Some tools ->
-            let registry = SurfaceRegistry(Catalog.telegramBasic)
-
             match ToolName.create ActionToolName with
             | Error e -> invalidOp $"unreachable: the literal tool name '{ActionToolName}' failed validation ({e})"
             | Ok toolName ->
-                tools.Registry.Register(toolName, A2uiActionTool.create registry sink bot.Clock observer)
-                A2uiRenderer(bot, registry, observer)
+                match tools.Registry.TryResolve toolName with
+                | ValueSome _ ->
+                    invalidOp
+                        "A2ui.renderer/A2ui.rendererWithObserver was already called for this bot — a second call \
+                         would re-register a2ui-action (IToolRegistry.Register is add-or-replace) and silently \
+                         orphan the first renderer's own SurfaceRegistry, so every tap for a surface it already \
+                         sent would route through a registry that has never heard of it. Reuse the FIRST \
+                         A2uiRenderer this bot already has instead of building a second one."
+                | ValueNone ->
+                    let registry = SurfaceRegistry(Catalog.telegramBasic)
+                    tools.Registry.Register(toolName, A2uiActionTool.create registry sink bot.Clock observer)
+                    A2uiRenderer(bot, registry, observer)
 
     /// Attaches an A2UI renderer to `bot`, reporting every surfaced condition through `bot`'s own
     /// logger if it has one (`defaultObserver`), or silently if it doesn't. Use

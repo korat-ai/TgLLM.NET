@@ -194,4 +194,21 @@ let a2uiRenderTests =
                 }
                 |> Async.AwaitTask
         }
+
+        testCaseAsync "attaching a SECOND A2UI renderer to the SAME bot fails fast rather than silently orphaning the first renderer's surfaces" <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    use! bot = buildBot server (ToolRegistry.create ())
+
+                    A2ui.renderer bot noopSink |> ignore
+
+                    Expect.throws
+                        (fun () -> A2ui.renderer bot noopSink |> ignore)
+                        "a second renderer over the SAME bot would re-register a2ui-action (add-or-replace), silently orphaning \
+                         the first renderer's own SurfaceRegistry — every tap for a surface the first renderer already sent \
+                         would route through the SECOND renderer's registry instead, which has never heard of that surface"
+                }
+                |> Async.AwaitTask
+        }
     ]
