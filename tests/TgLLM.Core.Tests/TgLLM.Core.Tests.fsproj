@@ -29,6 +29,7 @@
     <Compile Include="UpdateProcessorTests.fs" />
     <Compile Include="ToolDispatchProcessorTests.fs" />
     <Compile Include="OwnerRoutingTests.fs" />
+    <Compile Include="LifecycleRoutingTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

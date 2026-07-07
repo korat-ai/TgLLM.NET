@@ -3,6 +3,7 @@ namespace TgLLM.Core
 open System
 open System.Threading
 open System.Threading.Tasks
+open FSharp.UMX
 
 /// The ack timing a resolved press requires. `AckFirst` acks immediately, before any hook/tool
 /// runs — the slice-1 `IHookStore` resolver's policy (including its "unknown/stale token"
@@ -79,12 +80,23 @@ type UpdateProcessor
         dispatcher: IPressDispatcher,
         observer: IHookObserver,
         ?toolDispatch: ToolDispatch,
-        ?watchdogBudget: TimeSpan
+        ?watchdogBudget: TimeSpan,
+        ?clock: Clock
     ) =
 
     /// Default ~2s: safely under Telegram's unpublished answer-callback deadline, long enough for
     /// ordinary tool work. Tests override it to keep the watchdog path fast.
     let watchdogBudget = defaultArg watchdogBudget (TimeSpan.FromSeconds 2.0)
+
+    /// "Now", injected rather than read ambiently (US4, research D5) — defaults to real wall-clock
+    /// time; tests override it to drive `Expiry.isLive`'s decision deterministically. Feeds BOTH
+    /// the expiry check (`resolvePress`) and `processedQueries`' own TTL bookkeeping below.
+    let clock = defaultArg clock (fun () -> DateTimeOffset.UtcNow)
+
+    /// At-most-once redelivery dedup (US4, research D6): the FIRST sighting of a callback query's
+    /// identity may proceed; any repeat within the tracker's TTL is dropped before it ever reaches
+    /// resolution — see `processPress`'s own gate below.
+    let processedQueries = ProcessedQueryTracker(clock)
 
     /// Builds `PressContext.ReplyTextAsync`'s backing closure. An invalid `text` is a programmer
     /// error by the hook author (Always-Rule 6), not a business error — it fails fast rather
@@ -231,6 +243,15 @@ type UpdateProcessor
                 with ex ->
                     observer.OnHookFailed(press, ex)
 
+                // Single-use consumption (US4, research D6): after the binding's tool has been
+                // invoked, remove it from the store so a LATER tap on the same token resolves as
+                // unknown — the confirm-once mode. Removed regardless of whether the tool itself
+                // threw above: the button was pressed and its tool ran once, which is exactly what
+                // "consumed" means here; leaving a throwing single-use binding re-tappable forever
+                // would be the worse failure mode.
+                if binding.SingleUse then
+                    do! dispatch.Store.Remove([ binding.Token ], workCt)
+
                 do! ackState.SendAckOnce()
                 do! ackState.Finish()
             }
@@ -287,6 +308,12 @@ type UpdateProcessor
     /// Router's resolver (if `toolDispatch` is wired in) takes priority over the slice-1
     /// `IHookStore` resolver. See `PressResolution.ackPolicy` for the ack policy each outcome
     /// implies — `processPress` below carries it out via whichever branch it dispatches to.
+    ///
+    /// Expiry (US4, research D5) is checked HERE, right after resolution: a binding whose
+    /// `ExpiresAt` has passed (per `Expiry.isLive`, fed THIS processor's injected `clock`) falls
+    /// back to `HookStoreResolution` exactly like a miss on `dispatch.Resolve` — the slice-1
+    /// ack-first path then reports it via `OnUnknownToken`, the same observable outcome an
+    /// unknown/stale token already gets. No separate "expired" branch is needed downstream.
     let resolvePress (ct: CancellationToken) (press: ButtonPress) : Task<PressResolution> =
         task {
             match toolDispatch with
@@ -295,7 +322,8 @@ type UpdateProcessor
                 let! resolved = dispatch.Resolve(press.Token, ct)
 
                 match resolved with
-                | ValueSome(tool, binding) -> return ToolResolution(tool, binding, dispatch)
+                | ValueSome(tool, binding) when Expiry.isLive (clock ()) binding.ExpiresAt -> return ToolResolution(tool, binding, dispatch)
+                | ValueSome _ -> return HookStoreResolution
                 | ValueNone -> return HookStoreResolution
         }
 
@@ -309,25 +337,32 @@ type UpdateProcessor
     /// silently doing the wrong thing.
     let processPress (ct: CancellationToken) (press: ButtonPress) : Task =
         task {
-            let! resolution = resolvePress ct press
+            // At-most-once redelivery dedup (US4, research D6) — FIRST, before any resolution:
+            // Telegram's `callback_query.id` (and this library's own webhook transport under
+            // retry) can redeliver an update; a repeat within `processedQueries`' TTL is dropped
+            // entirely here — no ack, no hook/tool, nothing. Re-acking the SAME query id would
+            // fail server-side anyway (`answerCallbackQuery` is one-shot), so silently dropping
+            // the repeat is the only sound choice, not merely the cheapest one.
+            if processedQueries.TryBegin(UMX.untag press.QueryId) then
+                let! resolution = resolvePress ct press
 
-            match PressResolution.ackPolicy resolution, resolution with
-            | Deferred, ToolResolution(tool, binding, dispatch) ->
-                // Owner check (US1) — AFTER resolution, BEFORE the tool is ever enqueued: a
-                // non-owner (or unidentifiable) presser is refused here and never reaches
-                // `startDeferredAck`/`buildToolWork` at all.
-                if OwnerScope.isAllowed binding.Owner (Some press.User.Id) then
-                    // Start the watchdog NOW (press arrival) — not once the per-chat dispatcher
-                    // eventually RUNS the enqueued work; see `startDeferredAck`'s own doc comment
-                    // for why.
-                    let ackState = startDeferredAck press ct
-                    do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch ackState)
-                else
-                    do! refuseNonOwnerPress ct press binding
-            | AckFirst, HookStoreResolution -> do! processHookStorePress ct press
-            | Deferred, HookStoreResolution
-            | AckFirst, ToolResolution _ ->
-                failwith $"unreachable: PressResolution.ackPolicy diverged from processPress's own branches for %A{resolution}"
+                match PressResolution.ackPolicy resolution, resolution with
+                | Deferred, ToolResolution(tool, binding, dispatch) ->
+                    // Owner check (US1) — AFTER resolution, BEFORE the tool is ever enqueued: a
+                    // non-owner (or unidentifiable) presser is refused here and never reaches
+                    // `startDeferredAck`/`buildToolWork` at all.
+                    if OwnerScope.isAllowed binding.Owner (Some press.User.Id) then
+                        // Start the watchdog NOW (press arrival) — not once the per-chat dispatcher
+                        // eventually RUNS the enqueued work; see `startDeferredAck`'s own doc comment
+                        // for why.
+                        let ackState = startDeferredAck press ct
+                        do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch ackState)
+                    else
+                        do! refuseNonOwnerPress ct press binding
+                | AckFirst, HookStoreResolution -> do! processHookStorePress ct press
+                | Deferred, HookStoreResolution
+                | AckFirst, ToolResolution _ ->
+                    failwith $"unreachable: PressResolution.ackPolicy diverged from processPress's own branches for %A{resolution}"
         }
 
     /// Runs until `ct` is cancelled, processing each `AgentEvent` from `source` in arrival order.

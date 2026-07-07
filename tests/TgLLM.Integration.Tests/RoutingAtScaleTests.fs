@@ -71,7 +71,12 @@ type private CountingObserver() =
 let private pressOf (token: CallbackToken) (chat: int64) : AgentEvent =
     ButtonPressed
         { Token = token
-          QueryId = UMX.tag<callbackQueryId> "q"
+          // A fresh id per press (not a shared constant): `UpdateProcessor` now dedupes by
+          // `QueryId` (US4, at-most-once redelivery) — a literal `"q"` reused across many DISTINCT
+          // presses would make every press after the first look like a redelivery of the same
+          // callback query and get silently dropped, which is not what this suite is about (it
+          // tests per-token/per-chat routing at scale, not redelivery dedup).
+          QueryId = UMX.tag<callbackQueryId> $"q-{System.Guid.NewGuid()}"
           Chat = UMX.tag<chatId> chat
           User =
             { Id = UMX.tag<userId> 1L
