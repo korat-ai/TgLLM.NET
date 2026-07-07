@@ -85,4 +85,22 @@ let manifestTests =
         testCase "an empty registry's ManifestJson() is an empty array" <| fun _ ->
             let registry = ToolRegistry.create()
             Expect.equal (registry.ManifestJson()) "[]" "no tools registered means an empty neutral array"
+
+        testCase "a null description (as a C#/interop caller passing null produces) does not crash ManifestJson — normalized like an omitted one" <| fun _ ->
+            // `Unchecked.defaultof<string>` here reproduces EXACTLY what a C#/interop caller passing
+            // a literal `null` for `description` produces at this call site: F#'s optional-parameter
+            // calling convention wraps ANY value passed for `?description: string` in `Some` — it
+            // does not special-case `null` into `None` (verified against the compiled IL: the
+            // generated `string -> string option` conversion is `Some`, unconditionally). The C#
+            // bridge (`ToolRegistrations.Register`, CSharpSupport.fs) already normalizes `Some null`
+            // via `Option.bind Option.ofObj`; this F# member must do the same.
+            let registry =
+                ToolRegistry.create().Register("approve", noopHandler, description = Unchecked.defaultof<string>)
+
+            let array = parseArray (registry.ManifestJson())
+            let approveEntry = array |> entryNamed "approve"
+
+            Expect.isFalse
+                (approveEntry |> hasField "description")
+                "a null description normalizes to 'no metadata', matching an omitted one — no crash"
     ]

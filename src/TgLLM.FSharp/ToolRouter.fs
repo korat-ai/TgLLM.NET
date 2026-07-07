@@ -95,9 +95,21 @@ type ToolRegistry private (registry: IToolRegistry) =
     /// tool registered without either still registers and routes identically. An invalid
     /// (empty-after-trim) `name` is a programmer error by the host (Always-Rule 6) — it fails fast
     /// rather than threading a `Result` through a fluent builder API.
-    member this.Register(name: string, handler: PressContext -> Task<'a>, ?description: string, ?argSchema: string) : ToolRegistry =
+    ///
+    /// `description`/`argSchema` are normalized through `Option.bind Option.ofObj` before use
+    /// (review #5, mirroring `ToolRegistrations.Register`'s own bridge in CSharpSupport.fs): F#'s
+    /// "omitted argument becomes `None`" convenience is a source-level feature of an F# CALLER —
+    /// a C#/interop caller has no such sugar, and its optional-parameter calling convention wraps
+    /// ANY value (including a literal `null`) in `Some`, so a `null` it passes arrives here as
+    /// `Some null`, not `None`. Left unnormalized, that `Some null` flows into `ManifestJson()`,
+    /// which throws trying to build a JSON string from it. Collapsing it to `None` here makes a
+    /// null description/argSchema behave like an omitted one, matching the C# bridge exactly.
+    member this.Register(name: string, handler: PressContext -> Task<'a>, ?description: string | null, ?argSchema: string | null) : ToolRegistry =
         match ToolName.create name with
         | Ok toolName ->
+            let description = description |> Option.bind Option.ofObj
+            let argSchema = argSchema |> Option.bind Option.ofObj
+
             let metadata =
                 match description, argSchema with
                 | None, None -> None
