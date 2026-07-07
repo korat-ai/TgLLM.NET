@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\TgLLM.CSharp\TgLLM.CSharp.csproj" />
     <ProjectReference Include="..\..\src\TgLLM.AspNetCore\TgLLM.AspNetCore.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.Persistence.LiteDb\TgLLM.Persistence.LiteDb.fsproj" />
   </ItemGroup>
 
 </Project>
