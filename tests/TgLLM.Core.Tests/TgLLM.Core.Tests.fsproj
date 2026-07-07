@@ -26,6 +26,7 @@
     <Compile Include="RoutingTests.fs" />
     <Compile Include="InMemoryHookStoreTests.fs" />
     <Compile Include="DispatcherTests.fs" />
+    <Compile Include="DispatcherEvictionTests.fs" />
     <Compile Include="UpdateProcessorTests.fs" />
     <Compile Include="ToolDispatchProcessorTests.fs" />
     <Compile Include="OwnerRoutingTests.fs" />
