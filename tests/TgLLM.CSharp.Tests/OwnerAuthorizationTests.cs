@@ -78,6 +78,12 @@ public class OwnerAuthorizationTests
         await WaitUntilAsync(() => server.RequestsFor("answerCallbackQuery").Any(), 5000, ct);
         Assert.False(toolRanFor.Task.IsCompleted, "a non-owner press must never run the bound tool");
 
+        // deniedNotice was omitted at send time, so the refusal must show the built-in default
+        // notice — NOT an empty string. A C# caller omitting the argument reaches the F# optional
+        // parameter as `Some null`; the façade must normalize that to "unset" so the default wins.
+        var refusalAck = server.RequestsFor("answerCallbackQuery").First().Body!.Value;
+        Assert.Equal("This button isn't for you.", refusalAck["text"]!.GetValue<string>());
+
         // The owner taps next: the SAME button now runs the tool.
         server.EnqueueResult(
             "getUpdates",

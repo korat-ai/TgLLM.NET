@@ -186,7 +186,13 @@ type TgBot
             chat
             None
             (defaultArg owner Anyone)
-            deniedNotice
+            // Normalize away a `Some null`/`Some ""`: a C# caller omitting `deniedNotice` reaches this
+            // F# optional parameter as `Some null` (the "omitted ⇒ None" sugar is F#-caller-side only),
+            // which would store an empty override and show a blank notice instead of the built-in
+            // default. Collapse a null/empty override to `None` so the default wins.
+            (match deniedNotice with
+             | Some s when not (System.String.IsNullOrEmpty s) -> Some s
+             | _ -> None)
             (fun registeredKeyboard -> api.SendKeyboard(chat, text, registeredKeyboard, cts.Token))
             cts.Token
             plan
