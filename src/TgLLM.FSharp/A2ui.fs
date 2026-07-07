@@ -64,17 +64,22 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
     /// The catalog this renderer advertises — the only one it currently renders.
     member _.Catalog: Catalog = Catalog.telegramBasic
 
-    /// Ingests one A2UI agent->renderer message for `chat`. Never throws: a malformed message, an
-    /// unknown catalog, an unsupported component, or a duplicate/unknown surface all surface as
-    /// `Error` AND are reported to this renderer's `IA2uiObserver` — the two channels always agree
-    /// on the condition itself; only the AUDIENCE differs (this call's own caller vs. anything else
-    /// watching this bot's health). An `Unsupported` component collected alongside supported
-    /// siblings that still render is reported ONLY to the observer, since the call itself still
-    /// returns `Ok` (the siblings really did render). Carries out the decided `RenderEffect`:
-    /// `SendNew` sends the first message; `EditExisting` edits the SAME message in place;
-    /// `DeleteMessage` deletes it — `chat` is the host's own `Ingest` parameter throughout, since
-    /// A2UI carries no chat identity of its own and a live surface stays bound to the chat it was
-    /// created in.
+    /// Ingests one A2UI agent->renderer message, CLAIMED to be for `chat`. Never throws: a malformed
+    /// message, an unknown catalog, an unsupported component, or a duplicate/unknown/wrong-chat
+    /// surface all surface as `Error` AND are reported to this renderer's `IA2uiObserver` — the two
+    /// channels always agree on the condition itself; only the AUDIENCE differs (this call's own
+    /// caller vs. anything else watching this bot's health). An `Unsupported` component collected
+    /// alongside supported siblings that still render is reported ONLY to the observer, since the
+    /// call itself still returns `Ok` (the siblings really did render). Carries out the decided
+    /// `RenderEffect`: `SendNew` sends the first message (to `chat`, which `SurfaceRegistry.Apply`
+    /// then records as the surface's OWN chat); `EditExisting`/`DeleteMessage` edit/delete the
+    /// message in the SURFACE's OWN recorded chat (`RenderEffect`'s own `chat` field), never blindly
+    /// in `chat` — `createSurface` is the ONLY message that establishes a surface's chat; a LATER
+    /// `updateComponents`/`updateDataModel`/`deleteSurface` arriving with a different `chat` is
+    /// rejected by `Apply` (`WrongChat`) before it ever reaches this method's own effect-carrying-out
+    /// branches, rather than silently acting against whichever chat this particular call happened to
+    /// claim. A2UI carries no chat identity of its own; a live surface stays bound to the chat its
+    /// `createSurface` was ingested for.
     ///
     /// The WHOLE `Apply -> carry-out-effect -> RecordMessageId` sequence runs under `msg`'s own
     /// surface id's lock (`withSurfaceLock`), so a burst of concurrent `Ingest` calls for the SAME
@@ -110,7 +115,7 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
 
                                 registry.RecordMessageId(A2uiMessage.surfaceId msg, messageId)
                                 return Ok()
-                    | Ok(EditExisting(messageId, rendered)) ->
+                    | Ok(EditExisting(surfaceChat, messageId, rendered)) ->
                         A2uiObservability.reportUnsupported observer rendered
 
                         match MessageText.create rendered.Text with
@@ -121,13 +126,13 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
                             | Ok() ->
                                 do!
                                     if List.isEmpty rendered.Keyboard.Rows then
-                                        bot.EditText(chat, messageId, text, parseMode = MarkdownV2)
+                                        bot.EditText(surfaceChat, messageId, text, parseMode = MarkdownV2)
                                     else
-                                        bot.EditKeyboardPlan(chat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
+                                        bot.EditKeyboardPlan(surfaceChat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
 
                                 return Ok()
-                    | Ok(DeleteMessage messageId) ->
-                        do! bot.DeleteMessage(chat, messageId)
+                    | Ok(DeleteMessage(surfaceChat, messageId)) ->
+                        do! bot.DeleteMessage(surfaceChat, messageId)
                         return Ok()
                 })
 

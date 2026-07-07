@@ -42,7 +42,7 @@ module A2uiErrorBridge =
 
     /// The DU case name — a stable, plain-string tag a C# host can switch on
     /// (`"MalformedMessage"`/`"UnknownCatalog"`/`"UnsupportedComponent"`/`"DuplicateSurface"`/
-    /// `"UnknownSurface"`), never the `A2uiError` DU itself.
+    /// `"UnknownSurface"`/`"WrongChat"`), never the `A2uiError` DU itself.
     let kind (error: A2uiError) : string =
         match error with
         | MalformedMessage _ -> "MalformedMessage"
@@ -50,6 +50,7 @@ module A2uiErrorBridge =
         | UnsupportedComponent _ -> "UnsupportedComponent"
         | DuplicateSurface _ -> "DuplicateSurface"
         | UnknownSurface _ -> "UnknownSurface"
+        | WrongChat _ -> "WrongChat"
 
     /// The SAME human-readable description `A2uiIngestResult.Error` already uses for a call's own
     /// immediate failure — reused here so an observed condition reads identically regardless of

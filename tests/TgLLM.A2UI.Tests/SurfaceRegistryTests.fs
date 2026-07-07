@@ -113,7 +113,8 @@ let surfaceRegistryTests =
             registry.RecordMessageId("s8", messageId)
 
             match registry.Apply(chat1, UpdateComponents("s8", [ rootTextComponent "v2" ])) with
-            | Ok(EditExisting(editedId, rendered)) ->
+            | Ok(EditExisting(editedChat, editedId, rendered)) ->
+                Expect.equal editedChat chat1 "the edit targets the surface's own chat"
                 Expect.equal editedId messageId "the edit targets the recorded message id"
                 Expect.equal rendered.Text "v2" "the updated tree re-renders"
             | other -> failtestf "expected Ok (EditExisting _), got %A" other
@@ -132,7 +133,8 @@ let surfaceRegistryTests =
             registry.RecordMessageId("s9", messageId)
 
             match registry.Apply(chat1, UpdateDataModel("s9", "/greeting", Some(jsonOf "hello"))) with
-            | Ok(EditExisting(editedId, rendered)) ->
+            | Ok(EditExisting(editedChat, editedId, rendered)) ->
+                Expect.equal editedChat chat1 "the edit targets the surface's own chat"
                 Expect.equal editedId messageId "the edit targets the recorded message id"
                 Expect.equal rendered.Text "hello" "the bound text reflects the updated data model"
             | other -> failtestf "expected Ok (EditExisting _), got %A" other
@@ -145,8 +147,53 @@ let surfaceRegistryTests =
             registry.RecordMessageId("s10", messageId)
 
             match registry.Apply(chat1, DeleteSurface "s10") with
-            | Ok(DeleteMessage deletedId) -> Expect.equal deletedId messageId "the recorded message id is targeted"
+            | Ok(DeleteMessage(deletedChat, deletedId)) ->
+                Expect.equal deletedChat chat1 "the delete targets the surface's own chat"
+                Expect.equal deletedId messageId "the recorded message id is targeted"
             | other -> failtestf "expected Ok (DeleteMessage _), got %A" other
+
+        testCase "updateComponents for a live surface arriving with a DIFFERENT chat than it was created in is rejected, never silently redirected" <| fun _ ->
+            let registry = SurfaceRegistry(Catalog.telegramBasic)
+            let originalChat = chat 30L
+            let otherChat = chat 31L
+            registry.Apply(originalChat, createSurfaceMsg "chat-mismatch-surface" [ rootTextComponent "v1" ]) |> ignore
+            let messageId = UMX.tag<messageId> 300L
+            registry.RecordMessageId("chat-mismatch-surface", messageId)
+
+            match registry.Apply(otherChat, UpdateComponents("chat-mismatch-surface", [ rootTextComponent "v2" ])) with
+            | Error(WrongChat "chat-mismatch-surface") -> ()
+            | other -> failtestf "expected Error (WrongChat _), got %A" other
+
+            // The mismatch must not have redirected onto the wrong chat either: a later,
+            // correctly-scoped update still edits the surface's ORIGINAL chat.
+            match registry.Apply(originalChat, UpdateComponents("chat-mismatch-surface", [ rootTextComponent "v3" ])) with
+            | Ok(EditExisting(editedChat, editedId, rendered)) ->
+                Expect.equal editedChat originalChat "the edit targets the surface's own original chat"
+                Expect.equal editedId messageId "the edit targets the recorded message id"
+                Expect.equal rendered.Text "v3" "the correctly-scoped update still applies"
+            | other -> failtestf "expected Ok (EditExisting _), got %A" other
+
+        testCase "updateDataModel for a live surface arriving with a DIFFERENT chat than it was created in is rejected" <| fun _ ->
+            let registry = SurfaceRegistry(Catalog.telegramBasic)
+            let originalChat = chat 32L
+            let otherChat = chat 33L
+            registry.Apply(originalChat, createSurfaceMsg "data-chat-mismatch" [ rootTextComponent "v1" ]) |> ignore
+            registry.RecordMessageId("data-chat-mismatch", UMX.tag<messageId> 301L)
+
+            match registry.Apply(otherChat, UpdateDataModel("data-chat-mismatch", "/x", Some(jsonOfInt 1))) with
+            | Error(WrongChat "data-chat-mismatch") -> ()
+            | other -> failtestf "expected Error (WrongChat _), got %A" other
+
+        testCase "deleteSurface for a live surface arriving with a DIFFERENT chat than it was created in is rejected" <| fun _ ->
+            let registry = SurfaceRegistry(Catalog.telegramBasic)
+            let originalChat = chat 34L
+            let otherChat = chat 35L
+            registry.Apply(originalChat, createSurfaceMsg "delete-chat-mismatch" [ rootTextComponent "v1" ]) |> ignore
+            registry.RecordMessageId("delete-chat-mismatch", UMX.tag<messageId> 302L)
+
+            match registry.Apply(otherChat, DeleteSurface "delete-chat-mismatch") with
+            | Error(WrongChat "delete-chat-mismatch") -> ()
+            | other -> failtestf "expected Error (WrongChat _), got %A" other
 
         testCase "deleteSurface on a live surface that was never sent (no root yet) yields NoEffect" <| fun _ ->
             let registry = SurfaceRegistry(Catalog.telegramBasic)

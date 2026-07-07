@@ -27,10 +27,12 @@ type LiveSurface =
 type RenderEffect =
     /// The surface's first render: no message exists for it yet.
     | SendNew of chat: ChatId * RenderedSurface
-    /// A later render of an already-sent surface: replace `message`'s content in place.
-    | EditExisting of message: MessageId * RenderedSurface
-    /// `deleteSurface` on a surface that had reached the wire.
-    | DeleteMessage of message: MessageId
+    /// A later render of an already-sent surface: replace `message`'s content in place, in the
+    /// surface's OWN `chat` (mirrors `SendNew` — never the caller's own `Apply` chat argument,
+    /// which a chat-mismatched call never reaches this case for in the first place; see `Apply`).
+    | EditExisting of chat: ChatId * message: MessageId * RenderedSurface
+    /// `deleteSurface` on a surface that had reached the wire, in the surface's OWN `chat`.
+    | DeleteMessage of chat: ChatId * message: MessageId
     /// Buffered, not yet renderable (no `root` component in the tree yet), or `deleteSurface` on
     /// a surface that was never actually sent.
     | NoEffect
@@ -72,7 +74,7 @@ type SurfaceRegistry(catalog: Catalog) =
             render surface
             |> Result.map (fun rendered ->
                 match surface.MessageId with
-                | Some messageId -> EditExisting(messageId, rendered)
+                | Some messageId -> EditExisting(surface.Chat, messageId, rendered)
                 | None -> SendNew(surface.Chat, rendered))
 
     /// Narrows every incoming raw node to the `telegram-basic` model and replaces the matching
@@ -118,6 +120,7 @@ type SurfaceRegistry(catalog: Catalog) =
         | UpdateComponents(surfaceId, rawComponents) ->
             match surfaces.TryGetValue surfaceId with
             | false, _ -> Error(UnknownSurface surfaceId)
+            | true, surface when surface.Chat <> chat -> Error(WrongChat surfaceId)
             | true, surface ->
                 let updated = { surface with Components = mergeComponents rawComponents surface.Components }
                 surfaces[surfaceId] <- updated
@@ -126,17 +129,24 @@ type SurfaceRegistry(catalog: Catalog) =
         | UpdateDataModel(surfaceId, path, valueOpt) ->
             match surfaces.TryGetValue surfaceId with
             | false, _ -> Error(UnknownSurface surfaceId)
+            | true, surface when surface.Chat <> chat -> Error(WrongChat surfaceId)
             | true, surface ->
                 let updated = { surface with DataModel = JsonPointer.trySet surface.DataModel path valueOpt }
                 surfaces[surfaceId] <- updated
                 effectFor updated
 
         | DeleteSurface surfaceId ->
-            match surfaces.TryRemove surfaceId with
+            // Checked BEFORE `TryRemove`, not after: removing first and rejecting the mismatch
+            // second would still have deleted a chat-mismatched caller's TARGET surface out from
+            // under its real chat, even though the call itself reports failure.
+            match surfaces.TryGetValue surfaceId with
             | false, _ -> Error(UnknownSurface surfaceId)
+            | true, surface when surface.Chat <> chat -> Error(WrongChat surfaceId)
             | true, surface ->
+                surfaces.TryRemove surfaceId |> ignore
+
                 match surface.MessageId with
-                | Some messageId -> Ok(DeleteMessage messageId)
+                | Some messageId -> Ok(DeleteMessage(surface.Chat, messageId))
                 | None -> Ok NoEffect
 
     /// Records the message a surface's `SendNew` render landed on — called by the façade AFTER

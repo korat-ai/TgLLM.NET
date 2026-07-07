@@ -17,6 +17,12 @@ type A2uiError =
     | DuplicateSurface of surfaceId: string
     /// An `updateComponents`/`updateDataModel`/`deleteSurface` for a surface id that isn't live.
     | UnknownSurface of surfaceId: string
+    /// An `updateComponents`/`updateDataModel`/`deleteSurface` for a live surface, but arriving
+    /// under a DIFFERENT chat than the one its `createSurface` established — Telegram's own
+    /// `message_id` is unique only PER CHAT, so acting under the caller's claimed chat instead of
+    /// the surface's own could edit or delete an unrelated message in that chat. Rejected outright
+    /// rather than silently redirected onto the surface's real chat.
+    | WrongChat of surfaceId: string
 
 /// Plain-English descriptions of `A2uiError` — used where a caller wants a readable message
 /// rather than pattern-matching the DU itself (e.g. the C# façade's `A2uiIngestResult`, which
@@ -30,6 +36,7 @@ module A2uiError =
         | UnsupportedComponent(componentType, id) -> $"unsupported component '{componentType}' (id {id})"
         | DuplicateSurface surfaceId -> $"surface '{surfaceId}' already exists (createSurface is create-once)"
         | UnknownSurface surfaceId -> $"unknown surface: {surfaceId}"
+        | WrongChat surfaceId -> $"surface '{surfaceId}' was created in a different chat than this message arrived on"
 
 /// One parsed A2UI adjacency-list node, not yet narrowed to a catalog — `Component.toTelegramBasic`
 /// does that. `Fields` carries the node's own JSON object verbatim (its `id`/`component`
