@@ -20,6 +20,7 @@
     <Compile Include="RestartPersistenceTests.fs" />
     <Compile Include="OwnerAuthorizationTests.fs" />
     <Compile Include="StructuredArgTests.fs" />
+    <Compile Include="ManifestTests.fs" />
     <Compile Include="UrlButtonTests.fs" />
     <Compile Include="WebhookTests.fs" />
     <Compile Include="BothTransportsTests.fs" />

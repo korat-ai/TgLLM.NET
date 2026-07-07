@@ -36,12 +36,38 @@ type ToolRegistrations =
     static member CreateInMemory() : IToolRegistry = InMemoryToolRegistry() :> IToolRegistry
 
     /// Registers a C#-friendly `Func<PressContext, Task>` handler (a BCL delegate, not an
-    /// FSharpFunc) against `registry`. An invalid (empty-after-trim) `name` is a programmer error
-    /// by the host (Always-Rule 6), so it throws rather than returning a `Result` the C# façade
-    /// would have to unwrap on every registration call.
-    static member Register(registry: IToolRegistry, name: string, handler: Func<PressContext, Task>) : unit =
+    /// FSharpFunc) against `registry`. `description`/`argSchema` are advisory manifest metadata —
+    /// see `TgLLM.Core.ToolMetadata`'s own doc comment; omitting both registers exactly as before.
+    /// An invalid (empty-after-trim) `name` is a programmer error by the host (Always-Rule 6), so
+    /// it throws rather than returning a `Result` the C# façade would have to unwrap on every
+    /// registration call.
+    ///
+    /// `description`/`argSchema` are normalized through `Option.bind Option.ofObj` before use: F#'s
+    /// "omitted argument becomes `None`" convenience is a source-level feature of the CALLER's own
+    /// F# code — a C# caller has no such sugar and always passes an explicit value, so a `null` it
+    /// passes for either optional parameter arrives here as `Some null`, not `None`. Collapsing
+    /// `Some null` to `None` (leaving a genuine `Some "text"` untouched) is what makes "the C#
+    /// caller didn't set this" behave like "omitted" instead of silently storing a null
+    /// description/schema.
+    static member Register
+        (
+            registry: IToolRegistry,
+            name: string,
+            handler: Func<PressContext, Task>,
+            ?description: string | null,
+            ?argSchema: string | null
+        ) : unit =
         match ToolName.create name with
-        | Ok toolName -> registry.Register(toolName, fun ctx -> handler.Invoke ctx)
+        | Ok toolName ->
+            let description = description |> Option.bind Option.ofObj
+            let argSchema = argSchema |> Option.bind Option.ofObj
+
+            let metadata =
+                match description, argSchema with
+                | None, None -> None
+                | _ -> Some { Description = description; ArgSchema = argSchema }
+
+            registry.Register(toolName, (fun ctx -> handler.Invoke ctx), ?metadata = metadata)
         | Error e -> invalidArg (nameof name) $"invalid tool name ({e})"
 
 /// C#-facing bridge for building a neutral Tool Router plan: the C# façade's

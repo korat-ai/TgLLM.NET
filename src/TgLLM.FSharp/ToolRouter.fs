@@ -10,6 +10,7 @@ namespace TgLLM.FSharp
 
 open System.Threading.Tasks
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Text.Json.Serialization
 open FSharp.UMX
 open TgLLM.Core
@@ -24,6 +25,55 @@ open TgLLM.Core
 module private StructuredArgJson =
     let options: JsonSerializerOptions = JsonFSharpOptions.Default().ToJsonSerializerOptions()
 
+/// Turns a structured `TgLLM.Core.ToolManifest` into the neutral wire JSON a host feeds to an
+/// LLM's function-calling API: `[{ name, description, parameters }]`, no vendor-specific
+/// wrapping. `parameters` embeds the tool's opaque argument-schema text as raw JSON when it parses
+/// as JSON (the common case — a JSON Schema document), or as a plain JSON string otherwise;
+/// `description`/`parameters` are omitted entirely for a tool registered without that metadata.
+/// `private` — this is how `ToolRegistry.ManifestJson()` is implemented, not a separate public
+/// entry point.
+module private ManifestJson =
+
+    let private tryParseAsJson (raw: string) : JsonNode option =
+        try
+            match JsonNode.Parse raw with
+            | null -> None
+            | parsed -> Some parsed
+        with :? JsonException ->
+            None
+
+    /// `JsonValue.Create` is annotated as possibly returning `null`, but never does for a
+    /// non-null `string` input — narrowed here once so callers get a plain `JsonNode`.
+    let private jsonString (raw: string) : JsonNode =
+        match JsonValue.Create raw with
+        | null -> invalidOp "JsonValue.Create of a non-null string literal cannot be null."
+        | value -> value
+
+    let private entryNode (entry: ToolManifestEntry) : JsonObject =
+        let node = JsonObject()
+        node["name"] <- jsonString entry.Name
+
+        entry.Description |> Option.iter (fun d -> node["description"] <- jsonString d)
+
+        entry.Parameters
+        |> Option.iter (fun raw ->
+            let parametersNode =
+                match tryParseAsJson raw with
+                | Some parsed -> parsed
+                | None -> jsonString raw
+
+            node["parameters"] <- parametersNode)
+
+        node
+
+    let serialize (manifest: ToolManifest) : string =
+        let array = JsonArray()
+
+        for entry in manifest.Tools do
+            array.Add(entryNode entry)
+
+        array.ToJsonString()
+
 /// A fluent, mutable tool registry: wraps a plain `TgLLM.Core.IToolRegistry` so F# consumers can
 /// chain `.Register` calls while building it.
 [<Sealed>]
@@ -35,15 +85,29 @@ type ToolRegistry private (registry: IToolRegistry) =
 
     /// Registers (or replaces) a tool under `name`. The handler may return any `Task<'a>`; its
     /// result is ignored by the runtime (it reacts through the `PressContext` it is given), same
-    /// convention as the slice-1 `Button.on` hook. An invalid (empty-after-trim) `name` is a
-    /// programmer error by the host (Always-Rule 6) — it fails fast rather than threading a
-    /// `Result` through a fluent builder API.
-    member this.Register(name: string, handler: PressContext -> Task<'a>) : ToolRegistry =
+    /// convention as the slice-1 `Button.on` hook. `description`/`argSchema` are advisory: they
+    /// only affect what `Manifest`/`ManifestJson` report for this name, never routing itself — a
+    /// tool registered without either still registers and routes identically. An invalid
+    /// (empty-after-trim) `name` is a programmer error by the host (Always-Rule 6) — it fails fast
+    /// rather than threading a `Result` through a fluent builder API.
+    member this.Register(name: string, handler: PressContext -> Task<'a>, ?description: string, ?argSchema: string) : ToolRegistry =
         match ToolName.create name with
         | Ok toolName ->
-            registry.Register(toolName, fun ctx -> (handler ctx) :> Task)
+            let metadata =
+                match description, argSchema with
+                | None, None -> None
+                | _ -> Some { Description = description; ArgSchema = argSchema }
+
+            registry.Register(toolName, (fun ctx -> (handler ctx) :> Task), ?metadata = metadata)
             this
         | Error e -> invalidArg (nameof name) $"ToolRegistry.Register: invalid tool name ({e})"
+
+    /// The registry's structured self-description — every registered tool, in registration order.
+    member _.Manifest() : ToolManifest = registry.Manifest()
+
+    /// The registry's neutral wire JSON — `[{ name, description, parameters }]`, no vendor
+    /// wrapping — ready to feed to an LLM's function-calling API.
+    member _.ManifestJson() : string = ManifestJson.serialize (registry.Manifest())
 
     static member create() : ToolRegistry = ToolRegistry(InMemoryToolRegistry() :> IToolRegistry)
 
