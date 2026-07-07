@@ -347,8 +347,30 @@ type TgBot
     /// `EditOutcome` instead, so a caller can react to it (e.g. the A2UI façade evicts a surface's
     /// tracked message id on `EditNotFound` so its NEXT update re-sends a fresh message rather than
     /// trying, and failing, to edit the same vanished one forever).
+    ///
+    /// This call carries no keyboard of its own — a caller reaches for it precisely when its own
+    /// content no longer has ONE (e.g. an A2UI surface whose update removed its last button) — so any
+    /// tool bindings `tracker` still has recorded for `(chat, messageId)` from a PREVIOUS keyboard on
+    /// this same message are now unreachable by anything live and are cleaned up here, exactly like
+    /// `EditKeyboardPlan`'s own stale-token removal does for a REPLACEMENT keyboard, just against an
+    /// empty one. Skipped on `EditNotFound`/an edit that never reached the wire — nothing to clean up
+    /// against a message this bot no longer has any confirmed state for.
     member _.EditText(chat: ChatId, messageId: MessageId, text: MessageText, ?parseMode: ParseMode) : Task<EditOutcome> =
-        api.EditMessageText(chat, messageId, text, None, parseMode, cts.Token)
+        task {
+            let! outcome = api.EditMessageText(chat, messageId, text, None, parseMode, cts.Token)
+
+            match outcome with
+            | EditApplied
+            | EditNotModified ->
+                match tracker.TryGetPrevious(chat, messageId) with
+                | Some staleTokens when not (List.isEmpty staleTokens) ->
+                    do! (bindingStore.Remove(staleTokens, cts.Token)).AsTask()
+                    tracker.Record(chat, messageId, [])
+                | _ -> ()
+            | EditNotFound -> ()
+
+            return outcome
+        }
 
     /// Edit an existing message's text AND keyboard in place from OUTSIDE a button press — the
     /// bot-level counterpart to `PressContext.EditKeyboardAsync` for an agent-initiated push (e.g.

@@ -39,6 +39,7 @@
     <Compile Include="A2uiConcurrencyTests.fs" />
     <Compile Include="A2uiChatIsolationTests.fs" />
     <Compile Include="A2uiEditNotFoundTests.fs" />
+    <Compile Include="A2uiStaleBindingCleanupTests.fs" />
     <Compile Include="A2uiLoopTests.fs" />
     <Compile Include="A2uiStreamingTests.fs" />
     <Compile Include="A2uiUnsupportedTests.fs" />
