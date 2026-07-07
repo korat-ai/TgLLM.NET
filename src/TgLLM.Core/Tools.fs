@@ -573,6 +573,17 @@ type ProcessedQueryTracker(clock: Clock, ?capacity: int, ?ttl: TimeSpan) =
     /// First time `queryId` is seen — or its previous sighting has aged out past `ttl` — records it
     /// and returns `true` (safe to process). A repeat within `ttl` returns `false` (drop; this is a
     /// redelivery of an already-processed callback query).
+    ///
+    /// Deliberate at-most-once trade-off: `queryId` is committed as "seen" the instant this returns
+    /// `true` — BEFORE the caller (`UpdateProcessor.processPress`) has actually resolved, run, or
+    /// acked anything for it. If that first attempt then fails transiently (the exact reason
+    /// Telegram, or this library's own webhook transport, redelivers a query in the first place),
+    /// the redelivery is dropped here just the same as an ordinary duplicate — this tracker has no
+    /// way to distinguish "already succeeded" from "already attempted, but failed" once `TryBegin`
+    /// has committed. Accepted rather than fixed: the alternative (committing only after success)
+    /// would let two redeliveries run the SAME callback query concurrently before either finishes,
+    /// risking a genuine double-run of a tool — worse than occasionally swallowing a redelivery
+    /// that could have retried a transient failure.
     member _.TryBegin(queryId: string) : bool =
         let now = clock ()
 

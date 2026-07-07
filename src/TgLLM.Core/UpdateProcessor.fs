@@ -412,6 +412,13 @@ type UpdateProcessor
             // entirely here — no ack, no hook/tool, nothing. Re-acking the SAME query id would
             // fail server-side anyway (`answerCallbackQuery` is one-shot), so silently dropping
             // the repeat is the only sound choice, not merely the cheapest one.
+            //
+            // Accepted trade-off (see `ProcessedQueryTracker.TryBegin`'s own doc comment for the
+            // full reasoning): `TryBegin` commits `press.QueryId` as "seen" here, BEFORE resolution,
+            // the tool, or the ack below ever run — a redelivery caused by THIS very attempt failing
+            // transiently is therefore dropped too, not retried. Deliberately chosen over the
+            // alternative (commit only after success), which would let two redeliveries of the same
+            // query run concurrently before either finished.
             if processedQueries.TryBegin(UMX.untag press.QueryId) then
                 let! resolution = resolvePress ct press
 
