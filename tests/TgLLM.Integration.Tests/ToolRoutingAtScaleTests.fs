@@ -59,7 +59,9 @@ type private RecordingApi() =
             Task.CompletedTask
 
         member _.EditMessageText(_, _, _, _, _) = Task.FromResult EditApplied
+        member _.EditMessageText(_, _, _, _, _, _) = Task.FromResult EditApplied
         member _.EditMessageReplyMarkup(_, _, _, _) = Task.FromResult EditApplied
+        member _.DeleteMessage(_, _, _) = Task.FromResult true
 
 type private CountingObserver() =
     let mutable failed = 0

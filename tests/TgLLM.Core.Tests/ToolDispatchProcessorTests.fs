@@ -90,9 +90,15 @@ type private FakeBotApiClient() =
             edits.Add(EditText(chat, message, MessageText.value text, keyboard))
             Task.FromResult EditApplied
 
+        member _.EditMessageText(chat, message, text, keyboard, _parseMode, _ct) =
+            edits.Add(EditText(chat, message, MessageText.value text, keyboard))
+            Task.FromResult EditApplied
+
         member _.EditMessageReplyMarkup(chat, message, keyboard, _ct) =
             edits.Add(EditKeyboard(chat, message, keyboard))
             Task.FromResult EditApplied
+
+        member _.DeleteMessage(_chat, _message, _ct) = Task.FromResult true
 
 /// Records enqueued work instead of running it on real per-chat channels — the test decides when to
 /// invoke a recorded work item (same pattern as `UpdateProcessorTests.fs`'s private fake).

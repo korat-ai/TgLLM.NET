@@ -90,7 +90,9 @@ type private TimestampingBotApiClient(clock: Stopwatch) =
             Task.CompletedTask
 
         member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.FromResult EditApplied
+        member _.EditMessageText(_chat, _message, _text, _keyboard, _parseMode, _ct) = Task.FromResult EditApplied
         member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.FromResult EditApplied
+        member _.DeleteMessage(_chat, _message, _ct) = Task.FromResult true
 
 type private NoopObserver() =
     interface IHookObserver with

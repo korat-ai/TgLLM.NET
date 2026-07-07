@@ -35,6 +35,7 @@
     <Compile Include="SendKeyboardPlanExpirySingleUseTests.fs" />
     <Compile Include="BindingEvictionSweepWiringTests.fs" />
     <Compile Include="A2uiRenderTests.fs" />
+    <Compile Include="A2uiLoopTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

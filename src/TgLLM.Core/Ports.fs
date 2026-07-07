@@ -106,10 +106,30 @@ type IBotApiClient =
         chat: ChatId * message: MessageId * text: MessageText * keyboard: RegisteredKeyboard option * ct: CancellationToken ->
             Task<EditOutcome>
 
+    /// Overload: edit with an explicit parse mode, same "`None` = identical to the overload above"
+    /// contract as `SendText`'s parse-mode pair — a bot-level edit of an agent-pushed surface (as
+    /// opposed to a tool's own re-render of the message it was pressed from) needs the SAME
+    /// MarkdownV2 request its initial send used.
+    abstract EditMessageText:
+        chat: ChatId *
+        message: MessageId *
+        text: MessageText *
+        keyboard: RegisteredKeyboard option *
+        parseMode: ParseMode option *
+        ct: CancellationToken ->
+            Task<EditOutcome>
+
     /// Replace a message's keyboard only, leaving its text untouched. Same classify-don't-throw
     /// contract as `EditMessageText` above.
     abstract EditMessageReplyMarkup:
         chat: ChatId * message: MessageId * keyboard: RegisteredKeyboard option * ct: CancellationToken -> Task<EditOutcome>
+
+    /// Deletes a message. Classifies the well-known "message to delete not found" `ApiRequestException`
+    /// (already gone — the user deleted it, or a previous call already removed it) into `false`
+    /// rather than letting it propagate; `true` means the delete reached the wire. Any OTHER
+    /// exception still propagates unchanged — the same classify-don't-throw discipline
+    /// `EditMessageText`/`EditMessageReplyMarkup` use.
+    abstract DeleteMessage: chat: ChatId * message: MessageId * ct: CancellationToken -> Task<bool>
 
 /// The observability seam. Default: `NoopHookObserver`. Façades bridge this to `ILogger` so
 /// failures are surfaced, never swallowed; Core stays dependency-free.

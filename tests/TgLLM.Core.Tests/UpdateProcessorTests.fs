@@ -88,7 +88,9 @@ type private FakeBotApiClient(?throwForQueries: CallbackQueryId list) =
         /// Edit* are only reachable via the deferred-ack tool path, never exercised in this
         /// ack-first-only suite — implemented to satisfy `IBotApiClient`.
         member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.FromResult EditApplied
+        member _.EditMessageText(_chat, _message, _text, _keyboard, _parseMode, _ct) = Task.FromResult EditApplied
         member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.FromResult EditApplied
+        member _.DeleteMessage(_chat, _message, _ct) = Task.FromResult true
 
 /// Records enqueued work instead of running it on real per-chat channels — the test decides
 /// when (and whether) to invoke a recorded work item, so it can assert on the *closure UpdateProcessor

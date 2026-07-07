@@ -31,6 +31,23 @@ type A2uiAction =
 /// whatever transport it uses). The library ships no agent-side A2UI transport.
 type ActionSink = A2uiAction -> Task
 
+/// Observes a condition the `a2ui-action` tool handler cannot otherwise report — `Tool =
+/// PressContext -> Task` has no return channel back to a caller, and this handler runs deep inside
+/// the Tool Router's dispatch, far from anything that could inspect its outcome directly. Mirrors
+/// `TgLLM.Core.IHookObserver`'s role for the rest of the Tool Router surface.
+type IA2uiActionObserver =
+    /// A `ServerEvent` Button's tap requested a response (`WantResponse = true`) but carried no
+    /// `ActionId` — the agent would have no way to correlate a later `actionResponse` to this tap.
+    /// The action is NOT delivered to the sink in this case (the same "surfaced, not silently
+    /// wrong" policy `Renderer.render` applies to an `Unsupported` component): a caller wiring
+    /// `wantResponse` correlation logic to the sink never sees a broken one.
+    abstract OnMalformedAction: descriptor: ActionDescriptor -> unit
+
+/// Reports nothing — the default when a caller has no need to observe a malformed action.
+type NoopA2uiActionObserver() =
+    interface IA2uiActionObserver with
+        member _.OnMalformedAction(_descriptor: ActionDescriptor) = ()
+
 /// Builds the internal `a2ui-action` Tool Router tool: the single handler every `ServerEvent`
 /// Button's tool button routes through (`Renderer.buttonToPlanButton`), regardless of which
 /// surface or action name produced it.
@@ -41,47 +58,66 @@ module A2uiActionTool =
         options.Converters.Add(JsonFSharpConverter())
         options
 
+    /// What one press resolves to, decided PURELY (no I/O) before the tool ever touches `sink`/
+    /// `observer` — kept as its own step (rather than inlined into the `task {}` body below) so
+    /// that body stays a single flat match, the shape the F# resumable-state-machine compiler
+    /// handles statically; a deeper nest of `try`/`match`/`if` directly inside a `task {}` CE falls
+    /// back to a slower dynamic implementation.
+    [<NoComparison; NoEquality>]
+    type private PressOutcome =
+        /// A well-formed, resolved action, ready for `sink`.
+        | Deliver of A2uiAction
+        /// A well-formed descriptor requesting a response (`WantResponse = true`) with no
+        /// `ActionId` to correlate that response to — reported to `observer` INSTEAD of `sink`.
+        | ReportMalformed of ActionDescriptor
+        /// An unparseable argument, or a descriptor whose surface is no longer tracked (deleted, or
+        /// never rendered by this process — see `SurfaceRegistry`'s in-memory, per-process scope):
+        /// there is no live data model to resolve context against, and nothing concrete (no name,
+        /// no surface) worth reporting either.
+        | Nothing
+
+    let private decide (registry: SurfaceRegistry) (clock: Clock) (argJson: string | null) : PressOutcome =
+        match Option.ofObj argJson with
+        | None -> Nothing
+        | Some json ->
+            let descriptor =
+                try
+                    match JsonSerializer.Deserialize<ActionDescriptor>(json, descriptorJsonOptions) with
+                    | null -> None
+                    | value -> Some value
+                with :? JsonException ->
+                    None
+
+            match descriptor with
+            | None -> Nothing
+            | Some descriptor when descriptor.WantResponse && Option.isNone descriptor.ActionId -> ReportMalformed descriptor
+            | Some descriptor ->
+                match registry.TryGetDataModel descriptor.SurfaceId with
+                | None -> Nothing
+                | Some dataModel ->
+                    let resolvedContext =
+                        descriptor.Context |> List.map (fun (key, pointer) -> key, JsonPointer.tryResolve dataModel pointer)
+
+                    Deliver
+                        { Name = descriptor.Name
+                          SurfaceId = descriptor.SurfaceId
+                          SourceComponentId = descriptor.SourceComponentId
+                          Timestamp = clock ()
+                          Context = resolvedContext
+                          WantResponse = descriptor.WantResponse
+                          ActionId = descriptor.ActionId }
 
     /// Builds the internal `a2ui-action` tool: on a press, deserializes the tapped button's
     /// `ActionDescriptor` (the tool's structured argument), resolves its context against the
     /// pressed button's OWN surface (looked up in `registry` by `descriptor.SurfaceId`), and hands
-    /// the resulting `A2uiAction` to `sink`. A descriptor that fails to deserialize, or whose
-    /// surface is no longer tracked (deleted, or never rendered by this process — see
-    /// `SurfaceRegistry`'s in-memory, per-process scope), is a silent no-op: there is no live data
-    /// model left to resolve context against, and this handler has no observer seam of its own to
-    /// surface it through (mirrors a slice-1 hook's own "nothing to do" outcome, not an error).
-    let create (registry: SurfaceRegistry) (sink: ActionSink) (clock: Clock) : Tool =
+    /// the resulting `A2uiAction` to `sink` — or, for a malformed descriptor, to `observer` instead
+    /// (see `PressOutcome`/`decide` above for the full decision).
+    let create (registry: SurfaceRegistry) (sink: ActionSink) (clock: Clock) (observer: IA2uiActionObserver) : Tool =
         fun (ctx: PressContext) ->
             task {
-                match ctx.Arg |> Option.ofObj with
-                | None -> ()
-                | Some json ->
-                    let descriptor =
-                        try
-                            match JsonSerializer.Deserialize<ActionDescriptor>(json, descriptorJsonOptions) with
-                            | null -> None
-                            | value -> Some value
-                        with :? JsonException ->
-                            None
-
-                    match descriptor with
-                    | None -> ()
-                    | Some descriptor ->
-                        match registry.TryGetDataModel descriptor.SurfaceId with
-                        | None -> ()
-                        | Some dataModel ->
-                            let resolvedContext =
-                                descriptor.Context |> List.map (fun (key, pointer) -> key, JsonPointer.tryResolve dataModel pointer)
-
-                            let action: A2uiAction =
-                                { Name = descriptor.Name
-                                  SurfaceId = descriptor.SurfaceId
-                                  SourceComponentId = descriptor.SourceComponentId
-                                  Timestamp = clock ()
-                                  Context = resolvedContext
-                                  WantResponse = descriptor.WantResponse
-                                  ActionId = descriptor.ActionId }
-
-                            do! sink action
+                match decide registry clock ctx.Arg with
+                | Nothing -> ()
+                | ReportMalformed descriptor -> observer.OnMalformedAction descriptor
+                | Deliver action -> do! sink action
             }
             :> Task

@@ -177,6 +177,16 @@ type TgWebhookConfig =
     member this.WithBindingEvictionInterval(interval: TimeSpan) =
         { this with Common = this.Common |> CommonConfig.withBindingEvictionInterval interval }
 
+/// Internal signal ONLY: `TgBot.EditKeyboardPlan`'s own `send` closure to `ToolKeyboardOps.deliver`
+/// raises this when the edit classifies as `EditNotFound`, so it reaches `deliver`'s EXISTING
+/// throw-triggered compensation (removes the just-saved replacement bindings) exactly as any other
+/// `send` failure would — mirrors `TgLLM.Core.UpdateProcessor`'s own `EditKeyboardNotFoundSignal`
+/// for the SAME reason (a bot-level edit has no `PressContext`/`ButtonPress` to attribute an
+/// `IHookObserver` report to, so it is caught right back here and turned into silent completion,
+/// never a throw to the caller). Must be declared at module (not type) level — F# disallows an
+/// `exception` inside a class body.
+exception private EditKeyboardPlanNotFoundSignal
+
 /// A running bot: ingests updates in the background and lets the agent send keyboards/messages.
 /// Dispose (`use!`/`IAsyncDisposable`) to stop ingestion and release the per-chat dispatcher.
 [<Sealed>]
@@ -317,6 +327,93 @@ type TgBot
 
     member this.SendText(chat: ChatId, text: string) : Task<MessageId> =
         this.SendText(chat, MessageText.unsafe text)
+
+    /// Edit an existing message's text in place from OUTSIDE a button press, leaving its CURRENT
+    /// keyboard untouched — the bot-level counterpart to `PressContext.EditTextAsync` for an
+    /// agent-initiated push (e.g. an A2UI surface whose update leaves it with no buttons at all)
+    /// rather than a tap. `parseMode` renders `text` with the requested formatting, same "`None` =
+    /// plain text" contract as `SendText`'s parse-mode overload. A vanished message (`EditNotFound`
+    /// — the user deleted it between send and this edit) is a soft failure: this completes
+    /// normally, exactly `PressContext.EditTextAsync`'s own convention, rather than throwing.
+    member _.EditText(chat: ChatId, messageId: MessageId, text: MessageText, ?parseMode: ParseMode) : Task =
+        task {
+            let! _ = api.EditMessageText(chat, messageId, text, None, parseMode, cts.Token)
+            ()
+        }
+        :> Task
+
+    /// Edit an existing message's text AND keyboard in place from OUTSIDE a button press — the
+    /// bot-level counterpart to `PressContext.EditKeyboardAsync` for an agent-initiated push (e.g.
+    /// an A2UI `updateComponents`) rather than a tap. Re-plans `plan` via the SAME
+    /// `ToolKeyboardOps.deliver` edit path `PressContext.EditKeyboardAsync` uses:
+    /// `staleMessageId = Some messageId` removes `(chat, messageId)`'s previously-tracked bindings
+    /// once the edit reaches the wire, and compensates — removing the just-saved replacement
+    /// bindings — if the edit itself fails. `parseMode` renders `text` with the requested
+    /// formatting, same "`None` = plain text" contract as `SendText`'s parse-mode overload.
+    ///
+    /// A vanished message (`EditNotFound`) is a soft failure: this completes normally, exactly
+    /// `PressContext.EditKeyboardAsync`'s own convention, rather than throwing. Fails fast (same
+    /// check as `SendKeyboardPlan`) if `plan` has a tool button but no Tool Router is wired in.
+    member _.EditKeyboardPlan
+        (
+            chat: ChatId,
+            messageId: MessageId,
+            text: MessageText,
+            plan: ToolKeyboard,
+            ?parseMode: ParseMode
+        ) : Task =
+        if toolDispatch.IsNone && ToolPlan.hasToolButtons plan then
+            invalidOp
+                "TgBot.EditKeyboardPlan: this plan has a tool button, but no Tool Router is wired in \
+                 (call .WithTools on the bot config first) — every tap would silently no-op forever, \
+                 since no ToolDispatch could ever resolve its binding. Wire a Tool Router, or use \
+                 only URL buttons if no tool routing is needed."
+
+        task {
+            try
+                do!
+                    ToolKeyboardOps.deliver
+                        "TgBot.EditKeyboardPlan"
+                        CallbackToken.generate
+                        bindingStore
+                        tracker
+                        chat
+                        (Some messageId)
+                        Anyone
+                        None
+                        None
+                        false
+                        (fun registeredKeyboard ->
+                            task {
+                                let! outcome = api.EditMessageText(chat, messageId, text, Some registeredKeyboard, parseMode, cts.Token)
+
+                                match outcome with
+                                | EditApplied
+                                | EditNotModified -> return messageId
+                                | EditNotFound -> return raise EditKeyboardPlanNotFoundSignal
+                            })
+                        cts.Token
+                        plan
+                    :> Task
+            with EditKeyboardPlanNotFoundSignal ->
+                ()
+        }
+        :> Task
+
+    /// Deletes a message from OUTSIDE a button press (e.g. an A2UI `deleteSurface`) and cleans up
+    /// any tool bindings this bot ever recorded for it (`MessageBindingTracker`), so a deleted
+    /// surface's buttons don't linger in the binding store forever. Soft on an already-vanished
+    /// message — the underlying `IBotApiClient.DeleteMessage` classifies "message to delete not
+    /// found" rather than throwing — so this always completes normally.
+    member _.DeleteMessage(chat: ChatId, messageId: MessageId) : Task =
+        task {
+            let! _ = api.DeleteMessage(chat, messageId, cts.Token)
+
+            match tracker.TryGetPrevious(chat, messageId) with
+            | Some tokens when not (List.isEmpty tokens) -> do! (bindingStore.Remove(tokens, cts.Token)).AsTask()
+            | _ -> ()
+        }
+        :> Task
 
     /// The webhook ingress to hand to `MapTelegramWebhook`. Meaningful only for a bot started with
     /// `startWebhook`; a long-polling bot has no HTTP ingress and this raises.

@@ -57,7 +57,9 @@ type private RecordingApi() =
         /// Edit* are only reachable via the deferred-ack tool path, never exercised in this
         /// ack-first-only suite — implemented to satisfy `IBotApiClient`.
         member _.EditMessageText(_, _, _, _, _) = Task.FromResult EditApplied
+        member _.EditMessageText(_, _, _, _, _, _) = Task.FromResult EditApplied
         member _.EditMessageReplyMarkup(_, _, _, _) = Task.FromResult EditApplied
+        member _.DeleteMessage(_, _, _) = Task.FromResult true
 
 type private CountingObserver() =
     let mutable failed = 0

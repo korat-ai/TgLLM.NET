@@ -12,6 +12,7 @@
     <Compile Include="CatalogTests.fs" />
     <Compile Include="RendererTests.fs" />
     <Compile Include="SurfaceRegistryTests.fs" />
+    <Compile Include="ActionTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

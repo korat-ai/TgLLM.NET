@@ -149,6 +149,7 @@ module Mapping =
 module private EditErrorClassification =
     let private isNotModified (message: string) = message.Contains "message is not modified"
     let private isNotFound (message: string) = message.Contains "message to edit not found"
+    let private isDeleteNotFound (message: string) = message.Contains "message to delete not found"
 
     /// Runs `send`, downgrading exactly the two recognized `ApiRequestException`s to a value; any
     /// OTHER exception (a different `ApiRequestException`, a network failure, ...) still propagates
@@ -161,6 +162,17 @@ module private EditErrorClassification =
             with
             | :? ApiRequestException as ex when isNotModified ex.Message -> return EditNotModified
             | :? ApiRequestException as ex when isNotFound ex.Message -> return EditNotFound
+        }
+
+    /// `deleteMessage`'s own classify-don't-throw pass: `false` for the one well-known "already
+    /// gone" outcome, `true` on success; any OTHER exception still propagates unchanged.
+    let classifyDelete (send: unit -> Task) : Task<bool> =
+        task {
+            try
+                do! send ()
+                return true
+            with :? ApiRequestException as ex when isDeleteNotFound ex.Message ->
+                return false
         }
 
 /// `IBotApiClient` over a real (or fake-hosted) `ITelegramBotClient`. Injected rather than
@@ -286,6 +298,32 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
                 )
                 :> Task)
 
+        /// Parse-mode overload: identical to the plain `EditMessageText` above except it also passes
+        /// `parseMode` through to `editMessageText` — the A2UI renderer requests `MarkdownV2` here
+        /// (its `updateComponents`/`updateDataModel` edit re-renders with the SAME formatting its
+        /// initial send used).
+        member _.EditMessageText
+            (
+                chat: ChatId,
+                message: MessageId,
+                text: MessageText,
+                keyboard: RegisteredKeyboard option,
+                parseMode: TgLLM.Core.ParseMode option,
+                ct: CancellationToken
+            ) : Task<EditOutcome> =
+            let replyMarkup = keyboard |> Option.map Mapping.toInlineKeyboardMarkup |> Option.toObj
+
+            EditErrorClassification.classify (fun () ->
+                client.EditMessageText(
+                    chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                    messageId = int (UMX.untag message),
+                    text = MessageText.value text,
+                    parseMode = Mapping.toTelegramParseMode parseMode,
+                    replyMarkup = replyMarkup,
+                    cancellationToken = ct
+                )
+                :> Task)
+
         /// Replaces the message's keyboard only, leaving its text untouched. Same
         /// classify-don't-throw handling as `EditMessageText` above.
         member _.EditMessageReplyMarkup
@@ -305,3 +343,13 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
                     cancellationToken = ct
                 )
                 :> Task)
+
+        /// Deletes a message. Classify-don't-throw handling for the one well-known "already gone"
+        /// outcome — same discipline as `EditMessageText`/`EditMessageReplyMarkup` above.
+        member _.DeleteMessage(chat: ChatId, message: MessageId, ct: CancellationToken) : Task<bool> =
+            EditErrorClassification.classifyDelete (fun () ->
+                client.DeleteMessage(
+                    chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                    messageId = int (UMX.untag message),
+                    cancellationToken = ct
+                ))
