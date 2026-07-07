@@ -36,10 +36,18 @@ type RenderEffect =
     | NoEffect
 
 /// Coalesces the incoming A2UI message stream per surface and tracks each live surface's
-/// Telegram identity + component/data-model state. Thread-safe: a `ConcurrentDictionary` keyed by
-/// surface id, with each `Apply`/`RecordMessageId` call replacing its own surface's entry
-/// atomically — concurrent calls for DIFFERENT surface ids never contend, and concurrent calls for
-/// the SAME surface id serialize on that one dictionary slot.
+/// Telegram identity + component/data-model state. A `ConcurrentDictionary` keyed by surface id:
+/// concurrent calls for DIFFERENT surface ids never contend. `CreateSurface` claims its surface id
+/// atomically (`ConcurrentDictionary.TryAdd`), so two concurrent creates for the SAME id can never
+/// both succeed. `UpdateComponents`/`UpdateDataModel`, though, are still a read-modify-write over
+/// that same slot (read the current surface, merge, write back) — concurrent calls for the SAME
+/// already-live surface id can still race a LOST UPDATE (the second write overwrites the first's
+/// merge rather than combining both), and `effectFor`'s own "at most one call in a burst ever sees
+/// `MessageId = None`" claim only holds when the CALLER already serializes concurrent `Apply` calls
+/// for one surface id. The F# façade's `A2uiRenderer.Ingest` provides exactly that: a per-surface
+/// lock around the WHOLE `Apply -> carry-out-effect -> RecordMessageId` sequence (see its own doc
+/// comment). A caller that talks to this registry directly, without that external serialization, is
+/// responsible for its own if it needs a stronger guarantee than "never double-creates a surface".
 [<Sealed>]
 type SurfaceRegistry(catalog: Catalog) =
     let surfaces = ConcurrentDictionary<string, LiveSurface>()
@@ -82,8 +90,6 @@ type SurfaceRegistry(catalog: Catalog) =
         | CreateSurface(surfaceId, catalogId, rawComponents, dataModelOpt) ->
             if catalogId <> catalog.CatalogId then
                 Error(UnknownCatalog catalogId)
-            elif surfaces.ContainsKey surfaceId then
-                Error(DuplicateSurface surfaceId)
             else
                 let components = mergeComponents rawComponents Map.empty
                 let dataModel = dataModelOpt |> Option.defaultWith (fun () -> JsonObject() :> JsonNode)
@@ -96,8 +102,18 @@ type SurfaceRegistry(catalog: Catalog) =
                       Components = components
                       DataModel = dataModel }
 
-                surfaces[surfaceId] <- surface
-                effectFor surface
+                // `TryAdd`, not a `ContainsKey` check followed by a separate write: the two together
+                // are a check-then-act race — two concurrent creates for the SAME surface id can both
+                // observe "not present" before either has written, both then write (the second
+                // silently overwriting the first), and both decide `effectFor` against their OWN
+                // local `surface` value (each with `MessageId = None`), so both produce `SendNew`.
+                // `TryAdd` claims the slot atomically: only the caller that actually wins gets to
+                // decide this surface's effect; every other concurrent creator sees `false` and is
+                // rejected as a duplicate, never a second `SendNew`.
+                if surfaces.TryAdd(surfaceId, surface) then
+                    effectFor surface
+                else
+                    Error(DuplicateSurface surfaceId)
 
         | UpdateComponents(surfaceId, rawComponents) ->
             match surfaces.TryGetValue surfaceId with

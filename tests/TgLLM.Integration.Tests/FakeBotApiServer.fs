@@ -45,7 +45,8 @@ type FakeBotApiServer
     (
         app: WebApplication,
         requests: ConcurrentQueue<RecordedRequest>,
-        responses: ConcurrentDictionary<string, ConcurrentQueue<CannedResponse>>
+        responses: ConcurrentDictionary<string, ConcurrentQueue<CannedResponse>>,
+        delays: ConcurrentDictionary<string, ConcurrentQueue<TimeSpan>>
     ) =
 
     /// Every request recorded so far, oldest first.
@@ -70,6 +71,14 @@ type FakeBotApiServer
     /// source), so the exact status code here is cosmetic realism, not load-bearing.
     member _.EnqueueError(methodName: string, errorCode: int, description: string) : unit =
         responses.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue(Failure(errorCode, description))
+
+    /// Delays the NEXT call to `methodName` by `delay` before this server writes back its response
+    /// (canned or default) — widens the in-flight window of a real HTTP round-trip so a test can
+    /// deterministically land two concurrent calls inside it, rather than relying on incidental
+    /// scheduling luck (e.g. proving a caller serializes two concurrent sends for the same logical
+    /// target rather than racing them).
+    member _.DelayNextResponse(methodName: string, delay: TimeSpan) : unit =
+        delays.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue delay
 
     /// e.g. `"http://127.0.0.1:53214"` — pass as `TelegramBotClientOptions`'s `baseUrl`.
     member _.BaseUrl: string = (Seq.head app.Urls).TrimEnd('/')
@@ -115,6 +124,7 @@ module FakeBotApiServer =
 
             let requests = ConcurrentQueue<RecordedRequest>()
             let responses = ConcurrentDictionary<string, ConcurrentQueue<CannedResponse>>()
+            let delays = ConcurrentDictionary<string, ConcurrentQueue<TimeSpan>>()
             // Per-chat, not global (see `defaultResult`'s doc comment above): keyed by the request's
             // raw `chat_id` JSON text so distinct chats never share a counter.
             let messageIdsByChat = ConcurrentDictionary<string, int>()
@@ -137,6 +147,13 @@ module FakeBotApiServer =
                             else JsonNode.Parse bodyText |> Option.ofObj
 
                         requests.Enqueue { Method = methodName; Token = token; Body = bodyNode }
+
+                        match delays.TryGetValue methodName with
+                        | true, queue ->
+                            match queue.TryDequeue() with
+                            | true, delay -> do! Task.Delay delay
+                            | false, _ -> ()
+                        | false, _ -> ()
 
                         let canned =
                             match responses.TryGetValue methodName with
@@ -167,7 +184,7 @@ module FakeBotApiServer =
             |> ignore
 
             do! app.StartAsync()
-            return FakeBotApiServer(app, requests, responses)
+            return FakeBotApiServer(app, requests, responses, delays)
         }
 
 /// Builds Bot-API-shaped JSON for canned `getUpdates` responses — reused by every long-polling

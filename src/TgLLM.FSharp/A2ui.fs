@@ -8,6 +8,8 @@
 /// attached `IA2uiObserver`, not just the immediate caller's own `Result`.
 namespace TgLLM.FSharp
 
+open System.Collections.Concurrent
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.Extensions.Logging
 open TgLLM.Core
@@ -33,6 +35,32 @@ type LoggingA2uiObserver(logger: ILogger) =
 [<Sealed>]
 type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2uiObserver) =
 
+    /// One async mutex per surface id ever seen by this renderer, so `Ingest` can make its own
+    /// `Apply -> carry-out-effect -> RecordMessageId` sequence atomic per surface (see `Ingest`'s own
+    /// doc comment) — `SurfaceRegistry.Apply` alone only makes `CreateSurface` itself atomic; it
+    /// cannot make THIS whole sequence atomic, since carrying out the effect means awaiting a real
+    /// Telegram round-trip the registry has no visibility into. Never evicted: this dictionary grows
+    /// with the number of DISTINCT surface ids this renderer instance has ever ingested a message
+    /// for, for the renderer's own lifetime — the same bound `SurfaceRegistry`'s own `surfaces`
+    /// dictionary has before a `deleteSurface` (which this one, deliberately, does not mirror: safely
+    /// retiring a per-surface lock without reintroducing the very race it exists to prevent would
+    /// need its own careful design, not a quick add-on here).
+    let surfaceLocks = ConcurrentDictionary<string, SemaphoreSlim>()
+
+    /// Runs `body` with `surfaceId`'s own lock held, creating that lock on first use — concurrent
+    /// calls for DIFFERENT surface ids never contend (each gets its own `SemaphoreSlim`); concurrent
+    /// calls for the SAME surface id run `body` one at a time, in arrival order.
+    let withSurfaceLock (surfaceId: string) (body: unit -> Task<'a>) : Task<'a> =
+        task {
+            let gate = surfaceLocks.GetOrAdd(surfaceId, (fun _ -> new SemaphoreSlim(1, 1)))
+            do! gate.WaitAsync()
+
+            try
+                return! body ()
+            finally
+                gate.Release() |> ignore
+        }
+
     /// The catalog this renderer advertises — the only one it currently renders.
     member _.Catalog: Catalog = Catalog.telegramBasic
 
@@ -47,51 +75,61 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
     /// `DeleteMessage` deletes it — `chat` is the host's own `Ingest` parameter throughout, since
     /// A2UI carries no chat identity of its own and a live surface stays bound to the chat it was
     /// created in.
+    ///
+    /// The WHOLE `Apply -> carry-out-effect -> RecordMessageId` sequence runs under `msg`'s own
+    /// surface id's lock (`withSurfaceLock`), so a burst of concurrent `Ingest` calls for the SAME
+    /// surface is atomic per surface, not just per `Apply` call: without this, a later call's `Apply`
+    /// could run WHILE an earlier call's `SendNew` is still awaiting its Telegram round-trip — at that
+    /// point the registry's own record still has `MessageId = None` (only `RecordMessageId`, called
+    /// AFTER the round-trip completes, changes that), so the later call would ALSO decide `SendNew`
+    /// and send a second message for what the agent intended as one surface. Concurrent calls for
+    /// DIFFERENT surface ids are unaffected — each surface's lock is independent.
     member _.Ingest(chat: ChatId, a2uiMessageJson: string) : Task<Result<unit, A2uiError>> =
-        task {
-            match A2uiMessage.parse a2uiMessageJson with
-            | Error e -> return A2uiObservability.reportError observer e
-            | Ok msg ->
-                match registry.Apply(chat, msg) with
-                | Error e -> return A2uiObservability.reportError observer e
-                | Ok NoEffect -> return Ok()
-                | Ok(SendNew(sendChat, rendered)) ->
-                    A2uiObservability.reportUnsupported observer rendered
+        match A2uiMessage.parse a2uiMessageJson with
+        | Error e -> Task.FromResult(A2uiObservability.reportError observer e)
+        | Ok msg ->
+            withSurfaceLock (A2uiMessage.surfaceId msg) (fun () ->
+                task {
+                    match registry.Apply(chat, msg) with
+                    | Error e -> return A2uiObservability.reportError observer e
+                    | Ok NoEffect -> return Ok()
+                    | Ok(SendNew(sendChat, rendered)) ->
+                        A2uiObservability.reportUnsupported observer rendered
 
-                    match MessageText.create rendered.Text with
-                    | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
-                    | Ok text ->
-                        match A2uiRenderer.validateKeyboard rendered with
-                        | Error e -> return A2uiObservability.reportError observer e
-                        | Ok() ->
-                            let! messageId =
-                                if List.isEmpty rendered.Keyboard.Rows then
-                                    bot.SendText(sendChat, text, Some MarkdownV2)
-                                else
-                                    bot.SendKeyboardPlan(sendChat, text, rendered.Keyboard, parseMode = MarkdownV2)
+                        match MessageText.create rendered.Text with
+                        | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
+                        | Ok text ->
+                            match A2uiRenderer.validateKeyboard rendered with
+                            | Error e -> return A2uiObservability.reportError observer e
+                            | Ok() ->
+                                let! messageId =
+                                    if List.isEmpty rendered.Keyboard.Rows then
+                                        bot.SendText(sendChat, text, Some MarkdownV2)
+                                    else
+                                        bot.SendKeyboardPlan(sendChat, text, rendered.Keyboard, parseMode = MarkdownV2)
 
-                            registry.RecordMessageId(A2uiMessage.surfaceId msg, messageId)
-                            return Ok()
-                | Ok(EditExisting(messageId, rendered)) ->
-                    A2uiObservability.reportUnsupported observer rendered
+                                registry.RecordMessageId(A2uiMessage.surfaceId msg, messageId)
+                                return Ok()
+                    | Ok(EditExisting(messageId, rendered)) ->
+                        A2uiObservability.reportUnsupported observer rendered
 
-                    match MessageText.create rendered.Text with
-                    | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
-                    | Ok text ->
-                        match A2uiRenderer.validateKeyboard rendered with
-                        | Error e -> return A2uiObservability.reportError observer e
-                        | Ok() ->
-                            do!
-                                if List.isEmpty rendered.Keyboard.Rows then
-                                    bot.EditText(chat, messageId, text, parseMode = MarkdownV2)
-                                else
-                                    bot.EditKeyboardPlan(chat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
+                        match MessageText.create rendered.Text with
+                        | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
+                        | Ok text ->
+                            match A2uiRenderer.validateKeyboard rendered with
+                            | Error e -> return A2uiObservability.reportError observer e
+                            | Ok() ->
+                                do!
+                                    if List.isEmpty rendered.Keyboard.Rows then
+                                        bot.EditText(chat, messageId, text, parseMode = MarkdownV2)
+                                    else
+                                        bot.EditKeyboardPlan(chat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
 
-                            return Ok()
-                | Ok(DeleteMessage messageId) ->
-                    do! bot.DeleteMessage(chat, messageId)
-                    return Ok()
-        }
+                                return Ok()
+                    | Ok(DeleteMessage messageId) ->
+                        do! bot.DeleteMessage(chat, messageId)
+                        return Ok()
+                })
 
     /// A rendered surface with no Text/Divider/Image anywhere in its tree has no body a Bot API
     /// message can carry (`sendMessage`/`editMessageText` both require non-empty text) — reused by

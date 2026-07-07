@@ -4,6 +4,7 @@
 module TgLLM.A2UI.Tests.SurfaceRegistryTests
 
 open System.Text.Json.Nodes
+open System.Threading.Tasks
 open Expecto
 open FSharp.UMX
 open TgLLM.Core
@@ -175,4 +176,47 @@ let surfaceRegistryTests =
             match registry.TryGetDataModel "s12" with
             | Some model -> Expect.isTrue (JsonNode.DeepEquals(model, dataModel)) "the tracked data model matches what createSurface supplied"
             | None -> failtest "expected Some data model"
+
+        testCaseAsync "many concurrent createSurface calls for the SAME surface id yield exactly one SendNew, the rest DuplicateSurface" (
+            async {
+                do!
+                    task {
+                        let registry = SurfaceRegistry(Catalog.telegramBasic)
+                        let chat1 = chat 13L
+                        let msg = createSurfaceMsg "race-surface" [ rootTextComponent "hello" ]
+                        let concurrency = 64
+
+                        // A shared start gate maximizes overlap: every task blocks on the SAME
+                        // uncompleted task until all `concurrency` of them are queued up, then all
+                        // race `Apply` for the SAME surface id at once, rather than trickling in one
+                        // at a time (which a check-then-act race can slip through unnoticed).
+                        let startGate = TaskCompletionSource()
+
+                        let raceOnce () : Task<Result<RenderEffect, A2uiError>> =
+                            task {
+                                do! startGate.Task
+                                return registry.Apply(chat1, msg)
+                            }
+
+                        let raced = Array.init concurrency (fun _ -> Task.Run<Result<RenderEffect, A2uiError>> raceOnce)
+
+                        startGate.SetResult()
+                        let! results = Task.WhenAll raced
+
+                        let sendNewCount =
+                            results |> Array.filter (function Ok(SendNew _) -> true | _ -> false) |> Array.length
+
+                        let duplicateCount =
+                            results
+                            |> Array.filter (function
+                                | Error(DuplicateSurface "race-surface") -> true
+                                | _ -> false)
+                            |> Array.length
+
+                        Expect.equal sendNewCount 1 "exactly one concurrent create wins and produces the surface's own first send"
+                        Expect.equal duplicateCount (concurrency - 1) "every other concurrent create for the same id is rejected as a duplicate, never a second send"
+                    }
+                    |> Async.AwaitTask
+            }
+        )
     ]
