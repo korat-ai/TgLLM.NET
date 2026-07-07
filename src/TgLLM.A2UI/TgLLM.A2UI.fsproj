@@ -4,8 +4,22 @@
     <Description>A2UI renderer for Telegram: parses Google's open A2UI protocol and renders its Telegram-representable subset (the telegram-basic catalog) into the Tool Router's neutral keyboard plan. An isolated leaf so Core stays A2UI-agnostic (Principle III); façade wiring lives in the C#/F# façades.</Description>
   </PropertyGroup>
 
+  <!--
+    Compiles top-to-bottom, no forward references (same discipline as TgLLM.Core.fsproj):
+    A2uiMessage.fs defines the wire message model + total `parse` (and `RawComponent`, the
+    not-yet-catalog-narrowed adjacency-list node); DynString.fs (JSON-Pointer resolution) and
+    Markdown.fs (MarkdownV2 escaping) are both leaves with no dependency on each other or on
+    A2uiMessage.fs; Catalog.fs narrows a `RawComponent` into the telegram-basic `Component`/
+    `ComponentNode` model, so it compiles after both; Renderer.fs is the pure component-tree ->
+    Telegram mapping, so it compiles last (needs Catalog.fs's types, DynString.resolve,
+    Markdown.escapeV2, and Core's ToolKeyboard/PlanButton).
+  -->
   <ItemGroup>
-    <Compile Include="A2ui.fs" />
+    <Compile Include="A2uiMessage.fs" />
+    <Compile Include="DynString.fs" />
+    <Compile Include="Markdown.fs" />
+    <Compile Include="Catalog.fs" />
+    <Compile Include="Renderer.fs" />
   </ItemGroup>
 
   <ItemGroup>

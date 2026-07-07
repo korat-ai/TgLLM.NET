@@ -6,7 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="A2uiTests.fs" />
+    <Compile Include="A2uiParseTests.fs" />
+    <Compile Include="DynStringTests.fs" />
+    <Compile Include="MarkdownTests.fs" />
+    <Compile Include="CatalogTests.fs" />
+    <Compile Include="RendererTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
