@@ -17,8 +17,14 @@ APIs for both F# and C# consumers.
   *plan* (labels + tool names + optional string args); taps route to the exact registered tool with
   its arg — no per-button glue, no vendor LLM parsing in the library.
 - React in place: edit the tapped message's text/keyboard, or answer with a toast/alert.
-- Bindings can be **persisted** (a file-based store) so taps still route after a restart.
-- URL buttons alongside tool buttons in the same keyboard.
+- **Owner-scoped keyboards**: restrict a keyboard's tool buttons to the one user it was sent for; a
+  different presser is acked with a notice and no tool ever runs.
+- Registered tools describe themselves as a neutral **manifest** (`ManifestJson()`) ready for an
+  LLM's function-calling API, and buttons can bind **structured, typed arguments** (not just strings).
+- **WebApp** and **CopyText** buttons — launch a Mini App or copy text to the clipboard, entirely
+  client-side — alongside tool and URL buttons in the same keyboard.
+- Bindings can **expire**, be **confirm-once** (single-use), and be **persisted** — a file-based
+  store or an embedded LiteDB store, so taps still route after a restart.
 - Works identically over **long polling** and **webhooks**.
 - Two dedicated, idiomatic public packages: `TgLLM.FSharp` and `TgLLM.CSharp`.
 - Per-chat ordered, cross-chat concurrent press handling.
@@ -110,6 +116,10 @@ await agent.SendKeyboardPlanAsync(chatId, "Deploy?", plan);
 Bindings can be made durable with a file-based store (`TgLLM.Persistence`) so taps still route after
 a restart — see [`docs/quickstart.md`](docs/quickstart.md#tool-router) for the full walkthrough
 (edit-in-place, toasts, URL buttons, persistence).
+
+Owner-scoped keyboards, a neutral tool manifest for LLM function-calling, structured typed
+arguments, WebApp/CopyText buttons, expiry/confirm-once bindings, and an embedded LiteDB store are
+covered in [`docs/quickstart.md`](docs/quickstart.md#tool-router-extensions).
 
 ## Project layout
 

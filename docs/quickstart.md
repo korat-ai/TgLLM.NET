@@ -149,17 +149,136 @@ use! bot = TgBot.startPolling (((TgBotConfig.create "<BOT_TOKEN>").WithTools too
 ```
 
 ```csharp
-var store = TgLLM.Persistence.FileBindingStore.OpenAt("bindings.json");
+var store = TgLLM.Persistence.FileBindingStore.openAt("bindings.json");
 await using var agent = await TelegramAgent.StartPollingAsync(
     new TelegramAgentOptions { BotToken = "<BOT_TOKEN>", Tools = tools, BindingStore = store });
 ```
 
-A NEW `FileBindingStore.openAt`/`OpenAt` over the SAME path loads whatever was saved by a previous
-run — re-register your tools (by the same names) and taps sent before a restart still route.
+A NEW `FileBindingStore.openAt` over the SAME path loads whatever was saved by a previous run —
+re-register your tools (by the same names) and taps sent before a restart still route.
 
 Full runnable examples: [`examples/ToolRouterFSharp`](../examples/ToolRouterFSharp),
 [`examples/ToolRouterCSharp`](../examples/ToolRouterCSharp) (both demonstrate long polling and
 webhooks via a `TRANSPORT` environment variable).
+
+## Tool Router extensions
+
+Additive on top of everything above — a bot using none of this keeps working unchanged.
+
+**Owner-scoped keyboards.** Restrict a keyboard's tool buttons to the one user it was sent for; a
+different presser is acked with a notice and no tool ever runs.
+
+```fsharp
+let! _ = bot.SendKeyboardPlan(chatId, MessageText.unsafe "Deploy?", plan, owner = Owner.user requesterId)
+// A different user tapping a button gets "This button isn't for you." and no tool runs.
+```
+
+```csharp
+await agent.SendKeyboardPlanAsync(chatId, "Deploy?", plan, owner: Owner.User(requesterId));
+```
+
+**A tool manifest for your LLM's function-calling API.** Register tools with a description and an
+argument schema; the registry renders itself as neutral JSON.
+
+```fsharp
+let tools =
+    ToolRegistry
+        .create()
+        .Register(
+            "approve",
+            approveTool,
+            description = "Approve the pending deploy",
+            argSchema = """{ "type": "object", "properties": { "env": { "type": "string" } } }"""
+        )
+
+let toolsJson = tools.ManifestJson()   // [{ "name":"approve", "description":"...", "parameters":{...} }]
+```
+
+```csharp
+var tools = new ToolRegistry().Register(
+    "approve", ApproveAsync,
+    description: "Approve the pending deploy",
+    argSchema: """{ "type": "object", "properties": { "env": { "type": "string" } } }""");
+
+var toolsJson = tools.ManifestJson();
+```
+
+**Structured arguments.** Bind a typed payload to a button instead of a raw string; read it back typed.
+
+```fsharp
+let plan = Plan.rows [ [ Plan.toolWith "Ship v2" "ship" {| version = "2.0"; canary = true |} ] ]
+
+let shipTool (ctx: PressContext) = task {
+    let req = ctx.GetArg<{| version: string; canary: bool |}>()
+    do! deploy req.version req.canary
+}
+// A plain string arg (Plan.toolWithArg) still routes through ctx.Arg, unchanged.
+```
+
+```csharp
+record ShipRequest(string Version, bool Canary);
+
+var plan = new PlanBuilder().Row(r => r.Tool("Ship v2", "ship", new ShipRequest("2.0", true))).Build();
+
+Task ShipAsync(PressContext ctx)
+{
+    var req = ctx.GetArg<ShipRequest>();
+    return Deploy(req.Version, req.Canary);
+}
+```
+
+**WebApp and CopyText buttons.** Both are handled entirely client-side — no tool runs, no callback
+event is produced.
+
+```fsharp
+let plan =
+    Plan.rows
+        [ [ Plan.webApp "Open form" "https://app.example.com/form" ]     // launches a Mini App; url must be https
+          [ Plan.copyText "Copy token" "ghp_xxx..." ]                    // copies to the clipboard; 1..256 chars
+          [ Plan.tool "Done" "finish" ] ]                                 // still routes server-side
+```
+
+```csharp
+var plan = new PlanBuilder()
+    .Row(r => r.WebApp("Open form", "https://app.example.com/form"))
+    .Row(r => r.CopyText("Copy token", "ghp_xxx..."))
+    .Row(r => r.Tool("Done", "finish"))
+    .Build();
+```
+
+**Expiry, confirm-once, idle eviction, and a second durable store.** `expiresIn`/`singleUse` are
+send-time options on `SendKeyboardPlan` itself — one expiry and one single-use flag per send, shared
+by every tool button it produces.
+
+```fsharp
+let! _ =
+    bot.SendKeyboardPlan(
+        chatId, MessageText.unsafe "Confirm?", plan,
+        expiresIn = TimeSpan.FromMinutes 10., singleUse = true)
+// After 10 minutes, or after the first successful press, a tap acks with no tool invoked.
+
+open TgLLM.Persistence.LiteDb
+
+let store = LiteDbBindingStore.OpenAt "bindings.db"   // interchangeable with FileBindingStore/InMemory
+use! bot =
+    TgBot.startPolling (
+        (TgBotConfig.create "<BOT_TOKEN>")
+            .WithTools(tools)
+            .WithBindingStore(store)
+            .WithIdleChatEviction(TimeSpan.FromMinutes 30.))
+```
+
+```csharp
+await agent.SendKeyboardPlanAsync(chatId, "Confirm?", plan, expiresIn: TimeSpan.FromMinutes(10), singleUse: true);
+
+await using var agent = await TelegramAgent.StartPollingAsync(new TelegramAgentOptions
+{
+    BotToken = "<BOT_TOKEN>",
+    Tools = tools,
+    BindingStore = TgLLM.Persistence.LiteDb.LiteDbBindingStore.OpenAt("bindings.db"),
+    IdleChatEviction = TimeSpan.FromMinutes(30),
+});
+```
 
 ## What you can rely on
 
