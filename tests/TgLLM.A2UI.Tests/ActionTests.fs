@@ -1,7 +1,7 @@
 /// Tests for the internal `a2ui-action` tool handler (`A2uiActionTool.create`): a tap resolves its
 /// `ActionDescriptor`'s context against the surface's CURRENT data model (not the model at render
 /// time) and delivers an `A2uiAction` to the sink; a `wantResponse` action carrying no `actionId` is
-/// surfaced through `IA2uiActionObserver` instead of reaching the sink.
+/// surfaced through `IA2uiObserver.OnMalformedAction` instead of reaching the sink.
 module TgLLM.A2UI.Tests.ActionTests
 
 open System
@@ -70,10 +70,11 @@ let private recordingSink () : ActionSink * ResizeArray<A2uiAction> =
                    Task.CompletedTask),
     received
 
-let private recordingObserver () : IA2uiActionObserver * ResizeArray<ActionDescriptor> =
+let private recordingObserver () : IA2uiObserver * ResizeArray<ActionDescriptor> =
     let recorded = ResizeArray<ActionDescriptor>()
 
-    { new IA2uiActionObserver with
+    { new IA2uiObserver with
+        member _.OnA2uiError(_error: A2uiError) = ()
         member _.OnMalformedAction(descriptor: ActionDescriptor) = recorded.Add descriptor },
     recorded
 

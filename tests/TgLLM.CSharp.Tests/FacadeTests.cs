@@ -173,6 +173,8 @@ public class A2uiSurfaceTests
         Assert.Contains(typeof(A2uiIngestResult), exported);
         Assert.Contains(typeof(Catalog), exported);
         Assert.Contains(typeof(ActionSink), exported);
+        Assert.Contains(typeof(A2uiErrorInfo), exported);
+        Assert.Contains(typeof(A2uiErrorObserver), exported);
     }
 
     [Fact]

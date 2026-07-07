@@ -34,6 +34,28 @@ module A2uiActionBridge =
     /// `action.ActionId` as a nullable `string`, never `FSharpOption`.
     let actionId (action: A2uiAction) : string | null = action.ActionId |> Option.toObj
 
+/// C#-facing bridge for `TgLLM.A2UI.A2uiError`: turns the DU itself into two plain strings, so a C#
+/// observer callback (`A2uiRenderer.Create`'s `onError`) can discriminate the condition
+/// programmatically (`kind`) without ever pattern-matching an F# union, and still read a
+/// human-readable message (`description`) for logging.
+module A2uiErrorBridge =
+
+    /// The DU case name — a stable, plain-string tag a C# host can switch on
+    /// (`"MalformedMessage"`/`"UnknownCatalog"`/`"UnsupportedComponent"`/`"DuplicateSurface"`/
+    /// `"UnknownSurface"`), never the `A2uiError` DU itself.
+    let kind (error: A2uiError) : string =
+        match error with
+        | MalformedMessage _ -> "MalformedMessage"
+        | UnknownCatalog _ -> "UnknownCatalog"
+        | UnsupportedComponent _ -> "UnsupportedComponent"
+        | DuplicateSurface _ -> "DuplicateSurface"
+        | UnknownSurface _ -> "UnknownSurface"
+
+    /// The SAME human-readable description `A2uiIngestResult.Error` already uses for a call's own
+    /// immediate failure — reused here so an observed condition reads identically regardless of
+    /// which of the two channels (return value vs. observer) a caller inspects it through.
+    let description (error: A2uiError) : string = A2uiError.describe error
+
 type Keyboards =
 
     /// Build a validated keyboard from C# rows of (label, Core hook). Validation errors surface as

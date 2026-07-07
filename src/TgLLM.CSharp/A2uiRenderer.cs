@@ -47,6 +47,51 @@ public sealed record A2uiIngestResult
 }
 
 /// <summary>
+/// One A2UI-level condition an <see cref="A2uiRenderer"/> surfaces — an unknown catalog, a
+/// duplicate/unknown surface, a malformed message, or a component outside <c>telegram-basic</c>.
+/// Delivered to an <see cref="A2uiErrorObserver"/> independent of any single
+/// <see cref="A2uiRenderer.IngestAsync"/> call's own <see cref="A2uiIngestResult"/>: an unsupported
+/// component sitting next to supported siblings that still render, for instance, never appears in
+/// that call's own result (the call itself succeeds), only here.
+/// </summary>
+/// <param name="Kind">
+/// A stable tag for the condition (<c>"MalformedMessage"</c>/<c>"UnknownCatalog"</c>/
+/// <c>"UnsupportedComponent"</c>/<c>"DuplicateSurface"</c>/<c>"UnknownSurface"</c>) — for a host
+/// that wants to branch on the condition without parsing <see cref="Description"/>.
+/// </param>
+/// <param name="Description">The same human-readable text <see cref="A2uiIngestResult.Error"/> uses.</param>
+public sealed record A2uiErrorInfo(string Kind, string Description);
+
+/// <summary>Receives every A2UI-level condition an <see cref="A2uiRenderer"/> surfaces.</summary>
+public delegate void A2uiErrorObserver(A2uiErrorInfo error);
+
+/// <summary>
+/// Bridges a C#-supplied <see cref="A2uiErrorObserver"/> (or none) into the F# façade's
+/// <c>IA2uiObserver</c> seam, translating the F# <c>A2uiError</c>/<c>ActionDescriptor</c> types at
+/// this ONE boundary. Internal: its own members carry F# types dictated by the interface it
+/// implements, so it must never be part of the public surface the idiom-leak canary walks — mirrors
+/// <c>CSharpBindingStoreBridge</c>'s role for the binding-store seam.
+/// </summary>
+internal sealed class CSharpA2uiObserverBridge : TgLLM.A2UI.IA2uiObserver
+{
+    private readonly A2uiErrorObserver? _onError;
+
+    public CSharpA2uiObserverBridge(A2uiErrorObserver? onError) => _onError = onError;
+
+    public void OnA2uiError(TgLLM.A2UI.A2uiError error) =>
+        _onError?.Invoke(new A2uiErrorInfo(
+            TgLLM.FSharp.A2uiErrorBridge.kind(error),
+            TgLLM.FSharp.A2uiErrorBridge.description(error)));
+
+    // A malformed tap-time action has no C#-facing observer surface (yet) — this bridge only ever
+    // carries A2uiError conditions to a C# caller; OnMalformedAction is a required interface member
+    // with nothing to forward to, so it's a deliberate no-op rather than a partial implementation.
+    public void OnMalformedAction(TgLLM.A2UI.ActionDescriptor descriptor)
+    {
+    }
+}
+
+/// <summary>
 /// The C# public façade for the A2UI renderer: ingests A2UI agent-&gt;renderer messages for a
 /// target chat and renders the <c>telegram-basic</c> subset as a Telegram message + inline
 /// keyboard, reusing the same Tool Router a <see cref="TelegramAgent"/> already wires up.
@@ -67,7 +112,17 @@ public sealed class A2uiRenderer
     /// <see cref="TelegramAgent.SendKeyboardPlanAsync"/> itself already fails fast on for any tool
     /// button.
     /// </summary>
-    public static A2uiRenderer Create(TelegramAgent agent, ActionSink sink)
+    /// <param name="agent">The running agent to attach to.</param>
+    /// <param name="sink">Where outbound A2UI <c>action</c> messages go.</param>
+    /// <param name="onError">
+    /// Receives every A2UI-level condition this renderer surfaces (an unknown catalog, an
+    /// unsupported component, a malformed message, a duplicate/unknown surface) — including ones
+    /// that don't fail the triggering <see cref="IngestAsync"/> call outright, such as an
+    /// unsupported component next to supported siblings that still render. Omitted (<c>null</c>,
+    /// the default) means these conditions are surfaced only through each call's own
+    /// <see cref="A2uiIngestResult"/>, not observed independently.
+    /// </param>
+    public static A2uiRenderer Create(TelegramAgent agent, ActionSink sink, A2uiErrorObserver? onError = null)
     {
         Task InvokeSink(TgLLM.A2UI.A2uiAction fsAction)
         {
@@ -95,7 +150,8 @@ public sealed class A2uiRenderer
         // explicitly, mirroring `TelegramAgent.ToFSharpClock`'s own `Func<...> -> FSharpFunc<...>`
         // adaptation.
         var fsharpSink = FSharpFunc<TgLLM.A2UI.A2uiAction, Task>.FromConverter(new Converter<TgLLM.A2UI.A2uiAction, Task>(InvokeSink));
-        var inner = TgLLM.FSharp.A2ui.renderer(agent.Bot, fsharpSink);
+        var observer = new CSharpA2uiObserverBridge(onError);
+        var inner = TgLLM.FSharp.A2ui.rendererWithObserver(agent.Bot, fsharpSink, observer);
         return new A2uiRenderer(inner);
     }
 

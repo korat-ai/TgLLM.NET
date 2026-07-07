@@ -201,6 +201,7 @@ type TgBot
         toolDispatch: ToolDispatch option,
         tools: ToolRegistry option,
         clock: Clock,
+        logger: ILogger option,
         cts: CancellationTokenSource,
         runTask: Task,
         evictionSweeper: BindingEvictionSweeper,
@@ -232,6 +233,15 @@ type TgBot
     /// built after this bot that needs a deterministic "now" (e.g. an A2UI action's timestamp)
     /// should share this bot's own clock rather than reading ambient wall-clock time.
     member _.Clock: Clock = clock
+
+    /// This bot's own logger (`TgBotConfig.WithLogger`/`TgWebhookConfig.WithLogger`), if one was
+    /// wired in — `None` means this bot's own hook/tool failures are reported via
+    /// `NoopHookObserver` (silently dropped), exactly the condition `wireBot` itself already
+    /// resolves for its own `IHookObserver`. Exposed for the same reason as `Tools`/`Clock`: a
+    /// collaborator built after this bot (e.g. an A2UI renderer) that wants a sensible logging
+    /// default should bridge to the SAME logger this bot itself reports through, rather than needing
+    /// its own separate logger-wiring seam.
+    member _.Logger: ILogger option = logger
 
     /// Send a keyboard built from a neutral Tool Router plan; presses route to the tools
     /// registered via `TgBotConfig.WithTools`. Delegates to the shared `ToolKeyboardOps.deliver`
@@ -507,7 +517,21 @@ type TgBot
                 | ex -> observer.OnRunLoopFailed ex
             }
 
-        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, common.Tools, clock, cts, runTask, evictionSweeper, webhookSource)
+        new TgBot(
+            api,
+            store,
+            bindingStore,
+            tracker,
+            dispatcher,
+            toolDispatch,
+            common.Tools,
+            clock,
+            common.Logger,
+            cts,
+            runTask,
+            evictionSweeper,
+            webhookSource
+        )
 
     /// Start ingesting updates via long polling (deletes any configured webhook first). The returned
     /// bot is already polling in the background.
