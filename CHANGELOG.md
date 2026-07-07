@@ -8,6 +8,44 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Added
 
+- **A2UI renderer** (a new `TgLLM.A2UI` leaf project; every existing project's public API and tests
+  are unchanged — `TgLLM.Core` carries no A2UI dependency):
+  - Renders the Telegram-representable subset of Google's open [A2UI protocol](https://a2ui.org)
+    (Apache-2.0, v1.0) — a `telegram-basic` catalog covering `Text`, `Button`, `Row`, `Column`,
+    `Divider`, and `Image` — onto the Tool Router and edit-in-place machinery, **bidirectionally**:
+    `createSurface` plus the first `updateComponents` for a surface send exactly one Telegram
+    message; a later `updateComponents`/`updateDataModel` for the SAME surface edits that message in
+    place; `deleteSurface` deletes it. A Button tap emits an A2UI `action` message (name, surface id,
+    source component id, a deterministic timestamp, resolved context, `wantResponse`, `actionId`) to a
+    **host-provided sink** — the library ships no agent-side A2UI transport, only the renderer.
+  - **Per-surface coalescing**: a burst of `updateComponents`/`updateDataModel` for one surface
+    re-decides send-vs-edit against its latest merged state each time, so it produces one send and
+    further edits, never a flood of new messages.
+  - **Nothing silently dropped**: an unknown `catalogId`, a component outside `telegram-basic` (e.g. a
+    `Slider` or `TextField`), or a malformed/wrong-version message is always surfaced as an
+    `A2uiError` — both to the ingesting call's own result and, independently, to an observer — so a
+    component that fails to render next to siblings that still do never disappears without a trace.
+    Data binding: a `Text`/`Button`-label `DynamicString` resolves by absolute JSON-Pointer against
+    the surface's data model; an unresolved path resolves to the empty string, never a crash. A
+    Button's local `functionCall` `openUrl` renders as a plain client-side URL button — no server
+    round-trip, no `action` emitted.
+  - Idiomatic façades: F#'s `A2ui.renderer`/`A2ui.rendererWithObserver` build an `A2uiRenderer` over a
+    running `TgBot` (`Ingest` returns `Task<Result<unit, A2uiError>>`, reporting through an optional
+    `IA2uiObserver`); C#'s `A2uiRenderer.Create(agent, sink, onError)` builds one over a
+    `TelegramAgent` (`IngestAsync` returns a plain `A2uiIngestResult { Success, Error }` DTO — no F#
+    idioms on the surface — and `onError` receives a stable `A2uiErrorInfo { Kind, Description }`).
+    Both require a Tool Router already wired into the bot/agent (`.WithTools`/`Tools`): the renderer
+    registers its own internal `a2ui-action` tool into that SAME registry, so a Button tap routes
+    through the hardened engine (durable bindings, per-chat ordering, deferred ack) like any other
+    tool button.
+  - Additive, generic engine capabilities this slice needed, now on `TgBot` itself (F# façade): a
+    `ParseMode` (`MarkdownV2`/`Html`) option on `SendText`/`SendKeyboardPlan`, and two new bot-level
+    operations for editing/deleting a message from OUTSIDE a button press —
+    `TgBot.EditText`/`EditKeyboardPlan` and `TgBot.DeleteMessage` — the counterparts to
+    `PressContext`'s own edit/answer for an agent-initiated push rather than a tap. These aren't yet
+    exposed as public members on the C# `TelegramAgent` façade directly; `A2uiRenderer.Create` reaches
+    them through the agent's own underlying bot.
+
 - **Tool Router extensions** (additive on top of the Tool Router; every existing `SendKeyboardPlan`/
   `SendKeyboardPlanAsync` call keeps compiling and behaving exactly as before — every new parameter
   is optional):

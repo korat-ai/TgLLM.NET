@@ -3,8 +3,10 @@
 [![CI](https://github.com/TgLLM-NET/TgLLM.NET/actions/workflows/ci.yml/badge.svg)](https://github.com/TgLLM-NET/TgLLM.NET/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An open-source Telegram Bot library for .NET. The core is written in F#, with idiomatic public
-APIs for both F# and C# consumers.
+An open-source **agent-UI layer for Telegram**, for .NET. It renders agent-facing UI protocols —
+[A2UI](https://a2ui.org) today — onto Telegram, with the Tool Router as the native primitive an
+agent's UI taps route through. The core is written in F#, with idiomatic public APIs for both F# and
+C# consumers.
 
 > **Status**: under active development. This README will grow with each shipped feature; see
 > `CHANGELOG.md` for what has landed so far.
@@ -16,6 +18,10 @@ APIs for both F# and C# consumers.
 - **Tool Router**: register named tools once; turn an LLM agent's decision into a neutral keyboard
   *plan* (labels + tool names + optional string args); taps route to the exact registered tool with
   its arg — no per-button glue, no vendor LLM parsing in the library.
+- **A2UI renderer**: render the Telegram-representable subset of Google's open
+  [A2UI protocol](https://a2ui.org) (Text, Button, Row, Column, Divider, Image) onto the Tool Router
+  and edit-in-place, bidirectionally — an agent that already speaks A2UI drives a Telegram bot with no
+  Telegram-specific code; taps flow back as A2UI `action` messages to a host-provided sink.
 - React in place: edit the tapped message's text/keyboard, or answer with a toast/alert.
 - **Owner-scoped keyboards**: restrict a keyboard's tool buttons to the one user it was sent for; a
   different presser is acked with a notice and no tool ever runs.
@@ -120,6 +126,39 @@ a restart — see [`docs/quickstart.md`](docs/quickstart.md#tool-router) for the
 Owner-scoped keyboards, a neutral tool manifest for LLM function-calling, structured typed
 arguments, WebApp/CopyText buttons, expiry/confirm-once bindings, and an embedded LiteDB store are
 covered in [`docs/quickstart.md`](docs/quickstart.md#tool-router-extensions).
+
+## A2UI renderer
+
+TgLLM.NET renders [A2UI](https://a2ui.org) (Google, Apache-2.0) — an open, declarative protocol for
+describing a UI as agent-emitted messages — onto Telegram. `TgLLM.A2UI` maps the
+Telegram-representable subset of A2UI's component catalog (`telegram-basic`: Text, Button, Row,
+Column, Divider, Image) onto the Tool Router and edit-in-place above, bidirectionally: a surface
+becomes one Telegram message, a Button tap becomes an A2UI `action` handed to your own sink, and the
+agent's follow-up messages re-render that same message in place.
+
+```fsharp
+// F#
+let sink: ActionSink = fun action -> myAgent.RelayActionAsync(action)
+
+task {
+    use! bot = TgBot.startPolling ((TgBotConfig.create botToken).WithTools(ToolRegistry.create ()))
+    let renderer = A2ui.renderer bot sink   // requires a Tool Router already wired in
+    match! renderer.Ingest(chatId, agentEmittedA2uiJson) with
+    | Ok() -> ()
+    | Error e -> eprintfn "%A" e
+}
+```
+
+```csharp
+// C#
+var renderer = A2uiRenderer.Create(agent, action => myAgent.RelayActionAsync(action));
+var result = await renderer.IngestAsync(chatId, agentEmittedA2uiJson);
+```
+
+A component outside `telegram-basic`, an unknown catalog, or a malformed message is always
+surfaced — never silently dropped or rendered wrong. See
+[`docs/quickstart.md`](docs/quickstart.md#a2ui-renderer) for the full walkthrough (the tap → action →
+re-render loop and the error observer).
 
 ## Project layout
 

@@ -280,6 +280,148 @@ await using var agent = await TelegramAgent.StartPollingAsync(new TelegramAgentO
 });
 ```
 
+## A2UI renderer
+
+[A2UI](https://a2ui.org) (Google, Apache-2.0) is an open, declarative protocol where an agent
+describes a UI as messages — `createSurface` / `updateComponents` / `updateDataModel` /
+`deleteSurface` — built from a pre-approved component catalog, and user interactions flow back as
+`action` messages. `TgLLM.A2UI` renders the Telegram-representable subset of that catalog —
+**`telegram-basic`**: `Text`, `Button`, `Row`, `Column`, `Divider`, `Image` — onto the Tool Router and
+edit-in-place above, **bidirectionally**: a surface becomes one Telegram message, a Button tap becomes
+an A2UI `action` handed to a host-provided sink, and the agent's follow-up messages re-render that
+same message in place. An agent that already emits A2UI for a web/mobile renderer drives a Telegram
+bot with no Telegram-specific code.
+
+The renderer reuses whatever Tool Router the bot/agent already has wired in (`.WithTools`/`Tools`) —
+it registers its own internal tool into that SAME registry, so a Button tap routes through the same
+hardened engine (durable bindings, per-chat ordering, deferred ack) the rest of the Tool Router uses.
+Building a renderer with no Tool Router wired in throws — the same fail-fast check `SendKeyboardPlan`
+itself already applies to a plan with tool buttons.
+
+**Wire the renderer and ingest a surface.**
+
+```fsharp
+open TgLLM.Core
+open TgLLM.FSharp
+open TgLLM.A2UI
+
+// The sink is where a tap's A2UI `action` goes — relay it to your agent over whatever transport it uses.
+let sink: ActionSink =
+    fun action ->
+        System.Console.WriteLine($"tap: {action.Name} on {action.SurfaceId} (component {action.SourceComponentId})")
+        Task.CompletedTask
+
+task {
+    use! bot = TgBot.startPolling ((TgBotConfig.create "<BOT_TOKEN>").WithTools(ToolRegistry.create ()))
+    let renderer = A2ui.renderer bot sink
+
+    // The agent emits standard A2UI; the host hands each message to the renderer for a target chat
+    // (A2UI carries no chat identity of its own).
+    match!
+        renderer.Ingest(
+            chatId,
+            """{ "version":"v1.0", "createSurface": {
+                   "surfaceId":"deploy-1", "catalogId":"telegram-basic",
+                   "dataModel": { "title": "Deploy to prod?" },
+                   "components": [
+                     { "id":"root", "component":"Column", "children":["title","actions"] },
+                     { "id":"title", "component":"Text", "text":{"path":"/title"} },
+                     { "id":"actions", "component":"Row", "children":["ok","docs"] },
+                     { "id":"ok", "component":"Button", "text":"Approve",
+                       "action":{"event":{"name":"approve","wantResponse":true,"actionId":"a1"}} },
+                     { "id":"docs", "component":"Button", "text":"Docs",
+                       "action":{"functionCall":{"call":"openUrl","args":{"url":"https://example.test/docs"}}} }
+                   ] } }"""
+        )
+    with
+    | Ok() -> ()   // one message sent: body "Deploy to prod?", one keyboard row [Approve][Docs]
+    | Error e -> eprintfn "%s" (A2uiError.describe e)
+}
+```
+
+```csharp
+using TgLLM.CSharp;
+
+// The sink is where a tap's A2UI `action` goes.
+ActionSink sink = action =>
+{
+    Console.WriteLine($"tap: {action.Name} on {action.SurfaceId} (component {action.SourceComponentId})");
+    return Task.CompletedTask;
+};
+
+var renderer = A2uiRenderer.Create(agent, sink);
+
+var result = await renderer.IngestAsync(chatId, createSurfaceJson);   // same JSON as above
+if (!result.Success) Console.Error.WriteLine(result.Error);
+```
+
+Text renders as literal, safe body text — reserved MarkdownV2 characters are escaped before the
+message is sent, so agent-produced text can never break formatting or inject markup.
+
+**A tap flows back, and the agent's reply re-renders in place.**
+
+When a user taps "Approve", `sink` receives an `A2uiAction` — `Name = "approve"`, `SurfaceId =
+"deploy-1"`, `SourceComponentId = "ok"`, `WantResponse = true`, `ActionId = Some "a1"` (`ActionId =
+"a1"` in C#) — for your host to relay to its agent. "Docs" opens client-side (its action is a local
+`openUrl` `functionCall`): no `action` is ever emitted for it, and no tool ever runs. The agent's
+reply re-renders the SAME surface in place:
+
+```fsharp
+match!
+    renderer.Ingest(
+        chatId,
+        """{ "version":"v1.0", "updateComponents": {
+               "surfaceId":"deploy-1",
+               "components": [ { "id":"title", "component":"Text", "text":"Deploying..." },
+                               { "id":"root", "component":"Column", "children":["title"] } ] } }"""
+    )
+with
+| Ok() -> ()   // the SAME message is edited in place: body "Deploying...", keyboard removed
+| Error e -> eprintfn "%s" (A2uiError.describe e)
+
+match! renderer.Ingest(chatId, """{ "version":"v1.0", "deleteSurface": { "surfaceId":"deploy-1" } }""") with
+| Ok() -> ()   // the message is deleted
+| Error e -> eprintfn "%s" (A2uiError.describe e)
+```
+
+```csharp
+await renderer.IngestAsync(chatId, updateComponentsJson);   // edits the SAME message in place
+await renderer.IngestAsync(chatId, """{ "version":"v1.0", "deleteSurface": { "surfaceId":"deploy-1" } }""");
+```
+
+A burst of `updateComponents`/`updateDataModel` for the same surface, sent without waiting for the
+previous one to land, still produces exactly one send and further edits — never a flood of new
+messages.
+
+**Unsupported components are surfaced, not silent.** A component outside `telegram-basic` (e.g. a
+`Slider`), an unknown `catalogId`, or a malformed message never crashes the bot and is never silently
+dropped. It always comes back as a failed `Ingest`/`IngestAsync` result, and — independently — to an
+observer, so it's visible even when the call it rode in on still succeeds because supported siblings
+rendered fine.
+
+```fsharp
+let observer =
+    { new IA2uiObserver with
+        member _.OnA2uiError(error) = eprintfn "%s" (A2uiError.describe error)
+        member _.OnMalformedAction(_descriptor) = () }
+
+let renderer = A2ui.rendererWithObserver bot sink observer
+```
+
+```csharp
+var renderer = A2uiRenderer.Create(agent, sink, onError: error =>
+    Console.Error.WriteLine($"A2UI: {error.Kind} — {error.Description}"));
+```
+
+**What you get**
+
+- An agent that already emits A2UI (for a web/mobile renderer) drives a Telegram bot with no
+  Telegram-specific code.
+- Only what a Telegram message can honestly show renders; everything else is surfaced, never
+  silently wrong.
+- The same tap → action → re-render loop works identically over long polling and webhooks, and in
+  both the F# and C# façades.
+
 ## What you can rely on
 
 - **Right hook, every tap.** Each button routes to exactly its own handler; taps never cross.
@@ -290,6 +432,8 @@ await using var agent = await TelegramAgent.StartPollingAsync(new TelegramAgentO
 - **Failures don't stop the bot.** A throwing handler is isolated and reported; later taps still work.
 - **Proactive sends.** Call `SendKeyboard`/`SendKeyboardAsync` any time — you don't need an incoming
   message first.
+- **Honest rendering.** An A2UI surface renders only the `telegram-basic` subset (Text, Button, Row,
+  Column, Divider, Image); anything else is surfaced, never silently dropped or rendered wrong.
 
 Full runnable examples live under [`examples/`](../examples): `PollingFSharp`, `PollingCSharp`,
 `WebhookFSharp`, `WebhookCSharp`.
