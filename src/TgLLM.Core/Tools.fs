@@ -417,6 +417,57 @@ type InMemoryBindingStore() =
 
             ValueTask.FromResult(List.length expiredTokens)
 
+/// Periodically calls `IBindingStore.EvictExpired` so a long-lived bot's binding store doesn't
+/// grow unbounded: `EvictExpired` itself has no other production caller, so without a background
+/// sweeper, an expiring/expired binding accumulates forever regardless of which store backs a bot
+/// (review #2). Owns its own background loop and `CancellationTokenSource`, STARTED at
+/// construction and stopped via `IAsyncDisposable.DisposeAsync` — mirrors
+/// `PerChatChannelDispatcher`'s "start eagerly, dispose cleanly" shape, and is wired into every
+/// bot's lifecycle the same way (`TgBot.wireBot`, TgLLM.FSharp/TgBot.fs): started alongside the
+/// update-ingestion run loop, disposed alongside it. `clock` is the SAME injected `Clock` the rest
+/// of a bot's expiry/dedup decisions use (never ambient `DateTimeOffset.UtcNow`), so a host that
+/// overrides it for deterministic tests gets a deterministic sweep too. `interval` defaults to 5
+/// minutes — frequent enough that a long-lived bot's store never accumulates an unbounded number
+/// of stale rows, infrequent enough to be a non-issue for any store's `EvictExpired` cost.
+[<Sealed>]
+type BindingEvictionSweeper(store: IBindingStore, clock: Clock, ?interval: TimeSpan) =
+    let interval = defaultArg interval (TimeSpan.FromMinutes 5.0)
+    let cts = new CancellationTokenSource()
+
+    /// The background loop itself: sweeps once every `interval`, forever, until `cts` is
+    /// cancelled (by `DisposeAsync`) — `Task.Delay` throwing `OperationCanceledException` is how
+    /// this loop learns to stop, same idiom `UpdateProcessor`'s own watchdog task uses for a
+    /// single-shot delay.
+    let loopTask: Task =
+        task {
+            try
+                while true do
+                    do! Task.Delay(interval, cts.Token)
+                    let! _ = store.EvictExpired(clock ())
+                    ()
+            with :? OperationCanceledException ->
+                ()
+        }
+
+    /// Runs ONE sweep pass immediately — the exact operation the background loop above repeats
+    /// every `interval`. Exposed directly so a test can drive the sweep deterministically (a fixed
+    /// clock advanced past an expiry), without waiting on the real interval.
+    member _.SweepOnce() : Task<int> = (store.EvictExpired(clock ())).AsTask()
+
+    interface IAsyncDisposable with
+        member _.DisposeAsync() : ValueTask =
+            task {
+                cts.Cancel()
+
+                try
+                    do! loopTask
+                with _ ->
+                    ()
+
+                cts.Dispose()
+            }
+            |> ValueTask
+
 /// Tracks which `CallbackToken`s are currently live for a sent/edited message's keyboard, so a
 /// re-render (`ctx.EditKeyboardAsync`, e.g. a paginator/counter tool) can remove its OWN previous
 /// bindings from the durable store instead of leaking one row per edit forever. `Record` is called

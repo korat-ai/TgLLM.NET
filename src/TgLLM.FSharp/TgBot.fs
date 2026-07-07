@@ -88,7 +88,13 @@ type CommonConfig =
       /// "Now", as seen by expiry/redelivery-dedup decisions. `None` (the
       /// default) uses real wall-clock time; overriding it is primarily useful for deterministic
       /// tests of a host's own expiry logic, not something a production bot normally needs.
-      Clock: Clock option }
+      Clock: Clock option
+      /// The interval this bot's background `BindingEvictionSweeper` (`TgLLM.Core.Tools`) uses to
+      /// call `IBindingStore.EvictExpired` on the configured/default binding store. Unlike
+      /// `IdleChatEviction`, `None` here does NOT mean "off" — `IBindingStore.EvictExpired` has no
+      /// other production caller, so the sweep itself always runs; `None` (the default) just uses
+      /// `BindingEvictionSweeper`'s own built-in interval. Only the INTERVAL is configurable.
+      BindingEvictionInterval: TimeSpan option }
 
 module CommonConfig =
     let create (botToken: string) : CommonConfig =
@@ -98,7 +104,8 @@ module CommonConfig =
           Tools = None
           BindingStore = None
           IdleChatEviction = None
-          Clock = None }
+          Clock = None
+          BindingEvictionInterval = None }
 
     let withBaseUrl (url: string) (c: CommonConfig) = { c with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger.
@@ -113,6 +120,10 @@ module CommonConfig =
     let withIdleChatEviction (timeout: TimeSpan) (c: CommonConfig) = { c with IdleChatEviction = Some timeout }
     /// Override the clock expiry/redelivery-dedup decisions read "now" from — defaults to real time.
     let withClock (clock: Clock) (c: CommonConfig) = { c with Clock = Some clock }
+    /// Override the interval this bot's background binding-eviction sweep uses — defaults to
+    /// `BindingEvictionSweeper`'s own built-in interval. The sweep itself runs regardless of
+    /// whether this is ever set.
+    let withBindingEvictionInterval (interval: TimeSpan) (c: CommonConfig) = { c with BindingEvictionInterval = Some interval }
 
 /// Long-polling bot configuration. `WithBaseUrl` overrides the Bot API endpoint — for a local Bot
 /// API server, Telegram's test environment, or pointing tests at a fake server.
@@ -133,6 +144,9 @@ type TgBotConfig =
         { this with Common = this.Common |> CommonConfig.withIdleChatEviction timeout }
 
     member this.WithClock(clock: Clock) = { this with Common = this.Common |> CommonConfig.withClock clock }
+
+    member this.WithBindingEvictionInterval(interval: TimeSpan) =
+        { this with Common = this.Common |> CommonConfig.withBindingEvictionInterval interval }
 
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
@@ -160,6 +174,9 @@ type TgWebhookConfig =
 
     member this.WithClock(clock: Clock) = { this with Common = this.Common |> CommonConfig.withClock clock }
 
+    member this.WithBindingEvictionInterval(interval: TimeSpan) =
+        { this with Common = this.Common |> CommonConfig.withBindingEvictionInterval interval }
+
 /// A running bot: ingests updates in the background and lets the agent send keyboards/messages.
 /// Dispose (`use!`/`IAsyncDisposable`) to stop ingestion and release the per-chat dispatcher.
 [<Sealed>]
@@ -175,6 +192,7 @@ type TgBot
         clock: Clock,
         cts: CancellationTokenSource,
         runTask: Task,
+        evictionSweeper: BindingEvictionSweeper,
         webhookSource: WebhookUpdateSource option
     ) =
 
@@ -296,6 +314,7 @@ type TgBot
                     ()
 
                 do! dispatcher.DisposeAsync()
+                do! (evictionSweeper :> IAsyncDisposable).DisposeAsync()
                 cts.Dispose()
             }
             |> ValueTask
@@ -340,6 +359,14 @@ type TgBot
         // is still live — matching `common.Clock`'s own default when the host never overrides it.
         let clock = defaultArg common.Clock (fun () -> DateTimeOffset.UtcNow)
 
+        // Started here — alongside the run loop, below — and disposed alongside it
+        // (`DisposeAsync`): `IBindingStore.EvictExpired` has no other production caller, so
+        // WITHOUT this, `bindingStore` (whichever store backs this bot, default or host-supplied)
+        // would grow unbounded with expiring/expired bindings forever (review #2). Shares this
+        // bot's OWN `clock`, so a host that overrides it for deterministic tests gets a
+        // deterministic sweep too.
+        let evictionSweeper = new BindingEvictionSweeper(bindingStore, clock, ?interval = common.BindingEvictionInterval)
+
         let processor =
             UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch, clock = clock)
         let cts = new CancellationTokenSource()
@@ -358,7 +385,7 @@ type TgBot
                 | ex -> observer.OnRunLoopFailed ex
             }
 
-        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, clock, cts, runTask, webhookSource)
+        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, clock, cts, runTask, evictionSweeper, webhookSource)
 
     /// Start ingesting updates via long polling (deletes any configured webhook first). The returned
     /// bot is already polling in the background.

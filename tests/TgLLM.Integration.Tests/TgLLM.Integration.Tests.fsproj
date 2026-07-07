@@ -33,6 +33,7 @@
     <Compile Include="ToolRoutingAtScaleTests.fs" />
     <Compile Include="LifecycleTests.fs" />
     <Compile Include="SendKeyboardPlanExpirySingleUseTests.fs" />
+    <Compile Include="BindingEvictionSweepWiringTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

@@ -22,6 +22,7 @@
     <Compile Include="ToolManifestTests.fs" />
     <Compile Include="BindingStoreTests.fs" />
     <Compile Include="BindingStoreEvictionTests.fs" />
+    <Compile Include="BindingEvictionSweeperTests.fs" />
     <Compile Include="MessageBindingTrackerTests.fs" />
     <Compile Include="RoutingTests.fs" />
     <Compile Include="InMemoryHookStoreTests.fs" />
