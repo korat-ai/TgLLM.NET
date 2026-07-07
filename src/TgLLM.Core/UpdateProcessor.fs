@@ -147,16 +147,28 @@ type UpdateProcessor
     /// thunk — the only one available at enqueue time, and the correct scope for "stop counting
     /// down if the whole processor is shutting down" anyway.
     let startDeferredAck (press: ButtonPress) (ct: CancellationToken) : DeferredAckState =
-        let mutable ackText: string option = None
-        let mutable ackAlert = false
+        // ONE field, written ONCE per directive (review #8) — `AnswerAction` used to write
+        // `ackText`/`ackAlert` as two SEPARATE mutable fields, read separately by `sendAckOnce`.
+        // Those two fields have no ordering relationship to each other: `AnswerAction` runs on
+        // whichever thread the tool itself completes on, while `sendAckOnce` can run
+        // CONCURRENTLY on the watchdog's own timer thread — nothing stops a weak memory model
+        // (e.g. ARM64's store-reordering) from making the watchdog observe the NEW `ackAlert`
+        // together with the STILL-DEFAULT `ackText`, a directive that was never actually set. A
+        // tuple is a reference type — the CLR guarantees an aligned reference read/write is
+        // atomic on every platform — so publishing (and reading) the WHOLE directive through one
+        // field makes "the reader sees either the complete old state or the complete new state,
+        // never a mix" true by construction, with no explicit `Volatile`/fence needed.
+        let mutable ackDirective: string option * bool = (None, false)
         let mutable acked = 0
         let watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(ct)
 
         let sendAckOnce () : Task =
             task {
                 if Interlocked.CompareExchange(&acked, 1, 0) = 0 then
+                    let text, alert = ackDirective // read ONCE — see `ackDirective`'s own comment.
+
                     try
-                        do! api.AnswerCallback(press.QueryId, ackText, ackAlert, ct)
+                        do! api.AnswerCallback(press.QueryId, text, alert, ct)
                     with _ ->
                         () // a losing/late ack call can legitimately fail server-side; swallow.
             }
@@ -172,8 +184,8 @@ type UpdateProcessor
 
         { AnswerAction =
             fun text alert ->
-                ackText <- Some text
-                ackAlert <- alert
+                // ONE write of the WHOLE directive — see `ackDirective`'s own comment above.
+                ackDirective <- (Some text, alert)
           SendAckOnce = sendAckOnce
           Finish =
             fun () ->

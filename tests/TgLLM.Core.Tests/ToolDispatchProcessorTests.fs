@@ -493,4 +493,79 @@ let toolDispatchProcessorTests =
 
             Expect.equal api.Calls [ AckFirst press.QueryId ] "ack-first, via the 2-arg overload, unchanged"
             Expect.equal (List.length dispatcher.Enqueued) 1 "the resolved hook is still enqueued"
+
+        testCase
+            "ctx.Answer racing the watchdog never produces a torn (partial) ack directive (repeated to shake out the race)"
+        <| fun _ ->
+            // A VERY tight watchdog budget, repeated many times, so the tool's own write of its
+            // ack directive (`ctx.Answer`, on the dispatcher's own thread) has a real chance of
+            // landing concurrently with the watchdog's read of it (on a threadpool timer thread) —
+            // exactly the two-independent-threads shape review #8 is about. Every recorded ack MUST
+            // be one of the two VALID complete states (the watchdog's default, or the tool's own
+            // full directive) — never a mix of one field from each (e.g. the new alert flag with
+            // the OLD/default text, or vice versa).
+            let iterations = 300
+            let mutable tornCount = 0
+            let mutable tornExamples: string list = []
+
+            for i in 1..iterations do
+                let token = CallbackToken.generate ()
+                let press = samplePress token (int64 i)
+                let releaseGate = new ManualResetEventSlim(false)
+
+                let tool: Tool =
+                    fun ctx ->
+                        task {
+                            releaseGate.Wait()
+                            ctx.Answer("done", alert = true)
+                        }
+
+                let dispatch = makeDispatch token "racey" None (Some tool)
+                let api = FakeBotApiClient()
+                let dispatcher = FakeDispatcher()
+                let observer = FakeHookObserver()
+                let source = FakeUpdateSource [ ButtonPressed press ]
+
+                let processor =
+                    UpdateProcessor(
+                        source,
+                        InMemoryHookStore(),
+                        api,
+                        dispatcher,
+                        observer,
+                        toolDispatch = dispatch,
+                        watchdogBudget = TimeSpan.FromMilliseconds 1.0
+                    )
+
+                (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
+
+                let work =
+                    match dispatcher.Enqueued with
+                    | [ (_, w) ] -> w
+                    | other -> failwithf "expected exactly one enqueued item, got %d" (List.length other)
+
+                // Invoking `work` on a THREADPOOL thread (not this test's own thread): the tool's
+                // body blocks synchronously on `releaseGate.Wait()` before its first genuine await,
+                // so calling it directly here (an F# `task {}` starts eagerly, on the CALLING
+                // thread, up to its first suspension point) would deadlock this very thread against
+                // the `releaseGate.Set()` two lines below.
+                let workTask = Task.Run(fun () -> work CancellationToken.None)
+
+                // Release the tool's write right around when the ~1ms watchdog is expected to
+                // fire on its own thread — maximizes the odds of the two racing.
+                Thread.Sleep 1
+                releaseGate.Set()
+                workTask.GetAwaiter().GetResult()
+
+                match api.Calls with
+                | [ AckDeferred(_, None, false) ]
+                | [ AckDeferred(_, Some "done", true) ] -> ()
+                | other ->
+                    tornCount <- tornCount + 1
+                    tornExamples <- sprintf "%A" other :: tornExamples
+
+            Expect.equal
+                tornCount
+                0
+                $"never observed a torn ack directive across {iterations} iterations; examples: %A{tornExamples}"
     ]
