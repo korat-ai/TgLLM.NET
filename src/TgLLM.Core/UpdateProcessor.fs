@@ -204,8 +204,8 @@ type UpdateProcessor
     /// saves/tracks its bindings via the shared `ToolKeyboardOps.deliver` (Tools.fs) — same
     /// before-the-wire ordering guarantee, and the same stale-binding cleanup, as
     /// `TgBot.SendKeyboardPlan` uses for a fresh send. Always scopes the replacement keyboard to
-    /// `Anyone`/no notice override — a tool's own re-rendered keyboard isn't owner-scoped in this
-    /// slice (only a fresh `SendKeyboardPlan` accepts an owner).
+    /// `Anyone`/no notice override/no expiry/not single-use — a tool's own re-rendered keyboard
+    /// carries none of these send-time options (only a fresh `SendKeyboardPlan` accepts them).
     let makeEditKeyboardAction (press: ButtonPress) (dispatch: ToolDispatch) (workCt: CancellationToken) (plan: ToolKeyboard) : Task =
         ToolKeyboardOps.deliver
             "PressContext.EditKeyboardAsync"
@@ -216,6 +216,8 @@ type UpdateProcessor
             (Some press.MessageId)
             Anyone
             None
+            None
+            false
             (fun registeredKeyboard ->
                 task {
                     let! outcome = api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)

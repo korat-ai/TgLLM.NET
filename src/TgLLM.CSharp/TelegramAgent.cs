@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.FSharp.Core;
 using TgLLM.FSharp;
 using TgLLM.Webhooks;
 
@@ -175,6 +176,14 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// Overrides the notice a refused non-owner presser sees; <c>null</c> (the default) uses the
     /// library's built-in notice.
     /// </param>
+    /// <param name="expiresIn">
+    /// Stamps every tool binding this send produces with an expiry this far past the bot's own
+    /// clock; <c>null</c> (the default) leaves the binding with no expiry, unchanged behavior.
+    /// </param>
+    /// <param name="singleUse">
+    /// When <c>true</c>, stamps every tool binding this send produces as consumed after its first
+    /// successful press; <c>false</c> (the default) leaves bindings reusable, unchanged behavior.
+    /// </param>
     /// <param name="ct">Same semantics as <see cref="SendKeyboardAsync"/>'s <c>ct</c>.</param>
     public Task<long> SendKeyboardPlanAsync(
         long chatId,
@@ -182,13 +191,23 @@ public sealed class TelegramAgent : IAsyncDisposable
         KeyboardPlan plan,
         TgLLM.Core.OwnerScope? owner = null,
         string? deniedNotice = null,
+        TimeSpan? expiresIn = null,
+        bool singleUse = false,
         CancellationToken ct = default) =>
         // `deniedNotice` reaches the F# optional parameter through its generated
         // `string -> FSharpOption<string>` implicit conversion, which itself maps a `null` argument
         // to `None` (the same "no override" the F# façade's own callers get by omitting the
         // argument) — the `!` here silences a nullable-reference-type false positive on that
-        // conversion, not an actual null-safety gap.
-        _bot.SendKeyboardPlan(chatId, text, plan.Plan, owner ?? Owner.Anyone, deniedNotice!).WaitAsync(ct);
+        // conversion, not an actual null-safety gap. `expiresIn` is a value type (`TimeSpan`), so
+        // that same implicit conversion has no null case to lean on — `OptionModule.OfNullable`
+        // (the same helper `BindingStoreAdapter` already uses for `ExpiresAt`) maps the CLR
+        // `Nullable<TimeSpan>` explicitly: `null` -> `None`, a value -> `Some value`. `singleUse` is
+        // a non-nullable `bool` (already defaulted to `false` at this boundary), so it flows through
+        // the same implicit `bool -> FSharpOption<bool>` conversion `owner` uses, no explicit
+        // wrapping needed.
+        _bot
+            .SendKeyboardPlan(chatId, text, plan.Plan, owner ?? Owner.Anyone, deniedNotice!, OptionModule.OfNullable(expiresIn), singleUse)
+            .WaitAsync(ct);
 
     /// <summary>
     /// Send a plain text message to a chat; returns the sent message id.

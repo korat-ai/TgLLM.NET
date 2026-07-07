@@ -600,14 +600,16 @@ module ToolKeyboardOps =
     /// programmer error by the caller (Always-Rule 6) — fails fast (`invalidArg`, tagged with
     /// `context` for a useful message) rather than threading a `Result` through this API.
     ///
-    /// `owner`/`deniedNotice` (US1) apply uniformly to EVERY tool binding this one call produces —
-    /// a keyboard has ONE owner scope, shared by all its tool buttons, not a per-button setting
-    /// (`ToolPlan.plan` itself stays owner-agnostic, defaulting every binding to `Anyone`/`None`;
-    /// this is a deliberate post-processing step here rather than a `ToolPlan.plan` parameter, so
-    /// `plan`'s own signature — and every already-green call site, including the FsCheck property
-    /// suites — stays untouched). `TgBot.SendKeyboardPlan` passes the host's chosen scope;
-    /// `UpdateProcessor`'s edit-in-place wiring (`ctx.EditKeyboardAsync`) passes `Anyone`/`None`,
-    /// since a tool's own replacement keyboard isn't scoped in this slice.
+    /// `owner`/`deniedNotice`/`expiresAt`/`singleUse` apply uniformly to EVERY tool binding this
+    /// one call produces — a keyboard has ONE owner scope, ONE expiry, and ONE single-use flag,
+    /// shared by all its tool buttons, not a per-button setting (`ToolPlan.plan` itself stays
+    /// agnostic to all four, defaulting every binding to `Anyone`/`None`/`None`/`false`; this is a
+    /// deliberate post-processing step here rather than a `ToolPlan.plan` parameter, so `plan`'s own
+    /// signature — and every already-green call site, including the FsCheck property suites — stays
+    /// untouched). `TgBot.SendKeyboardPlan` passes the host's chosen scope/expiry/single-use;
+    /// `UpdateProcessor`'s edit-in-place wiring (`ctx.EditKeyboardAsync`) passes
+    /// `Anyone`/`None`/`None`/`false`, since a tool's own replacement keyboard carries none of these
+    /// send-time options.
     let deliver
         (context: string)
         (tokenGen: unit -> CallbackToken)
@@ -617,6 +619,8 @@ module ToolKeyboardOps =
         (staleMessageId: MessageId option)
         (owner: OwnerScope)
         (deniedNotice: string option)
+        (expiresAt: DateTimeOffset option)
+        (singleUse: bool)
         (send: RegisteredKeyboard -> Task<MessageId>)
         (ct: CancellationToken)
         (plan: ToolKeyboard)
@@ -625,7 +629,15 @@ module ToolKeyboardOps =
             match ToolPlan.plan (Seq.initInfinite (fun _ -> tokenGen ())) plan with
             | Error e -> return invalidArg (nameof plan) $"{context}: invalid plan ({e})"
             | Ok(registeredKeyboard, unscopedBindings) ->
-                let bindings = unscopedBindings |> List.map (fun b -> { b with Owner = owner; DeniedNotice = deniedNotice })
+                let bindings =
+                    unscopedBindings
+                    |> List.map (fun b ->
+                        { b with
+                            Owner = owner
+                            DeniedNotice = deniedNotice
+                            ExpiresAt = expiresAt
+                            SingleUse = singleUse })
+
                 do! store.Save(bindings, ct)
 
                 let! messageId =

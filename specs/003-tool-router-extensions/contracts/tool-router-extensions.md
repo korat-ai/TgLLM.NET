@@ -9,9 +9,14 @@ entry point below is new or an overload. Indicative signatures — finalized via
 
 ```fsharp
 // Slice-2: TgBot.SendKeyboardPlan(chat, text, plan)
-// New: an optional owner scope. Default (omitted) = Anyone (unchanged behavior).
+// New: an optional owner scope, plus send-time expiry/single-use. Every new parameter is a
+// PER-KEYBOARD send option (shared by every tool button this call sends), not a per-button
+// decorator — omitted preserves prior behavior for that option alone.
 member SendKeyboardPlan: chat: ChatId * text: string * plan: ToolKeyboard * ?owner: OwnerScope
-                         * ?deniedNotice: string -> Task<MessageId>   // shown to a non-owner presser
+                         * ?deniedNotice: string    // shown to a non-owner presser
+                         * ?expiresIn: TimeSpan      // binding stops resolving this far past the bot's clock
+                         * ?singleUse: bool          // binding is consumed after its first successful press
+                         -> Task<MessageId>
 
 module Owner =
     val anyone: OwnerScope
@@ -49,11 +54,11 @@ type PressContext with
 
 ### Expiry / single-use / durable stores (US4)
 
-```fsharp
-module Plan =
-    val expiring:  TimeSpan  -> PlanButton -> PlanButton     // decorate a tool button with a TTL
-    val singleUse: PlanButton -> PlanButton                  // confirm-once
+Expiry and single-use are `SendKeyboardPlan`'s own `?expiresIn`/`?singleUse` (see above) — there is
+no `Plan.expiring`/`Plan.singleUse` button decorator; both apply uniformly to every tool binding
+one send produces.
 
+```fsharp
 // New store; same IBindingStore seam as FileBindingStore.
 type LiteDbBindingStore =
     static member OpenAt: path: string -> LiteDbBindingStore  // in TgLLM.Persistence.LiteDb
@@ -66,9 +71,11 @@ type TgBotConfig with
 ## C# façade (`TgLLM.CSharp`)
 
 ```csharp
-// US1 — owner scope on send
+// Owner scope, plus send-time expiry/single-use — every new parameter is a per-keyboard send
+// option, not a per-button decorator.
 Task<int> SendKeyboardPlanAsync(long chatId, string text, KeyboardPlan plan,
                                 OwnerScope? owner = null, string? deniedNotice = null,
+                                TimeSpan? expiresIn = null, bool singleUse = false,
                                 CancellationToken ct = default);      // deniedNotice → non-owner; ct honored (review #6)
 public static class Owner { public static OwnerScope Anyone {get;} public static OwnerScope User(long id); }
 

@@ -172,6 +172,7 @@ type TgBot
         tracker: MessageBindingTracker,
         dispatcher: IPressDispatcher,
         toolDispatch: ToolDispatch option,
+        clock: Clock,
         cts: CancellationTokenSource,
         runTask: Task,
         webhookSource: WebhookUpdateSource option
@@ -194,20 +195,35 @@ type TgBot
     /// `deniedNotice` overrides the notice a refused non-owner sees; omitted uses the built-in
     /// default (`OwnerScope.DefaultDeniedNotice`).
     ///
+    /// `expiresIn` stamps every tool binding this send produces with an `ExpiresAt` of this bot's
+    /// own clock (`TgBotConfig.WithClock`, defaulting to real UTC time) plus `expiresIn`; omitted
+    /// leaves the binding with no expiry, unchanged from before. `singleUse = true` stamps every
+    /// binding as consumed after its first successful press; omitted (the default, `false`) leaves
+    /// bindings reusable, unchanged from before.
+    ///
     /// Fails fast if `plan` has a tool button but NO Tool Router was ever wired in
     /// (`TgBotConfig.WithTools`/`TgWebhookConfig.WithTools`) — without this
     /// check, such a button would reach the wire, get tapped, and silently no-op forever (no
     /// `ToolDispatch` could ever resolve its binding). A URL-only plan is always fine, regardless of
     /// wiring.
     member _.SendKeyboardPlan
-        (chat: ChatId, text: MessageText, plan: ToolKeyboard, ?owner: OwnerScope, ?deniedNotice: string)
-        : Task<MessageId> =
+        (
+            chat: ChatId,
+            text: MessageText,
+            plan: ToolKeyboard,
+            ?owner: OwnerScope,
+            ?deniedNotice: string,
+            ?expiresIn: TimeSpan,
+            ?singleUse: bool
+        ) : Task<MessageId> =
         if toolDispatch.IsNone && ToolPlan.hasToolButtons plan then
             invalidOp
                 "TgBot.SendKeyboardPlan: this plan has a tool button, but no Tool Router is wired in \
                  (call .WithTools on the bot config first) — every tap would silently no-op forever, \
                  since no ToolDispatch could ever resolve its binding. Wire a Tool Router, or use \
                  only URL buttons if no tool routing is needed."
+
+        let expiresAt = expiresIn |> Option.map (fun span -> clock () + span)
 
         ToolKeyboardOps.deliver
             "TgBot.SendKeyboardPlan"
@@ -224,15 +240,32 @@ type TgBot
             (match deniedNotice with
              | Some s when not (System.String.IsNullOrEmpty s) -> Some s
              | _ -> None)
+            expiresAt
+            (defaultArg singleUse false)
             (fun registeredKeyboard -> api.SendKeyboard(chat, text, registeredKeyboard, cts.Token))
             cts.Token
             plan
 
     /// C#-friendly overload that accepts a raw string (validated with `MessageText.unsafe`).
     member this.SendKeyboardPlan
-        (chat: ChatId, text: string, plan: ToolKeyboard, ?owner: OwnerScope, ?deniedNotice: string)
-        : Task<MessageId> =
-        this.SendKeyboardPlan(chat, MessageText.unsafe text, plan, ?owner = owner, ?deniedNotice = deniedNotice)
+        (
+            chat: ChatId,
+            text: string,
+            plan: ToolKeyboard,
+            ?owner: OwnerScope,
+            ?deniedNotice: string,
+            ?expiresIn: TimeSpan,
+            ?singleUse: bool
+        ) : Task<MessageId> =
+        this.SendKeyboardPlan(
+            chat,
+            MessageText.unsafe text,
+            plan,
+            ?owner = owner,
+            ?deniedNotice = deniedNotice,
+            ?expiresIn = expiresIn,
+            ?singleUse = singleUse
+        )
 
     /// C#-friendly overloads that accept a raw string (validated with `MessageText.unsafe`), so the
     /// C# façade never touches the F# `MessageText` type.
@@ -302,9 +335,13 @@ type TgBot
             | None -> NoopHookObserver() :> IHookObserver
 
         let toolDispatch = common.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
+        // Resolved once here (not read ambiently from `DateTimeOffset.UtcNow`) so `SendKeyboardPlan`
+        // stamps `expiresIn` against the SAME "now" `UpdateProcessor` uses to decide whether a press
+        // is still live — matching `common.Clock`'s own default when the host never overrides it.
+        let clock = defaultArg common.Clock (fun () -> DateTimeOffset.UtcNow)
 
         let processor =
-            UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch, ?clock = common.Clock)
+            UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch, clock = clock)
         let cts = new CancellationTokenSource()
 
         // A faulted run loop must be surfaced via `observer`, not silently swallowed at `Dispose` —
@@ -321,7 +358,7 @@ type TgBot
                 | ex -> observer.OnRunLoopFailed ex
             }
 
-        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, cts, runTask, webhookSource)
+        new TgBot(api, store, bindingStore, tracker, dispatcher, toolDispatch, clock, cts, runTask, webhookSource)
 
     /// Start ingesting updates via long polling (deletes any configured webhook first). The returned
     /// bot is already polling in the background.

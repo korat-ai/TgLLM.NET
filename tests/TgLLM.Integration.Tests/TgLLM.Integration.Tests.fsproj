@@ -32,6 +32,7 @@
     <Compile Include="ClientButtonsTests.fs" />
     <Compile Include="ToolRoutingAtScaleTests.fs" />
     <Compile Include="LifecycleTests.fs" />
+    <Compile Include="SendKeyboardPlanExpirySingleUseTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

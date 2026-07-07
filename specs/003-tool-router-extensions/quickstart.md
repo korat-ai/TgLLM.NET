@@ -65,10 +65,12 @@ let plan =
 
 ## 5. Expiry, confirm-once, and a durable LiteDB store (US4)
 
+`expiresIn`/`singleUse` are send-time options on `SendKeyboardPlan` itself — a keyboard has ONE
+expiry and ONE single-use flag, shared by every tool button it sends, not a per-button decorator.
+
 ```fsharp
-let plan =
-    ToolKeyboard.create
-        [ [ Plan.tool "Confirm" "confirm" |> Plan.expiring (TimeSpan.FromMinutes 10.) |> Plan.singleUse ] ]
+let plan = ToolKeyboard.create [ [ Plan.tool "Confirm" "confirm" ] ]
+do! bot.SendKeyboardPlan(chat = chatId, text = "Confirm?", plan = plan, expiresIn = TimeSpan.FromMinutes 10., singleUse = true)
 // After 10 min, or after the first successful press, a tap resolves as unknown (ack, no tool).
 
 // Bindings survive restart in LiteDB (interchangeable with the in-memory and file stores):
@@ -78,7 +80,10 @@ let config = TgBotConfig.create(token).WithTools(registry).WithBindingStore(stor
 ```
 
 ```csharp
-// C# — same store
+// C#
+await agent.SendKeyboardPlanAsync(chatId, "Confirm?", plan, expiresIn: TimeSpan.FromMinutes(10), singleUse: true);
+
+// Same store
 var options = new TelegramAgentOptions(token)
 {
     Tools = registry,
