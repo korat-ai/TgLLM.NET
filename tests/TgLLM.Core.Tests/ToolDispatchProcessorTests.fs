@@ -86,11 +86,11 @@ type private FakeBotApiClient() =
 
         member _.EditMessageText(chat, message, text, keyboard, _ct) =
             edits.Add(EditText(chat, message, MessageText.value text, keyboard))
-            Task.CompletedTask
+            Task.FromResult EditApplied
 
         member _.EditMessageReplyMarkup(chat, message, keyboard, _ct) =
             edits.Add(EditKeyboard(chat, message, keyboard))
-            Task.CompletedTask
+            Task.FromResult EditApplied
 
 /// Records enqueued work instead of running it on real per-chat channels — the test decides when to
 /// invoke a recorded work item (same pattern as `UpdateProcessorTests.fs`'s private fake).
@@ -114,6 +114,7 @@ type private FakeHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(press, error) = failed.Add(press, error)
         member _.OnUnknownToken(press) = unknown.Add press
+        member _.OnEditFailed(_press, _reason) = ()
         member _.OnRunLoopFailed(_error) = ()
 
 /// Wires a real `InMemoryToolRegistry` + `InMemoryBindingStore` (already green, Foundational phase)

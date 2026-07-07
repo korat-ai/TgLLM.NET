@@ -2,9 +2,10 @@
 /// server, mirroring `ToolRouterAcceptanceTests.fs`'s structure. A tool that edits the pressed
 /// message's text and replaces its keyboard changes the SAME message (no new `sendMessage`); a tool
 /// that calls `Answer(text, alert)` makes `answerCallbackQuery` carry that text/alert. Editing a
-/// vanished message (the fake server returns `"message to edit not found"`) is caught and surfaced
-/// via the observer (here: the `ILogger` `LoggingHookObserver` bridges to) without crashing the bot
-/// — proven by the ack STILL happening afterwards.
+/// vanished message (the fake server returns `"message to edit not found"`) never throws to the
+/// tool author at all — it is classified and surfaced softly via the observer (here: the `ILogger`
+/// `LoggingHookObserver` bridges to, as a Warning) without crashing the bot; see
+/// `EditErrorTests.fs` for the full soft-edit-error contract (silent no-op vs. soft failure).
 module TgLLM.Integration.Tests.EditInPlaceTests
 
 open System
@@ -70,7 +71,9 @@ type private NoopScope() =
 
 type private RecordingLogger() =
     let errors = ResizeArray<exn>()
+    let warnings = ResizeArray<string>()
     member _.Errors: exn list = List.ofSeq errors
+    member _.Warnings: string list = List.ofSeq warnings
 
     interface ILogger with
         member _.BeginScope<'TState when 'TState: not null>(_state: 'TState) : IDisposable = new NoopScope()
@@ -81,12 +84,14 @@ type private RecordingLogger() =
             (
                 logLevel: LogLevel,
                 _eventId: EventId,
-                _state: 'TState,
+                state: 'TState,
                 error: exn | null,
-                _formatter: Func<'TState, exn | null, string>
+                formatter: Func<'TState, exn | null, string>
             ) : unit =
-            if logLevel = LogLevel.Error then
-                error |> Option.ofObj |> Option.iter errors.Add
+            match logLevel with
+            | LogLevel.Error -> error |> Option.ofObj |> Option.iter errors.Add
+            | LogLevel.Warning -> warnings.Add(formatter.Invoke(state, error))
+            | _ -> ()
 
 [<Tests>]
 let editInPlaceTests =
@@ -201,17 +206,25 @@ let editInPlaceTests =
                   |> Async.AwaitTask
           }
 
-          testCaseAsync "editing a vanished message is caught, surfaced via the observer, and does not crash the bot"
+          testCaseAsync "editing a vanished message does not throw to the tool author, is surfaced softly via the observer, and does not crash the bot"
           <| async {
               do!
                   task {
                       use! server = FakeBotApiServer.start ()
                       let logger = RecordingLogger()
+                      let ranPastEdit = TaskCompletionSource()
 
                       let tools =
                           ToolRegistry
                               .create()
-                              .Register("approve", (fun ctx -> task { do! ctx.EditTextAsync "too late" }))
+                              .Register(
+                                  "approve",
+                                  fun ctx ->
+                                      task {
+                                          do! ctx.EditTextAsync "too late" // must not throw
+                                          ranPastEdit.TrySetResult() |> ignore
+                                      }
+                              )
 
                       server.EnqueueError("editMessageText", 400, "Bad Request: message to edit not found")
 
@@ -230,16 +243,19 @@ let editInPlaceTests =
                               TelegramJson.batch [ TelegramJson.callbackQueryUpdate 1 "q-vanished" approveToken 603L 44 902L "Cy" ]
                           )
 
-                          // The tool's own edit attempt fails and propagates; the processor's ambient
-                          // try/with (buildToolWork) still sends exactly one ack afterwards — the
-                          // system-level proof that this "crashed" nothing.
+                          // The tool's own edit attempt is classified into an `EditOutcome` and never
+                          // throws (FR-015) — the tool runs to completion, and the processor still
+                          // sends exactly one ack afterwards, the system-level proof this "crashed"
+                          // nothing.
                           do! pollUntil 5000 (fun () -> server.RequestsFor "answerCallbackQuery" |> List.isEmpty |> not)
+                          do! ranPastEdit.Task
 
-                          Expect.isNonEmpty logger.Errors "the edit failure was surfaced via the observer (no silent swallow)"
+                          Expect.isEmpty logger.Errors "a soft edit failure is not a hard (OnHookFailed) failure"
+                          Expect.isNonEmpty logger.Warnings "the edit failure was surfaced softly via the observer (no silent swallow)"
 
                           Expect.isNonEmpty
                               (server.RequestsFor "answerCallbackQuery")
-                              "the press was still acknowledged after the edit failure — the bot did not crash"
+                              "the press was still acknowledged after the soft edit failure — the bot did not crash"
                   }
                   |> Async.AwaitTask
           } ]

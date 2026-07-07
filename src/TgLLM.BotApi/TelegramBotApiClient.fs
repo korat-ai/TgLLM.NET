@@ -23,6 +23,7 @@ open System.Threading
 open System.Threading.Tasks
 open FSharp.UMX
 open Telegram.Bot
+open Telegram.Bot.Exceptions
 open Telegram.Bot.Types
 open Telegram.Bot.Types.Enums
 open Telegram.Bot.Types.ReplyMarkups
@@ -121,6 +122,35 @@ module Mapping =
                 ValueSome(ButtonPressed press)
             | _ -> ValueSome(AckOnly(UMX.tag<callbackQueryId> query.Id))
 
+/// Classifies Telegram's two well-known, non-fatal `editMessageText`/`editMessageReplyMarkup`
+/// errors (US4, FR-015) into an `EditOutcome` instead of letting them propagate as an exception.
+///
+/// Verified against the installed Telegram.Bot 22.10.1 assembly by decompilation (Principle V),
+/// not assumed: `TelegramBotClient.SendRequest` hands an unsuccessful Bot API response to
+/// `ExceptionsParser.Parse` (`DefaultExceptionParser` by default), whose body is exactly
+/// `new ApiRequestException(apiResponse.Description, apiResponse.ErrorCode, apiResponse.Parameters)`
+/// — so `ApiRequestException.Message` IS the wire `description` string, byte-for-byte, with no
+/// reformatting. Matching on it directly (rather than, say, `ErrorCode`, which the Bot API does not
+/// distinguish these two cases by) is matching the actual vendor contract. A substring match (not
+/// equality) tolerates the real API's `"Bad Request: "` prefix and any further per-request detail
+/// Telegram may append after the documented phrase.
+module private EditErrorClassification =
+    let private isNotModified (message: string) = message.Contains "message is not modified"
+    let private isNotFound (message: string) = message.Contains "message to edit not found"
+
+    /// Runs `send`, downgrading exactly the two recognized `ApiRequestException`s to a value; any
+    /// OTHER exception (a different `ApiRequestException`, a network failure, ...) still propagates
+    /// unchanged — only these two specific, well-known outcomes are ever downgraded.
+    let classify (send: unit -> Task) : Task<EditOutcome> =
+        task {
+            try
+                do! send ()
+                return EditApplied
+            with
+            | :? ApiRequestException as ex when isNotModified ex.Message -> return EditNotModified
+            | :? ApiRequestException as ex when isNotFound ex.Message -> return EditNotFound
+        }
+
 /// `IBotApiClient` over a real (or fake-hosted) `ITelegramBotClient`. Injected rather than
 /// constructed from a bot token directly, so the façade owns client lifetime/HttpClient choice
 /// and tests can point it at `FakeBotApiServer` via `TelegramBotClientOptions`'s `baseUrl`
@@ -179,12 +209,10 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
         /// `editMessageText`'s `reply_markup` is OPTIONAL — omitting it (`None` here) leaves the
         /// message's CURRENT keyboard untouched, verified against Telegram.Bot's own
         /// `EditMessageText` extension (Principle V); `Some` replaces it, same unconditional
-        /// mapping `SendKeyboard` already uses. Deliberately does NOT catch `ApiRequestException`
-        /// here (`"message to edit not found"`/`"message is not modified"`) — see `Ports.fs`'s
-        /// `EditMessageText` doc comment for why letting it propagate is the right layer:
-        /// `UpdateProcessor`'s existing per-tool try/with already catches and reports any
-        /// tool-body exception via `IHookObserver`, and this port has no `ButtonPress` to
-        /// attribute a failure to in the first place.
+        /// mapping `SendKeyboard` already uses. Classifies `"message to edit not found"`/`"message
+        /// is not modified"` into `EditOutcome` (`EditErrorClassification.classify`, FR-015)
+        /// instead of letting them propagate; any OTHER exception still propagates, caught by
+        /// `UpdateProcessor`'s existing per-tool try/with same as before.
         member _.EditMessageText
             (
                 chat: ChatId,
@@ -192,33 +220,35 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
                 text: MessageText,
                 keyboard: RegisteredKeyboard option,
                 ct: CancellationToken
-            ) : Task =
+            ) : Task<EditOutcome> =
             let replyMarkup = keyboard |> Option.map Mapping.toInlineKeyboardMarkup |> Option.toObj
 
-            client.EditMessageText(
-                chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
-                messageId = int (UMX.untag message),
-                text = MessageText.value text,
-                replyMarkup = replyMarkup,
-                cancellationToken = ct
-            )
-            :> Task
+            EditErrorClassification.classify (fun () ->
+                client.EditMessageText(
+                    chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                    messageId = int (UMX.untag message),
+                    text = MessageText.value text,
+                    replyMarkup = replyMarkup,
+                    cancellationToken = ct
+                )
+                :> Task)
 
         /// Replaces the message's keyboard only, leaving its text untouched. Same
-        /// propagate-don't-swallow error handling as `EditMessageText` above.
+        /// classify-don't-throw handling as `EditMessageText` above.
         member _.EditMessageReplyMarkup
             (
                 chat: ChatId,
                 message: MessageId,
                 keyboard: RegisteredKeyboard option,
                 ct: CancellationToken
-            ) : Task =
+            ) : Task<EditOutcome> =
             let replyMarkup = keyboard |> Option.map Mapping.toInlineKeyboardMarkup |> Option.toObj
 
-            client.EditMessageReplyMarkup(
-                chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
-                messageId = int (UMX.untag message),
-                replyMarkup = replyMarkup,
-                cancellationToken = ct
-            )
-            :> Task
+            EditErrorClassification.classify (fun () ->
+                client.EditMessageReplyMarkup(
+                    chatId = Telegram.Bot.Types.ChatId(UMX.untag chat),
+                    messageId = int (UMX.untag message),
+                    replyMarkup = replyMarkup,
+                    cancellationToken = ct
+                )
+                :> Task)

@@ -176,14 +176,29 @@ type UpdateProcessor
                     watchdogCts.Dispose()
                 } }
 
+    /// Interprets an `EditOutcome` for the tool author: `EditApplied`/`EditNotModified` both
+    /// complete silently (the second is a successful no-op, FR-015); `EditNotFound` is surfaced via
+    /// `IHookObserver.OnEditFailed` — never as an exception, regardless of outcome.
+    let reportEditOutcome (press: ButtonPress) (outcome: EditOutcome) : unit =
+        match outcome with
+        | EditApplied
+        | EditNotModified -> ()
+        | EditNotFound -> observer.OnEditFailed(press, "message to edit not found")
+
     /// `PressContext.EditTextAsync`'s backing closure on the deferred-ack tool path: edits the
     /// PRESSED message's text, leaving its current keyboard untouched (`None`). An invalid `text`
     /// is a programmer error by the tool author (Always-Rule 6), same fail-fast convention as
-    /// `makeReplyTextAsync`.
+    /// `makeReplyTextAsync` — raised synchronously, unaffected by the `task {}` wrapper the `Ok`
+    /// branch below needs to await and classify the edit's `EditOutcome` (FR-015).
     let makeEditTextAction (press: ButtonPress) (workCt: CancellationToken) (text: string) : Task =
         match MessageText.create text with
-        | Ok messageText -> api.EditMessageText(press.Chat, press.MessageId, messageText, None, workCt)
         | Error error -> invalidArg (nameof text) $"PressContext.EditTextAsync: invalid text ({error})"
+        | Ok messageText ->
+            task {
+                let! outcome = api.EditMessageText(press.Chat, press.MessageId, messageText, None, workCt)
+                reportEditOutcome press outcome
+            }
+            :> Task
 
     /// `PressContext.EditKeyboardAsync`'s backing closure: re-plans the replacement layout and
     /// saves/tracks its bindings via the shared `ToolKeyboardOps.deliver` (Tools.fs) — same
@@ -203,7 +218,8 @@ type UpdateProcessor
             None
             (fun registeredKeyboard ->
                 task {
-                    do! api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
+                    let! outcome = api.EditMessageReplyMarkup(press.Chat, press.MessageId, Some registeredKeyboard, workCt)
+                    reportEditOutcome press outcome
                     return press.MessageId
                 })
             workCt

@@ -54,8 +54,8 @@ type private RecordingApi() =
 
         /// Edit* are only reachable via the deferred-ack tool path, never exercised in this
         /// ack-first-only suite — implemented to satisfy `IBotApiClient`.
-        member _.EditMessageText(_, _, _, _, _) = Task.CompletedTask
-        member _.EditMessageReplyMarkup(_, _, _, _) = Task.CompletedTask
+        member _.EditMessageText(_, _, _, _, _) = Task.FromResult EditApplied
+        member _.EditMessageReplyMarkup(_, _, _, _) = Task.FromResult EditApplied
 
 type private CountingObserver() =
     let mutable failed = 0
@@ -66,6 +66,7 @@ type private CountingObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_, _) = Interlocked.Increment(&failed) |> ignore
         member _.OnUnknownToken(_) = Interlocked.Increment(&unknown) |> ignore
+        member _.OnEditFailed(_, _) = ()
         member _.OnRunLoopFailed(_) = ()
 
 let private pressOf (token: CallbackToken) (chat: int64) : AgentEvent =

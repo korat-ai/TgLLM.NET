@@ -28,6 +28,7 @@ type private RecordingHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_press, _error) = ()
         member _.OnUnknownToken(press) = unknown.Add press
+        member _.OnEditFailed(_press, _reason) = ()
         member _.OnRunLoopFailed(_error) = ()
 
 /// Runs enqueued work immediately and synchronously — this suite never registers a hook, so nothing

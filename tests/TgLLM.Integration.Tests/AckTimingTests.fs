@@ -87,13 +87,14 @@ type private TimestampingBotApiClient(clock: Stopwatch) =
             lock deferredAcks (fun () -> deferredAcks.Add(query, clock.Elapsed))
             Task.CompletedTask
 
-        member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.CompletedTask
-        member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.CompletedTask
+        member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.FromResult EditApplied
+        member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.FromResult EditApplied
 
 type private NoopObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_press, _error) = ()
         member _.OnUnknownToken(_press) = ()
+        member _.OnEditFailed(_press, _reason) = ()
         member _.OnRunLoopFailed(_error) = ()
 
 [<Tests>]

@@ -13,6 +13,7 @@ type NoopHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_press: ButtonPress, _error: exn) = ()
         member _.OnUnknownToken(_press: ButtonPress) = ()
+        member _.OnEditFailed(_press: ButtonPress, _reason: string) = ()
         member _.OnRunLoopFailed(_error: exn) = ()
 
 /// Default `IPressDispatcher`: one unbounded, `SingleReader = true` channel + one consumer loop

@@ -46,6 +46,7 @@ type private NoopObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_press, _error) = ()
         member _.OnUnknownToken(_press) = ()
+        member _.OnEditFailed(_press, _reason) = ()
         member _.OnRunLoopFailed(_error) = ()
 
 [<Tests>]

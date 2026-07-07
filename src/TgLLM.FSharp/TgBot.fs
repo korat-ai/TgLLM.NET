@@ -30,6 +30,12 @@ type LoggingHookObserver(logger: ILogger) =
                 [| UMX.untag press.Chat :> obj |]
             )
 
+        member _.OnEditFailed(press: ButtonPress, reason: string) =
+            logger.LogWarning(
+                "Edit-in-place for chat {Chat}, message {MessageId} failed softly: {Reason}",
+                [| UMX.untag press.Chat :> obj; UMX.untag press.MessageId :> obj; reason :> obj |]
+            )
+
         member _.OnRunLoopFailed(error: exn) =
             logger.LogError(error, "The update-ingestion run loop stopped unexpectedly; this bot is no longer processing updates")
 

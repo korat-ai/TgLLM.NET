@@ -83,8 +83,8 @@ type private FakeBotApiClient() =
             calls.Add(AckDeferred(query, text, showAlert))
             Task.CompletedTask
 
-        member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.CompletedTask
-        member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.CompletedTask
+        member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.FromResult EditApplied
+        member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.FromResult EditApplied
 
 /// Records enqueued work instead of running it — a refused non-owner press must enqueue NOTHING at
 /// all (same pattern as `ToolDispatchProcessorTests.fs`'s private fake).
@@ -106,6 +106,7 @@ type private FakeHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_press, _error) = ()
         member _.OnUnknownToken(press) = unknown.Add press
+        member _.OnEditFailed(_press, _reason) = ()
         member _.OnRunLoopFailed(_error) = ()
 
 /// Wires a real `InMemoryToolRegistry` + `InMemoryBindingStore` behind a `ToolDispatch`, with one

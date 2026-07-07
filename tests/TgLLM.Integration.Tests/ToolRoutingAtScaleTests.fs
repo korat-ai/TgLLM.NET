@@ -56,8 +56,8 @@ type private RecordingApi() =
             Interlocked.Increment(&acks) |> ignore
             Task.CompletedTask
 
-        member _.EditMessageText(_, _, _, _, _) = Task.CompletedTask
-        member _.EditMessageReplyMarkup(_, _, _, _) = Task.CompletedTask
+        member _.EditMessageText(_, _, _, _, _) = Task.FromResult EditApplied
+        member _.EditMessageReplyMarkup(_, _, _, _) = Task.FromResult EditApplied
 
 type private CountingObserver() =
     let mutable failed = 0
@@ -68,6 +68,7 @@ type private CountingObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_, _) = Interlocked.Increment(&failed) |> ignore
         member _.OnUnknownToken(_) = Interlocked.Increment(&unknown) |> ignore
+        member _.OnEditFailed(_, _) = ()
         member _.OnRunLoopFailed(_) = ()
 
 let private pressOf (token: CallbackToken) (chat: int64) : AgentEvent =

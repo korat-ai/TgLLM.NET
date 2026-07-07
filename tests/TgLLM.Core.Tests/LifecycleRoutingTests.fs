@@ -78,8 +78,8 @@ type private FakeBotApiClient() =
             calls.Add(AckDeferred(query, text, showAlert))
             Task.CompletedTask
 
-        member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.CompletedTask
-        member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.CompletedTask
+        member _.EditMessageText(_chat, _message, _text, _keyboard, _ct) = Task.FromResult EditApplied
+        member _.EditMessageReplyMarkup(_chat, _message, _keyboard, _ct) = Task.FromResult EditApplied
 
 type private FakeDispatcher() =
     let enqueued = ResizeArray<ChatId * (CancellationToken -> Task)>()
@@ -99,6 +99,7 @@ type private FakeHookObserver() =
     interface IHookObserver with
         member _.OnHookFailed(_press, _error) = ()
         member _.OnUnknownToken(press) = unknown.Add press
+        member _.OnEditFailed(_press, _reason) = ()
         member _.OnRunLoopFailed(_error) = ()
 
 /// Runs every enqueued work item in order, so a tool's side effects are visible to the test.

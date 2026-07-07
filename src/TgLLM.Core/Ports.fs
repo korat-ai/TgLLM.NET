@@ -41,6 +41,20 @@ type IPressDispatcher =
     /// report work exceptions (via `IHookObserver`) without terminating the chat's consumer loop.
     abstract Enqueue: chat: ChatId * work: (CancellationToken -> Task) -> ValueTask
 
+/// The outcome of an edit-in-place call (US4, research D5/FR-015): classifies Telegram's two
+/// well-known, non-fatal `editMessageText`/`editMessageReplyMarkup` errors so `UpdateProcessor`
+/// never has to let them propagate as an exception to a tool author. `EditNotModified` ("message
+/// is not modified") is a successful no-op — the tool's own re-render already matches what's on
+/// the wire. `EditNotFound` ("message to edit not found") is a soft, OBSERVABLE failure — the
+/// message vanished out from under the tool — surfaced via `IHookObserver.OnEditFailed`, never
+/// thrown. Any OTHER failure (network error, rate limit, an unrecognized Bot API error, ...) is
+/// still a genuine exception and propagates unchanged; only these two specific, well-known
+/// outcomes are ever downgraded from an exception to a value.
+type EditOutcome =
+    | EditApplied
+    | EditNotModified
+    | EditNotFound
+
 /// The outbound Bot API seam. Implementation: `TelegramBotApiClient` (`TgLLM.BotApi`) over
 /// Telegram.Bot; maps `RegisteredKeyboard` to `InlineKeyboardMarkup`.
 type IBotApiClient =
@@ -64,26 +78,31 @@ type IBotApiClient =
     /// `keyboard = None` leaves the message's CURRENT keyboard untouched (Telegram's own
     /// `editMessageText` semantics: omitting `reply_markup` preserves whatever markup the message
     /// already has); `Some` replaces it, same as `SendKeyboard`'s unconditional markup.
-    /// Implementations let `ApiRequestException` (e.g. `"message to edit not found"`/`"message is
-    /// not modified"`) propagate rather than swallowing it — `UpdateProcessor`'s existing per-tool
-    /// try/with (buildToolWork) already catches and reports ANY exception a tool raises via
-    /// `IHookObserver`, so a caught-and-surfaced-not-crashed edit failure falls out of that
-    /// existing machinery for free, with no new observer plumbing needed here (this port has no
-    /// `ButtonPress` to attribute a failure to in the first place).
+    /// Implementations classify the two well-known non-fatal `ApiRequestException`s (`"message to
+    /// edit not found"`/`"message is not modified"`) into `EditOutcome` (US4, FR-015) rather than
+    /// letting them propagate; any OTHER exception still propagates unchanged, caught and reported
+    /// by `UpdateProcessor`'s existing per-tool try/with (`buildToolWork`) exactly as before.
     abstract EditMessageText:
         chat: ChatId * message: MessageId * text: MessageText * keyboard: RegisteredKeyboard option * ct: CancellationToken ->
-            Task
+            Task<EditOutcome>
 
-    /// Replace a message's keyboard only, leaving its text untouched. Same propagate-don't-swallow
-    /// error handling as `EditMessageText` above.
+    /// Replace a message's keyboard only, leaving its text untouched. Same classify-don't-throw
+    /// contract as `EditMessageText` above.
     abstract EditMessageReplyMarkup:
-        chat: ChatId * message: MessageId * keyboard: RegisteredKeyboard option * ct: CancellationToken -> Task
+        chat: ChatId * message: MessageId * keyboard: RegisteredKeyboard option * ct: CancellationToken -> Task<EditOutcome>
 
 /// The observability seam. Default: `NoopHookObserver`. Façades bridge this to `ILogger` so
 /// failures are surfaced, never swallowed; Core stays dependency-free.
 type IHookObserver =
     abstract OnHookFailed: press: ButtonPress * error: exn -> unit
     abstract OnUnknownToken: press: ButtonPress -> unit
+
+    /// An edit-in-place softly failed (US4, FR-015): `EditNotFound` — the edited message vanished
+    /// between send and edit. NOT an exception to the tool author: `PressContext.EditTextAsync`/
+    /// `EditKeyboardAsync` complete normally regardless; this is the ONLY way such a soft failure
+    /// is ever surfaced. `reason` describes the classified outcome. `EditNotModified` is a silent
+    /// success and is never reported here at all — only a genuine (if soft) failure reaches this.
+    abstract OnEditFailed: press: ButtonPress * reason: string -> unit
 
     /// The update-ingestion run loop itself (`UpdateProcessor.RunAsync`) faulted. Unlike
     /// `OnHookFailed`, there is no single `ButtonPress` to attribute this to: the failure means the
