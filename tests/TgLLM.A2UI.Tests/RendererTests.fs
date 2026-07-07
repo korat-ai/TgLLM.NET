@@ -164,4 +164,43 @@ let rendererTests =
             | Ok surface ->
                 Expect.equal surface.Text "" "nothing renders"
                 Expect.equal surface.Keyboard.Rows [] "no keyboard"
+
+        testCase "a component tree with a cycle back to an ancestor renders without crashing, surfacing the cycle" <| fun _ ->
+            let root = component_ "root" (Column [ "a" ])
+            let a = component_ "a" (Column [ "root" ])
+
+            match Renderer.render Catalog.telegramBasic "surface-1" emptyDataModel [ root; a ] with
+            | Error e -> failwithf "expected Ok, got %A" e
+            | Ok surface ->
+                Expect.isTrue
+                    (surface.Unsupported |> List.exists (fun (componentType, id) -> componentType = "Cycle" && id = "root"))
+                    "the revisited ancestor id is surfaced as a cycle rather than recursed into again"
+
+        testCase "a self-referencing component renders without crashing, surfacing the cycle" <| fun _ ->
+            let root = component_ "root" (Row [ "root" ])
+
+            match Renderer.render Catalog.telegramBasic "surface-1" emptyDataModel [ root ] with
+            | Error e -> failwithf "expected Ok, got %A" e
+            | Ok surface ->
+                Expect.isTrue
+                    (surface.Unsupported |> List.exists (fun (componentType, id) -> componentType = "Cycle" && id = "root"))
+                    "a node that lists itself as its own child is surfaced as a cycle rather than recursed into again"
+
+        testCase "an extremely deep, acyclic component chain is bounded rather than overflowing the stack" <| fun _ ->
+            let chainLength = 5000
+            let ids = [| for i in 0 .. chainLength -> $"n{i}" |]
+            let leaf = component_ ids[chainLength] (Text(Literal "bottom"))
+
+            let links =
+                [ for i in 0 .. chainLength - 1 -> component_ ids[i] (Column [ ids[i + 1] ]) ]
+
+            let root = component_ "root" (Column [ ids[0] ])
+            let components = root :: links @ [ leaf ]
+
+            match Renderer.render Catalog.telegramBasic "surface-1" emptyDataModel components with
+            | Error e -> failwithf "expected Ok, got %A" e
+            | Ok surface ->
+                Expect.isTrue
+                    (surface.Unsupported |> List.exists (fun (componentType, _) -> componentType = "MaxDepthExceeded"))
+                    "recursion stops at a bounded depth instead of following the chain all the way down"
     ]

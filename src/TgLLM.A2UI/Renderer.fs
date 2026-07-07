@@ -88,13 +88,45 @@ module Renderer =
 
             ToolButton(resolvedLabel, "a2ui-action", Some(JsonSerializer.Serialize(descriptor, descriptorJsonOptions)))
 
-    let rec private renderNode (surfaceId: string) (catalog: Catalog) (dataModel: JsonNode) (byId: Map<string, Component>) (componentId: string) : Contribution =
+    /// A sane, generous bound on how many `Row`/`Column` levels deep `renderNode` ever recurses —
+    /// defense-in-depth alongside `ancestors` (below): `ancestors` alone stops a CYCLE immediately
+    /// (the moment an id repeats), but an extremely deep, perfectly ACYCLIC chain has no repeated id
+    /// for `ancestors` to catch, so nothing else would ever stop it short of exhausting the stack. No
+    /// legitimate `telegram-basic` surface (a chat message's worth of content) nests anywhere close
+    /// to this deep.
+    [<Literal>]
+    let private MaxTreeDepth = 64
+
+    /// Threads `ancestors` — the ids on the CURRENT root-to-here path, not every id seen anywhere in
+    /// the tree — so two different branches may legitimately share a child id without tripping this,
+    /// while a node that reappears among its OWN ancestors (a genuine cycle) is caught the moment it
+    /// recurs, before ever recursing into it again. `depth` is the current path length, checked
+    /// independently as defense-in-depth against a very deep but acyclic chain (see `MaxTreeDepth`).
+    /// Either condition short-circuits to a surfaced `Unsupported` entry rather than recursing —
+    /// exactly the same "surfaced, not silently dropped, siblings unaffected" policy already applied
+    /// to an out-of-catalog component type.
+    let rec private renderNode
+        (surfaceId: string)
+        (catalog: Catalog)
+        (dataModel: JsonNode)
+        (byId: Map<string, Component>)
+        (ancestors: Set<string>)
+        (depth: int)
+        (componentId: string)
+        : Contribution =
         match Map.tryFind componentId byId with
         | None -> emptyContribution
         | Some { Id = id; Node = node } ->
-            if not (catalog.Supports(componentTypeName node)) then
+            if Set.contains componentId ancestors then
+                { emptyContribution with Unsupported = [ "Cycle", id ] }
+            elif depth > MaxTreeDepth then
+                { emptyContribution with Unsupported = [ "MaxDepthExceeded", id ] }
+            elif not (catalog.Supports(componentTypeName node)) then
                 { emptyContribution with Unsupported = [ componentTypeName node, id ] }
             else
+                let ancestors = Set.add componentId ancestors
+                let depth = depth + 1
+
                 match node with
                 | Text value -> { emptyContribution with BodyLines = [ Markdown.escapeV2 (DynString.resolve dataModel value) ] }
                 | Divider -> { emptyContribution with BodyLines = [ Markdown.escapeV2 "---" ] }
@@ -124,7 +156,7 @@ module Renderer =
                             match c.Node with
                             | Button _ -> false
                             | _ -> true)
-                        |> List.map (fun c -> renderNode surfaceId catalog dataModel byId c.Id)
+                        |> List.map (fun c -> renderNode surfaceId catalog dataModel byId ancestors depth c.Id)
 
                     otherContributions |> List.fold mergeContributions rowContribution
                 | Column children ->
@@ -132,7 +164,7 @@ module Renderer =
                     // own singleton row keeps it on its own row; a Text/Divider/Image child's body
                     // line concatenates; a nested Row/Column contributes its own rows/body inline.
                     children
-                    |> List.map (renderNode surfaceId catalog dataModel byId)
+                    |> List.map (renderNode surfaceId catalog dataModel byId ancestors depth)
                     |> List.fold mergeContributions emptyContribution
 
     /// Renders `components` (already narrowed to `telegram-basic` — see `Component.toTelegramBasic`)
@@ -155,7 +187,7 @@ module Renderer =
         let contribution =
             match Map.tryFind "root" byId with
             | None -> emptyContribution
-            | Some root -> renderNode surfaceId catalog dataModel byId root.Id
+            | Some root -> renderNode surfaceId catalog dataModel byId Set.empty 0 root.Id
 
         Ok
             { Text = contribution.BodyLines |> String.concat "\n"
