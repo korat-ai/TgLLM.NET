@@ -156,8 +156,12 @@ type PerChatChannelDispatcher(?shutdownBudget: TimeSpan, ?idleTimeout: TimeSpan)
                         with :? ChannelClosedException ->
                             // Raced with an idle-reclaim pass completing this chat's channel
                             // between lookup and write — retry against a freshly (re)created one;
-                            // never silently drops the work item.
-                            ()
+                            // never silently drops the work item. `Task.Yield()` (review #6) gives
+                            // up the thread between attempts: without it, a press racing idle-reclaim
+                            // busy-spins this loop at full CPU until the reclaim pass finishes
+                            // recreating the channel — the retry's own correctness (never drop, never
+                            // reorder) is unchanged, only the CPU behavior between attempts.
+                            do! Task.Yield()
                 }
             )
 
