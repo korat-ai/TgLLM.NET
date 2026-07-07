@@ -68,7 +68,7 @@ module Keyboard =
 /// `TgWebhookConfig`, and mutated only through the `CommonConfig` module's `with*` functions, so
 /// the two configs' fields and fluent methods can't drift out of lockstep (Principle IV: hook/tool
 /// code and wiring stay identical regardless of transport).
-[<NoComparison>]
+[<NoComparison; NoEquality>]
 type CommonConfig =
     { BotToken: string
       BaseUrl: string option
@@ -78,9 +78,17 @@ type CommonConfig =
       Tools: ToolRegistry option
       /// The store backing every tool-button binding (`SendKeyboardPlan`'s saves AND
       /// `ToolDispatch`'s resolves). `None` (the default) keeps slice-1/MVP behavior — an
-      /// in-process `InMemoryBindingStore`; `Some` (e.g. a `TgLLM.Persistence.FileBindingStore`)
-      /// makes bindings survive a restart.
-      BindingStore: IBindingStore option }
+      /// in-process `InMemoryBindingStore`; `Some` (e.g. a `TgLLM.Persistence.FileBindingStore`, or
+      /// `TgLLM.Persistence.LiteDb.LiteDbBindingStore`) makes bindings survive a restart.
+      BindingStore: IBindingStore option
+      /// Reclaims a per-chat dispatcher channel/worker once idle this long with nothing buffered
+      /// (US4, FR-012). `None` (the default) keeps slice-1 behavior — a chat's resources live for
+      /// the whole run, exactly `PerChatChannelDispatcher`'s own no-`idleTimeout` default.
+      IdleChatEviction: TimeSpan option
+      /// "Now", as seen by expiry/redelivery-dedup decisions (US4, research D5/D6). `None` (the
+      /// default) uses real wall-clock time; overriding it is primarily useful for deterministic
+      /// tests of a host's own expiry logic, not something a production bot normally needs.
+      Clock: Clock option }
 
 module CommonConfig =
     let create (botToken: string) : CommonConfig =
@@ -88,7 +96,9 @@ module CommonConfig =
           BaseUrl = None
           Logger = None
           Tools = None
-          BindingStore = None }
+          BindingStore = None
+          IdleChatEviction = None
+          Clock = None }
 
     let withBaseUrl (url: string) (c: CommonConfig) = { c with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger.
@@ -96,12 +106,17 @@ module CommonConfig =
     /// Wire a Tool Router registry into this bot.
     let withTools (tools: ToolRegistry) (c: CommonConfig) = { c with Tools = Some tools }
     /// Back tool bindings with a durable store instead of the in-memory default — e.g.
-    /// `TgLLM.Persistence.FileBindingStore.openAt "bindings.json"`.
+    /// `TgLLM.Persistence.FileBindingStore.openAt "bindings.json"` or
+    /// `TgLLM.Persistence.LiteDb.LiteDbBindingStore.OpenAt "bindings.db"`.
     let withBindingStore (store: IBindingStore) (c: CommonConfig) = { c with BindingStore = Some store }
+    /// Reclaim an idle chat's dispatcher resources after `timeout` with nothing buffered.
+    let withIdleChatEviction (timeout: TimeSpan) (c: CommonConfig) = { c with IdleChatEviction = Some timeout }
+    /// Override the clock expiry/redelivery-dedup decisions read "now" from — defaults to real time.
+    let withClock (clock: Clock) (c: CommonConfig) = { c with Clock = Some clock }
 
 /// Long-polling bot configuration. `WithBaseUrl` overrides the Bot API endpoint — for a local Bot
 /// API server, Telegram's test environment, or pointing tests at a fake server.
-[<NoComparison>]
+[<NoComparison; NoEquality>]
 type TgBotConfig =
     { Common: CommonConfig }
 
@@ -114,10 +129,15 @@ type TgBotConfig =
     member this.WithBindingStore(store: IBindingStore) =
         { this with Common = this.Common |> CommonConfig.withBindingStore store }
 
+    member this.WithIdleChatEviction(timeout: TimeSpan) =
+        { this with Common = this.Common |> CommonConfig.withIdleChatEviction timeout }
+
+    member this.WithClock(clock: Clock) = { this with Common = this.Common |> CommonConfig.withClock clock }
+
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
 /// `WithBaseUrl` overrides the Bot API endpoint (tests / local Bot API server).
-[<NoComparison>]
+[<NoComparison; NoEquality>]
 type TgWebhookConfig =
     { Common: CommonConfig
       PublicUrl: string
@@ -134,6 +154,11 @@ type TgWebhookConfig =
 
     member this.WithBindingStore(store: IBindingStore) =
         { this with Common = this.Common |> CommonConfig.withBindingStore store }
+
+    member this.WithIdleChatEviction(timeout: TimeSpan) =
+        { this with Common = this.Common |> CommonConfig.withIdleChatEviction timeout }
+
+    member this.WithClock(clock: Clock) = { this with Common = this.Common |> CommonConfig.withClock clock }
 
 /// A running bot: ingests updates in the background and lets the agent send keyboards/messages.
 /// Dispose (`use!`/`IAsyncDisposable`) to stop ingestion and release the per-chat dispatcher.
@@ -269,7 +294,7 @@ type TgBot
         // send-time record and `EditKeyboardAsync`'s edit-time remove agree on one message's
         // history of bindings.
         let tracker = MessageBindingTracker()
-        let dispatcher = new PerChatChannelDispatcher() :> IPressDispatcher
+        let dispatcher = new PerChatChannelDispatcher(?idleTimeout = common.IdleChatEviction) :> IPressDispatcher
 
         let observer =
             match common.Logger with
@@ -277,7 +302,9 @@ type TgBot
             | None -> NoopHookObserver() :> IHookObserver
 
         let toolDispatch = common.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
-        let processor = UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch)
+
+        let processor =
+            UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch, ?clock = common.Clock)
         let cts = new CancellationTokenSource()
 
         // A faulted run loop must be surfaced via `observer`, not silently swallowed at `Dispose` —

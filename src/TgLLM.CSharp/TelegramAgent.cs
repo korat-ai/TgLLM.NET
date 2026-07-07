@@ -31,8 +31,13 @@ public sealed class TelegramAgentOptions
 
     /// <summary>The store backing every tool-button binding. <c>null</c> (the default) keeps the
     /// in-memory default; pass e.g. <c>TgLLM.Persistence.FileBindingStore.OpenAt("bindings.json")</c>
-    /// so bindings survive a restart.</summary>
+    /// or <c>TgLLM.Persistence.LiteDb.LiteDbBindingStore.OpenAt("bindings.db")</c> so bindings
+    /// survive a restart.</summary>
     public TgLLM.Core.IBindingStore? BindingStore { get; init; }
+
+    /// <summary>Reclaims a per-chat dispatcher channel/worker once idle this long with nothing
+    /// buffered. <c>null</c> (the default) keeps a chat's resources for the whole run.</summary>
+    public TimeSpan? IdleChatEviction { get; init; }
 }
 
 /// <summary>
@@ -81,6 +86,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithBindingStore(options.BindingStore);
         }
 
+        if (options.IdleChatEviction is { } idleChatEviction)
+        {
+            config = config.WithIdleChatEviction(idleChatEviction);
+        }
+
         var bot = await TgBot.startPolling(config);
         return new TelegramAgent(bot);
     }
@@ -118,6 +128,11 @@ public sealed class TelegramAgent : IAsyncDisposable
         if (options.BindingStore is not null)
         {
             config = config.WithBindingStore(options.BindingStore);
+        }
+
+        if (options.IdleChatEviction is { } idleChatEviction)
+        {
+            config = config.WithIdleChatEviction(idleChatEviction);
         }
 
         var bot = await TgBot.startWebhook(config);
