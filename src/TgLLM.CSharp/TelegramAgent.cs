@@ -39,6 +39,12 @@ public sealed class TelegramAgentOptions
     /// <summary>Reclaims a per-chat dispatcher channel/worker once idle this long with nothing
     /// buffered. <c>null</c> (the default) keeps a chat's resources for the whole run.</summary>
     public TimeSpan? IdleChatEviction { get; init; }
+
+    /// <summary>Override the clock expiry/redelivery-dedup decisions read "now" from —
+    /// <c>null</c> (the default) uses real wall-clock time. Overriding it is primarily useful for
+    /// deterministic tests of a host's own expiry logic, not something a production bot normally
+    /// needs. Mirrors the F# façade's <c>CommonConfig.Clock</c>/<c>WithClock</c>.</summary>
+    public Func<DateTimeOffset>? Clock { get; init; }
 }
 
 /// <summary>
@@ -92,6 +98,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithIdleChatEviction(idleChatEviction);
         }
 
+        if (options.Clock is { } clock)
+        {
+            config = config.WithClock(ToFSharpClock(clock));
+        }
+
         var bot = await TgBot.startPolling(config);
         return new TelegramAgent(bot);
     }
@@ -136,9 +147,23 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithIdleChatEviction(idleChatEviction);
         }
 
+        if (options.Clock is { } clock)
+        {
+            config = config.WithClock(ToFSharpClock(clock));
+        }
+
         var bot = await TgBot.startWebhook(config);
         return new TelegramAgent(bot);
     }
+
+    /// <summary>
+    /// Adapts a plain BCL <see cref="Func{DateTimeOffset}"/> to the F# façade's <c>Clock</c>
+    /// (<c>unit -&gt; DateTimeOffset</c>, i.e. <c>FSharpFunc&lt;Unit, DateTimeOffset&gt;</c>) — a
+    /// nilary BCL delegate has no argument to line up with <c>Clock</c>'s single <c>Unit</c>
+    /// parameter, so this wraps it explicitly rather than relying on an implicit conversion.
+    /// </summary>
+    private static FSharpFunc<Unit, DateTimeOffset> ToFSharpClock(Func<DateTimeOffset> clock) =>
+        FSharpFunc<Unit, DateTimeOffset>.FromConverter(new Converter<Unit, DateTimeOffset>(_ => clock()));
 
     /// <summary>The webhook ingress to hand to <c>MapTelegramWebhook</c> (webhook mode only).</summary>
     public WebhookUpdateSource WebhookSource => _bot.WebhookSource;
