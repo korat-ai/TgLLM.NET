@@ -85,6 +85,20 @@ let private onlyUnsupportedJson (surfaceId: string) : string =
 
 let private malformedJson: string = """{ "not": "a2ui" }"""
 
+let private overlongBodyJson (surfaceId: string) : string =
+    let text = String.replicate 5000 "x"
+
+    $$"""
+    {
+      "version": "v1.0",
+      "createSurface": {
+        "surfaceId": "{{surfaceId}}",
+        "catalogId": "telegram-basic",
+        "components": [ { "id": "root", "component": "Text", "text": "{{text}}" } ]
+      }
+    }
+    """
+
 let private validSurfaceJson (surfaceId: string) : string =
     $$"""
     {
@@ -170,6 +184,31 @@ let a2uiUnsupportedTests =
                         "the resulting 'nothing to send' condition is ALSO surfaced, separately from the per-component report"
 
                     Expect.equal (server.RequestsFor "sendMessage") [] "no empty/garbage message reaches the wire"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "a rendered body over the Bot API's message length limit is surfaced distinctly from 'no renderable text'" <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    use! bot = buildBot server
+                    let observer, errors = recordingObserver ()
+                    let renderer = A2ui.rendererWithObserver bot noopSink observer
+
+                    match! renderer.Ingest(UMX.tag<chatId> 6005L, overlongBodyJson "overlong-body") with
+                    | Error(MalformedMessage detail) ->
+                        Expect.stringContains detail "4096" "the surfaced detail mentions the Bot API's actual length limit"
+                    | other -> failtestf "expected Error (MalformedMessage _), got %A" other
+
+                    Expect.isFalse
+                        (errors
+                         |> Seq.exists (function
+                             | MalformedMessage detail -> detail.Contains "no renderable text"
+                             | _ -> false))
+                        "an over-long body is a DIFFERENT condition from an empty one and must not share its wording"
+
+                    Expect.equal (server.RequestsFor "sendMessage") [] "an over-long body never reaches the wire"
                 }
                 |> Async.AwaitTask
         }

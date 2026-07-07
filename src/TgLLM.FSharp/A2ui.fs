@@ -109,6 +109,11 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
                         A2uiObservability.reportUnsupported observer rendered
 
                         match MessageText.create rendered.Text with
+                        | Error(TextTooLong(length, max)) ->
+                            return A2uiObservability.reportError observer (A2uiRenderer.BodyTooLongError(length, max))
+                        // `MessageText.create`'s only other reachable case is `EmptyLabel` (the body
+                        // resolved to empty/whitespace-only) — `EmptyKeyboard`/`EmptyRow` are DEAD here
+                        // (that smart constructor never produces them; only `Keyboard.create` does).
                         | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
                         | Ok text ->
                             match A2uiRenderer.validateKeyboard rendered with
@@ -126,6 +131,11 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
                         A2uiObservability.reportUnsupported observer rendered
 
                         match MessageText.create rendered.Text with
+                        | Error(TextTooLong(length, max)) ->
+                            return A2uiObservability.reportError observer (A2uiRenderer.BodyTooLongError(length, max))
+                        // `MessageText.create`'s only other reachable case is `EmptyLabel` (the body
+                        // resolved to empty/whitespace-only) — `EmptyKeyboard`/`EmptyRow` are DEAD here
+                        // (that smart constructor never produces them; only `Keyboard.create` does).
                         | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
                         | Ok text ->
                             match A2uiRenderer.validateKeyboard rendered with
@@ -165,6 +175,15 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
     /// above), never an empty/garbage message on the wire.
     static member private NoRenderableTextError: A2uiError =
         MalformedMessage "the rendered surface has no renderable text (a Bot API message requires non-empty text)"
+
+    /// A rendered body over the Bot API's `sendMessage`/`editMessageText` length limit — a DIFFERENT
+    /// condition from `NoRenderableTextError` above (too much content, not none) that `MessageText.
+    /// create` also reports as a `KeyboardError`, but must not collapse into the SAME "no renderable
+    /// text" wording: an agent reading either message would otherwise be told its surface has no
+    /// content at all when the real problem is the opposite. `length`/`max` come straight from
+    /// `MessageText.create`'s own `TextTooLong` case.
+    static member private BodyTooLongError(length: int, max: int) : A2uiError =
+        MalformedMessage $"the rendered surface's body is {length} characters, over the Bot API's {max}-character message limit"
 
     /// Validates a rendered keyboard's buttons (label length, url presence, ...) BEFORE handing it
     /// to `SendKeyboardPlan`/`EditKeyboardPlan` — both re-validate via the SAME `ToolPlan.validate`/
