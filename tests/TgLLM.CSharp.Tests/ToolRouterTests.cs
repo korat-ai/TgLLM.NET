@@ -73,6 +73,59 @@ public class PlanBuilderTests
 
         Assert.Throws<TgKeyboardException>(() => builder.Build());
     }
+
+    [Fact]
+    public void Build_succeeds_for_a_layout_mixing_tool_WebApp_and_CopyText_buttons()
+    {
+        var plan = new PlanBuilder()
+            .Row(r => r
+                .Tool("Approve", "approve")
+                .WebApp("Open", "https://example.test/app")
+                .CopyText("Copy", "snippet-1"))
+            .Build();
+
+        Assert.NotNull(plan);
+    }
+
+    [Fact]
+    public void Build_throws_TgKeyboardException_for_a_WebApp_button_with_a_non_https_url()
+    {
+        var builder = new PlanBuilder().Row(r => r.WebApp("Open", "http://example.test/app"));
+
+        Assert.Throws<TgKeyboardException>(() => builder.Build());
+    }
+
+    [Fact]
+    public void Build_throws_TgKeyboardException_for_a_WebApp_button_with_an_empty_url()
+    {
+        var builder = new PlanBuilder().Row(r => r.WebApp("Open", ""));
+
+        Assert.Throws<TgKeyboardException>(() => builder.Build());
+    }
+
+    [Fact]
+    public void Build_throws_TgKeyboardException_for_a_CopyText_button_with_empty_text()
+    {
+        var builder = new PlanBuilder().Row(r => r.CopyText("Copy", ""));
+
+        Assert.Throws<TgKeyboardException>(() => builder.Build());
+    }
+
+    [Fact]
+    public void Build_throws_TgKeyboardException_for_a_CopyText_button_over_256_characters()
+    {
+        var builder = new PlanBuilder().Row(r => r.CopyText("Copy", new string('x', 257)));
+
+        Assert.Throws<TgKeyboardException>(() => builder.Build());
+    }
+
+    [Fact]
+    public void Build_succeeds_for_a_CopyText_button_at_the_256_character_boundary()
+    {
+        var plan = new PlanBuilder().Row(r => r.CopyText("Copy", new string('x', 256))).Build();
+
+        Assert.NotNull(plan);
+    }
 }
 
 /// <summary>

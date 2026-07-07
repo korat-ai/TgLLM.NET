@@ -22,11 +22,13 @@
     <Compile Include="StructuredArgTests.fs" />
     <Compile Include="ManifestTests.fs" />
     <Compile Include="UrlButtonTests.fs" />
+    <Compile Include="ClientButtonTests.fs" />
     <Compile Include="WebhookTests.fs" />
     <Compile Include="BothTransportsTests.fs" />
     <Compile Include="ProactiveSendTests.fs" />
     <Compile Include="RoutingAtScaleTests.fs" />
     <Compile Include="ToolRouterBothTransportsTests.fs" />
+    <Compile Include="ClientButtonsTests.fs" />
     <Compile Include="ToolRoutingAtScaleTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

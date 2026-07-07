@@ -45,6 +45,28 @@ public sealed class PlanRowBuilder
         Buttons.Add(Plan.url(label, url));
         return this;
     }
+
+    /// <summary>
+    /// Add a WebApp button: launches a Mini App at <paramref name="url"/> in the user's client —
+    /// opens client-side, invokes no tool. <paramref name="url"/> must be https; an invalid one is
+    /// rejected with <see cref="TgKeyboardException"/> when the plan is built.
+    /// </summary>
+    public PlanRowBuilder WebApp(string label, string url)
+    {
+        Buttons.Add(Plan.webApp(label, url));
+        return this;
+    }
+
+    /// <summary>
+    /// Add a CopyText button: copies <paramref name="text"/> to the clipboard — opens client-side,
+    /// invokes no tool. <paramref name="text"/> must be 1..256 characters; an out-of-range one is
+    /// rejected with <see cref="TgKeyboardException"/> when the plan is built.
+    /// </summary>
+    public PlanRowBuilder CopyText(string label, string text)
+    {
+        Buttons.Add(Plan.copyText(label, text));
+        return this;
+    }
 }
 
 /// <summary>

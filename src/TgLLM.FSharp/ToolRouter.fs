@@ -144,6 +144,17 @@ module Plan =
     /// A URL button: opens client-side, carries no token/binding/tool.
     let url (label: string) (url: string) : PlanButton = UrlButton(label, url)
 
+    /// A WebApp button: launches a Mini App at `url` in the user's client — opens client-side,
+    /// carries no token/binding/tool, same as `url` above. `url` must be https; an invalid one
+    /// surfaces as `InvalidUrl` from `rows`/`ToolPlan.plan` (validated there, not here, so the two
+    /// never drift apart — see `rows`'s own comment).
+    let webApp (label: string) (url: string) : PlanButton = WebAppButton(label, url)
+
+    /// A CopyText button: copies `text` to the user's clipboard — opens client-side, carries no
+    /// token/binding/tool. `text` must be 1..256 characters; an out-of-range one surfaces as
+    /// `InvalidCopyText` from `rows`/`ToolPlan.plan`.
+    let copyText (label: string) (text: string) : PlanButton = CopyTextButton(label, text)
+
     /// Builds the neutral plan from rows of buttons, validating shape (>=1 row, each >=1 button)
     /// AND every button (label, tool name, url) immediately — mirrors slice-1's `Keyboard.create`,
     /// which also catches a bad label at build time rather than deferring to send time. Delegates to
