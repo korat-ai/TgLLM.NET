@@ -158,6 +158,17 @@ type SurfaceRegistry(catalog: Catalog) =
         | true, surface -> surfaces[surfaceId] <- { surface with MessageId = Some messageId }
         | false, _ -> ()
 
+    /// The reverse of `RecordMessageId` — called by the façade when an edit attempt discovers the
+    /// surface's tracked message has vanished from Telegram (`EditNotFound`: the end user deleted
+    /// it), so this surface's OWN state (`Components`/`DataModel`) stays intact but its next `Apply`
+    /// decides `SendNew` again instead of trying (and failing) to edit the same gone message forever.
+    /// A surface id no longer tracked at all (e.g. already deleted) is silently ignored, same
+    /// convention as `RecordMessageId`.
+    member _.ClearMessageId(surfaceId: string) : unit =
+        match surfaces.TryGetValue surfaceId with
+        | true, surface -> surfaces[surfaceId] <- { surface with MessageId = None }
+        | false, _ -> ()
+
     /// The live data model for `surfaceId`, if it is currently tracked — used by the
     /// `a2ui-action` tool to resolve a tapped button's context at press time (not render time).
     member _.TryGetDataModel(surfaceId: string) : JsonNode option =

@@ -342,15 +342,13 @@ type TgBot
     /// keyboard untouched — the bot-level counterpart to `PressContext.EditTextAsync` for an
     /// agent-initiated push (e.g. an A2UI surface whose update leaves it with no buttons at all)
     /// rather than a tap. `parseMode` renders `text` with the requested formatting, same "`None` =
-    /// plain text" contract as `SendText`'s parse-mode overload. A vanished message (`EditNotFound`
-    /// — the user deleted it between send and this edit) is a soft failure: this completes
-    /// normally, exactly `PressContext.EditTextAsync`'s own convention, rather than throwing.
-    member _.EditText(chat: ChatId, messageId: MessageId, text: MessageText, ?parseMode: ParseMode) : Task =
-        task {
-            let! _ = api.EditMessageText(chat, messageId, text, None, parseMode, cts.Token)
-            ()
-        }
-        :> Task
+    /// plain text" contract as `SendText`'s parse-mode overload. Never throws for a vanished message
+    /// (`EditNotFound` — the user deleted it between send and this edit): returns the classified
+    /// `EditOutcome` instead, so a caller can react to it (e.g. the A2UI façade evicts a surface's
+    /// tracked message id on `EditNotFound` so its NEXT update re-sends a fresh message rather than
+    /// trying, and failing, to edit the same vanished one forever).
+    member _.EditText(chat: ChatId, messageId: MessageId, text: MessageText, ?parseMode: ParseMode) : Task<EditOutcome> =
+        api.EditMessageText(chat, messageId, text, None, parseMode, cts.Token)
 
     /// Edit an existing message's text AND keyboard in place from OUTSIDE a button press — the
     /// bot-level counterpart to `PressContext.EditKeyboardAsync` for an agent-initiated push (e.g.
@@ -361,9 +359,14 @@ type TgBot
     /// bindings — if the edit itself fails. `parseMode` renders `text` with the requested
     /// formatting, same "`None` = plain text" contract as `SendText`'s parse-mode overload.
     ///
-    /// A vanished message (`EditNotFound`) is a soft failure: this completes normally, exactly
-    /// `PressContext.EditKeyboardAsync`'s own convention, rather than throwing. Fails fast (same
-    /// check as `SendKeyboardPlan`) if `plan` has a tool button but no Tool Router is wired in.
+    /// Never throws for a vanished message (`EditNotFound`): returns the classified `EditOutcome`
+    /// instead, so a caller can react to it (e.g. the A2UI façade evicts a surface's tracked message
+    /// id on `EditNotFound` so its NEXT update re-sends a fresh message rather than trying, and
+    /// failing, to edit the same vanished one forever — `PressContext.EditKeyboardAsync`'s own
+    /// convention is the SAME classify-don't-throw contract, just with its own observer report
+    /// instead of a return value, since a tap's `Tool = PressContext -> Task` has no return channel
+    /// back to a caller). Fails fast (same check as `SendKeyboardPlan`) if `plan` has a tool button
+    /// but no Tool Router is wired in.
     member _.EditKeyboardPlan
         (
             chat: ChatId,
@@ -371,7 +374,7 @@ type TgBot
             text: MessageText,
             plan: ToolKeyboard,
             ?parseMode: ParseMode
-        ) : Task =
+        ) : Task<EditOutcome> =
         if toolDispatch.IsNone && ToolPlan.hasToolButtons plan then
             invalidOp
                 "TgBot.EditKeyboardPlan: this plan has a tool button, but no Tool Router is wired in \
@@ -381,7 +384,7 @@ type TgBot
 
         task {
             try
-                do!
+                let! _ =
                     ToolKeyboardOps.deliver
                         "TgBot.EditKeyboardPlan"
                         CallbackToken.generate
@@ -404,11 +407,11 @@ type TgBot
                             })
                         cts.Token
                         plan
-                    :> Task
+
+                return EditApplied
             with EditKeyboardPlanNotFoundSignal ->
-                ()
+                return EditNotFound
         }
-        :> Task
 
     /// Deletes a message from OUTSIDE a button press (e.g. an A2UI `deleteSurface`) and cleans up
     /// any tool bindings this bot ever recorded for it (`MessageBindingTracker`), so a deleted

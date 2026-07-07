@@ -23,6 +23,13 @@ type A2uiError =
     /// the surface's own could edit or delete an unrelated message in that chat. Rejected outright
     /// rather than silently redirected onto the surface's real chat.
     | WrongChat of surfaceId: string
+    /// A surface's tracked message vanished from Telegram (the end user deleted it) between its
+    /// last successful render and a later edit attempt — Telegram's own "message to edit not
+    /// found", classified by the Bot API client as `EditNotFound`. A SOFT failure, same convention
+    /// as `PressContext.EditTextAsync`/`EditKeyboardAsync`'s own `EditNotFound` handling: the
+    /// triggering `Ingest` call still completes with `Ok` (the surface's own state DID update
+    /// correctly; only the DELIVERY attempt failed), reported here purely for observability.
+    | MessageVanished of surfaceId: string
 
 /// Plain-English descriptions of `A2uiError` — used where a caller wants a readable message
 /// rather than pattern-matching the DU itself (e.g. the C# façade's `A2uiIngestResult`, which
@@ -37,6 +44,7 @@ module A2uiError =
         | DuplicateSurface surfaceId -> $"surface '{surfaceId}' already exists (createSurface is create-once)"
         | UnknownSurface surfaceId -> $"unknown surface: {surfaceId}"
         | WrongChat surfaceId -> $"surface '{surfaceId}' was created in a different chat than this message arrived on"
+        | MessageVanished surfaceId -> $"surface '{surfaceId}'s message was deleted from Telegram; it will be re-sent on its next update"
 
 /// One parsed A2UI adjacency-list node, not yet narrowed to a catalog — `Component.toTelegramBasic`
 /// does that. `Fields` carries the node's own JSON object verbatim (its `id`/`component`

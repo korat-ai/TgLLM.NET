@@ -131,13 +131,26 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
                             match A2uiRenderer.validateKeyboard rendered with
                             | Error e -> return A2uiObservability.reportError observer e
                             | Ok() ->
-                                do!
+                                let! outcome =
                                     if List.isEmpty rendered.Keyboard.Rows then
                                         bot.EditText(surfaceChat, messageId, text, parseMode = MarkdownV2)
                                     else
                                         bot.EditKeyboardPlan(surfaceChat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
 
-                                return Ok()
+                                match outcome with
+                                | EditApplied
+                                | EditNotModified -> return Ok()
+                                | EditNotFound ->
+                                    // The user deleted the message out from under the agent. A SOFT
+                                    // failure (same convention as every other EditNotFound in this
+                                    // library): this call still completes with Ok — the surface's own
+                                    // state DID update correctly, only the DELIVERY attempt failed —
+                                    // but clears the tracked message id so the surface's NEXT update
+                                    // re-sends fresh rather than trying (and failing) to edit the same
+                                    // vanished message forever.
+                                    registry.ClearMessageId(A2uiMessage.surfaceId msg)
+                                    observer.OnA2uiError(MessageVanished(A2uiMessage.surfaceId msg))
+                                    return Ok()
                     | Ok(DeleteMessage(surfaceChat, messageId)) ->
                         do! bot.DeleteMessage(surfaceChat, messageId)
                         return Ok()
