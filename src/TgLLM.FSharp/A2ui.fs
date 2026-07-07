@@ -61,27 +61,33 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
                     match MessageText.create rendered.Text with
                     | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
                     | Ok text ->
-                        let! messageId =
-                            if List.isEmpty rendered.Keyboard.Rows then
-                                bot.SendText(sendChat, text, Some MarkdownV2)
-                            else
-                                bot.SendKeyboardPlan(sendChat, text, rendered.Keyboard, parseMode = MarkdownV2)
+                        match A2uiRenderer.validateKeyboard rendered with
+                        | Error e -> return A2uiObservability.reportError observer e
+                        | Ok() ->
+                            let! messageId =
+                                if List.isEmpty rendered.Keyboard.Rows then
+                                    bot.SendText(sendChat, text, Some MarkdownV2)
+                                else
+                                    bot.SendKeyboardPlan(sendChat, text, rendered.Keyboard, parseMode = MarkdownV2)
 
-                        registry.RecordMessageId(A2uiMessage.surfaceId msg, messageId)
-                        return Ok()
+                            registry.RecordMessageId(A2uiMessage.surfaceId msg, messageId)
+                            return Ok()
                 | Ok(EditExisting(messageId, rendered)) ->
                     A2uiObservability.reportUnsupported observer rendered
 
                     match MessageText.create rendered.Text with
                     | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
                     | Ok text ->
-                        do!
-                            if List.isEmpty rendered.Keyboard.Rows then
-                                bot.EditText(chat, messageId, text, parseMode = MarkdownV2)
-                            else
-                                bot.EditKeyboardPlan(chat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
+                        match A2uiRenderer.validateKeyboard rendered with
+                        | Error e -> return A2uiObservability.reportError observer e
+                        | Ok() ->
+                            do!
+                                if List.isEmpty rendered.Keyboard.Rows then
+                                    bot.EditText(chat, messageId, text, parseMode = MarkdownV2)
+                                else
+                                    bot.EditKeyboardPlan(chat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
 
-                        return Ok()
+                            return Ok()
                 | Ok(DeleteMessage messageId) ->
                     do! bot.DeleteMessage(chat, messageId)
                     return Ok()
@@ -96,6 +102,27 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
     /// above), never an empty/garbage message on the wire.
     static member private NoRenderableTextError: A2uiError =
         MalformedMessage "the rendered surface has no renderable text (a Bot API message requires non-empty text)"
+
+    /// Validates a rendered keyboard's buttons (label length, url presence, ...) BEFORE handing it
+    /// to `SendKeyboardPlan`/`EditKeyboardPlan` — both re-validate via the SAME `ToolPlan.validate`/
+    /// `plan` as a defense-in-depth re-check, but FAIL FAST (`invalidArg`) on an invalid one, the
+    /// right call for a caller-controlled literal plan (Always-Rule 6) but wrong here: `rendered`
+    /// came from agent-authored A2UI content, not a caller's own literal. An unresolved `DynString`
+    /// binding (`Renderer.buttonToPlanButton`/`DynString.resolve`) resolves to an empty label; an
+    /// over-length label or a blank `openUrl` are ordinary LLM output with no length/shape guard
+    /// upstream of this call. Called from every `Ingest` branch that's about to send/edit a keyboard
+    /// so the SAME condition always surfaces as an ordinary `A2uiError`, never a thrown exception. An
+    /// EMPTY keyboard (no buttons — a Text-only surface) is intentionally never validated: it's never
+    /// sent through `SendKeyboardPlan`/`EditKeyboardPlan` in the first place (the `List.isEmpty`
+    /// branch below sends/edits plain text instead), and `ToolPlan.validate` itself rejects an empty
+    /// `Rows` list, which would otherwise wrongly fail a perfectly ordinary buttonless surface.
+    static member private validateKeyboard(rendered: RenderedSurface) : Result<unit, A2uiError> =
+        if List.isEmpty rendered.Keyboard.Rows then
+            Ok()
+        else
+            ToolPlan.validate rendered.Keyboard
+            |> Result.map ignore
+            |> Result.mapError (fun e -> MalformedMessage $"the rendered keyboard is invalid ({e})")
 
 /// Builds an `A2uiRenderer` over a running bot.
 module A2ui =

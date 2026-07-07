@@ -100,6 +100,61 @@ public class A2uiRendererTests
         Assert.Empty(server.RequestsFor("sendMessage"));
     }
 
+    private static async Task AssertDegenerateButtonSurfacesWithoutThrowing(string surfaceId, long chatId, string buttonJson)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await FakeServerModule.start();
+        var tools = new ToolRegistry();
+
+        await using var agent = await TelegramAgent.StartPollingAsync(
+            new TelegramAgentOptions { BotToken = FakeToken, BaseUrl = server.BaseUrl, Tools = tools },
+            ct);
+
+        var renderer = A2uiRenderer.Create(agent, _ => Task.CompletedTask);
+
+        var surfaceJson = $$"""
+            {
+              "version": "v1.0",
+              "createSurface": {
+                "surfaceId": "{{surfaceId}}",
+                "catalogId": "telegram-basic",
+                "components": [
+                  { "id": "root", "component": "Column", "children": [ "t1", "b1" ] },
+                  { "id": "t1", "component": "Text", "text": "hi" },
+                  {{buttonJson}}
+                ]
+              }
+            }
+            """;
+
+        var result = await renderer.IngestAsync(chatId, surfaceJson, ct);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        Assert.Empty(server.RequestsFor("sendMessage"));
+    }
+
+    [Fact]
+    public Task IngestAsync_surfaces_an_unresolved_DynString_label_without_throwing() =>
+        AssertDegenerateButtonSurfacesWithoutThrowing(
+            "cs-bad-surface-empty-label",
+            5003L,
+            """{ "id": "b1", "component": "Button", "text": { "path": "/missing" }, "action": { "event": { "name": "go" } } }""");
+
+    [Fact]
+    public Task IngestAsync_surfaces_an_over_length_label_without_throwing() =>
+        AssertDegenerateButtonSurfacesWithoutThrowing(
+            "cs-bad-surface-overlong-label",
+            5004L,
+            $$"""{ "id": "b1", "component": "Button", "text": "{{new string('x', 65)}}", "action": { "event": { "name": "go" } } }""");
+
+    [Fact]
+    public Task IngestAsync_surfaces_a_blank_openUrl_without_throwing() =>
+        AssertDegenerateButtonSurfacesWithoutThrowing(
+            "cs-bad-surface-blank-url",
+            5005L,
+            """{ "id": "b1", "component": "Button", "text": "Docs", "action": { "functionCall": { "call": "openUrl", "args": { "url": " " } } } }""");
+
     [Fact]
     public async Task Catalog_advertises_telegram_basic()
     {
