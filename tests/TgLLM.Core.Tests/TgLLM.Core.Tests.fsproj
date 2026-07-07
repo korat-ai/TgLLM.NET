@@ -32,6 +32,7 @@
     <Compile Include="ToolDispatchProcessorTests.fs" />
     <Compile Include="OwnerRoutingTests.fs" />
     <Compile Include="LifecycleRoutingTests.fs" />
+    <Compile Include="ToolKeyboardOpsStampingTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

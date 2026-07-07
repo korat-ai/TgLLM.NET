@@ -9,6 +9,7 @@
   <ItemGroup>
     <Compile Include="FileBindingStoreTests.fs" />
     <Compile Include="FileBindingStoreEvictionTests.fs" />
+    <Compile Include="BindingDtoRoundTripTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
