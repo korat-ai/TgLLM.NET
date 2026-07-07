@@ -5,6 +5,7 @@ namespace TgLLM.FSharp
 
 open System
 open System.Collections.Generic
+open System.Text.Json
 open System.Threading.Tasks
 open TgLLM.Core
 
@@ -25,6 +26,15 @@ module CSharpSupport =
 
     /// The tapped button's visible label as a plain string (unwraps the F# `ButtonLabel`).
     let buttonLabelText (ctx: PressContext) : string = ButtonLabel.value ctx.ButtonLabel
+
+    /// The SAME `JsonSerializerOptions` `Plan.toolWith` (ToolRouter.fs) uses to serialize a
+    /// structured tool-button argument — exposed here (the one deliberate public entry point
+    /// across the assembly boundary) so the C# façade's `PressContext.GetArg<T>`/`TryGetArg<T>`
+    /// deserialize with the IDENTICAL `JsonFSharpConverter` configuration, rather than
+    /// `System.Text.Json`'s bare defaults (review #3). Without this, a payload whose wire shape
+    /// this configuration changes — e.g. a tuple, serialized as a JSON array rather than
+    /// `System.Text.Json`'s own default shape — fails to round-trip on the host's own button.
+    let structuredArgJsonOptions: JsonSerializerOptions = StructuredArgJson.options
 
 /// C#-facing bridge for Tool Router registration: keeps F# curried functions and `ToolName`'s
 /// smart constructor OUT of the C# call site, mirroring `Keyboards.Build`'s role for slice-1's

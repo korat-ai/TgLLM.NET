@@ -80,6 +80,45 @@ public class StructuredArgTests
     }
 
     [Fact]
+    public async Task Tool_T_binds_a_tuple_payload_and_GetArg_T_round_trips_it_exactly()
+    {
+        // `Plan.toolWith<T>` serializes through the SAME `JsonFSharpOptions`-configured options
+        // `PressContext.GetArg<T>` must deserialize with — a plain C# tuple is exactly the shape
+        // that configuration changes (a JSON array, not the BCL default's field-less `{}`), so this
+        // is the case the plain-`JsonSerializer.Deserialize<T>(json)` bug actually breaks.
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await FakeServerModule.start();
+        const long chatId = 4104L;
+        var original = (Id: 7, Reason: "looks good");
+        var received = new TaskCompletionSource<(int Id, string Reason)>();
+
+        var tools = new ToolRegistry().Register(
+            "approve",
+            ctx =>
+            {
+                received.TrySetResult(ctx.GetArg<(int Id, string Reason)>());
+                return Task.CompletedTask;
+            });
+
+        await using var agent = await TelegramAgent.StartPollingAsync(
+            new TelegramAgentOptions { BotToken = FakeToken, BaseUrl = server.BaseUrl, Tools = tools },
+            ct);
+
+        var plan = new PlanBuilder().Row(r => r.Tool("Approve", "approve", original)).Build();
+        await agent.SendKeyboardPlanAsync(chatId, "Deploy?", plan, ct: ct);
+
+        var sentKeyboard = server.RequestsFor("sendMessage").First().Body!.Value;
+        var token = CallbackDataAt(sentKeyboard, 0, 0);
+
+        server.EnqueueResult(
+            "getUpdates",
+            TelegramJson.batch(ListOf(TelegramJson.callbackQueryUpdate(1, "q-approve-tuple", token, chatId, 13, 903L, "Tester"))));
+
+        await WaitUntilAsync(() => received.Task.IsCompleted, 5000, ct);
+        Assert.Equal(original, await received.Task);
+    }
+
+    [Fact]
     public async Task TryGetArg_T_returns_false_for_a_payload_that_does_not_deserialize_as_T()
     {
         var ct = TestContext.Current.CancellationToken;

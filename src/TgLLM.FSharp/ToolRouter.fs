@@ -19,10 +19,15 @@ open TgLLM.Core
 /// `PressContext.GetArg`/`TryGetArg`), configured with `JsonFSharpConverter` so an F# record or
 /// discriminated-union payload round-trips exactly like a C#-shaped one: plain
 /// `System.Text.Json` cannot deserialize an F# record (its default constructor-matching heuristic
-/// doesn't recognize the compiler-generated shape) or represent a DU at all. `private` — purely an
-/// internal detail of how structured arguments are (de)serialized, never part of the public
-/// surface.
-module private StructuredArgJson =
+/// doesn't recognize the compiler-generated shape) or represent a DU at all. Also changes the wire
+/// shape of ordinary BCL types this converter DOES claim — e.g. a tuple serializes as a JSON array
+/// (`[7,"x"]`), not `System.Text.Json`'s own default. `internal` (not `private`): the C# façade's
+/// `PressContext.GetArg`/`TryGetArg` (`TgLLM.CSharp/PressContext.cs`) must deserialize with this
+/// EXACT same instance — see `CSharpSupport.structuredArgJsonOptions` (CSharpSupport.fs, same
+/// assembly) for the one deliberate public entry point that exposes it across the assembly
+/// boundary (review #3: reading with `System.Text.Json`'s bare defaults instead of this desynced
+/// the two sides and broke the round-trip for exactly the payload shapes this converter changes).
+module internal StructuredArgJson =
     let options: JsonSerializerOptions = JsonFSharpOptions.Default().ToJsonSerializerOptions()
 
 /// Turns a structured `TgLLM.Core.ToolManifest` into the neutral wire JSON a host feeds to an

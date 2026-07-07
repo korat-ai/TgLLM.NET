@@ -53,7 +53,7 @@ public sealed class PressContext
             throw new InvalidOperationException("PressContext.GetArg: this press carries no argument.");
         }
 
-        return JsonSerializer.Deserialize<T>(json)!;
+        return JsonSerializer.Deserialize<T>(json, CSharpSupport.structuredArgJsonOptions)!;
     }
 
     /// <summary>
@@ -66,7 +66,7 @@ public sealed class PressContext
         {
             try
             {
-                value = JsonSerializer.Deserialize<T>(json)!;
+                value = JsonSerializer.Deserialize<T>(json, CSharpSupport.structuredArgJsonOptions)!;
                 return true;
             }
             catch (JsonException)
