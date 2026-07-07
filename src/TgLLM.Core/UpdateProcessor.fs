@@ -261,15 +261,10 @@ type UpdateProcessor
                 with ex ->
                     observer.OnHookFailed(press, ex)
 
-                // Single-use consumption: after the binding's tool has been
-                // invoked, remove it from the store so a LATER tap on the same token resolves as
-                // unknown — the confirm-once mode. Removed regardless of whether the tool itself
-                // threw above: the button was pressed and its tool ran once, which is exactly what
-                // "consumed" means here; leaving a throwing single-use binding re-tappable forever
-                // would be the worse failure mode.
-                if binding.SingleUse then
-                    do! dispatch.Store.Remove([ binding.Token ], workCt)
-
+                // Single-use consumption itself already happened earlier, in `resolvePress` —
+                // BEFORE this work item was ever enqueued (see that member's own doc comment). By
+                // the time this thunk runs, a single-use `binding` has already been removed from
+                // the store; nothing further to do here.
                 do! ackState.SendAckOnce()
                 do! ackState.Finish()
             }
@@ -332,6 +327,20 @@ type UpdateProcessor
     /// back to `HookStoreResolution` exactly like a miss on `dispatch.Resolve` — the slice-1
     /// ack-first path then reports it via `OnUnknownToken`, the same observable outcome an
     /// unknown/stale token already gets. No separate "expired" branch is needed downstream.
+    ///
+    /// Single-use consumption ALSO happens HERE (review #1), not after the tool has run: a
+    /// `SingleUse` binding is removed from the store the instant it resolves live, before this
+    /// press is ever handed to `dispatcher.Enqueue`. `resolvePress` is only ever called from
+    /// `processPress`, itself only ever called from `RunAsync`'s single sequential
+    /// update-ingestion loop — so a second, fast-following tap's own call into this function
+    /// cannot start until this one has returned. Removing the binding here, rather than inside
+    /// `buildToolWork` after the tool finishes, closes exactly the window a fast double-tap used
+    /// to race through: two distinct `callback_query.id`s each resolving the still-present
+    /// binding before either tap's (possibly slow) tool had a chance to consume it. This makes
+    /// single-use "consume on ATTEMPT", not "consume on success" — a tool that itself later throws
+    /// still leaves the binding gone, and a losing/refused second tap never runs the tool at all.
+    /// That is the intended safety for a confirm-once/destructive button: better to refuse a
+    /// legitimate retry than to risk running the same tool twice.
     let resolvePress (ct: CancellationToken) (press: ButtonPress) : Task<PressResolution> =
         task {
             match toolDispatch with
@@ -340,7 +349,11 @@ type UpdateProcessor
                 let! resolved = dispatch.Resolve(press.Token, ct)
 
                 match resolved with
-                | ValueSome(tool, binding) when Expiry.isLive (clock ()) binding.ExpiresAt -> return ToolResolution(tool, binding, dispatch)
+                | ValueSome(tool, binding) when Expiry.isLive (clock ()) binding.ExpiresAt ->
+                    if binding.SingleUse then
+                        do! dispatch.Store.Remove([ binding.Token ], ct)
+
+                    return ToolResolution(tool, binding, dispatch)
                 | ValueSome _ -> return HookStoreResolution
                 | ValueNone -> return HookStoreResolution
         }

@@ -125,8 +125,9 @@ type ToolBinding =
       Owner: OwnerScope
       /// NEW — when this binding stops resolving. Defaults to `None` (never expires).
       ExpiresAt: DateTimeOffset option
-      /// NEW — whether the first successful press consumes this binding (confirm-once mode).
-      /// Defaults to `false`.
+      /// NEW — whether the first press that RESOLVES this binding consumes it (confirm-once
+      /// mode), regardless of whether that press's tool goes on to succeed or throw. Defaults to
+      /// `false`.
       SingleUse: bool
       /// NEW — this keyboard's own override of the notice shown to a refused (non-owner)
       /// presser. `None` uses `OwnerScope.DefaultDeniedNotice` at refusal time.

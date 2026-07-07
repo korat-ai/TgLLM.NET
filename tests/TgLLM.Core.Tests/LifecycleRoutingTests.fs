@@ -289,4 +289,46 @@ let lifecycleRoutingTests =
             runEnqueued dispatcher
 
             Expect.equal runCount 2 "a non-single-use (persistent menu) binding keeps resolving across repeated distinct taps"
+
+        testCase
+            "a fast double-tap on a single-use binding invokes the tool exactly once, even with a slow tool on the REAL per-chat dispatcher"
+        <| fun _ ->
+            let token = CallbackToken.generate ()
+            let mutable runCount = 0
+
+            // Slow-ish tool: long enough that, under the bug, the SECOND tap's resolve would race
+            // ahead of the first tap's tool-completion-time consumption and find the binding still
+            // present.
+            let tool: Tool =
+                fun _ ->
+                    task {
+                        do! Task.Delay 200
+                        Interlocked.Increment(&runCount) |> ignore
+                    }
+
+            let registry = InMemoryToolRegistry() :> IToolRegistry
+            registry.Register(toolName "confirm-once", tool)
+            let store = InMemoryBindingStore() :> IBindingStore
+            let binding = { ToolBinding.create token (toolName "confirm-once") None with SingleUse = true }
+            store.Save([ binding ], CancellationToken.None).GetAwaiter().GetResult()
+            let dispatch = ToolDispatch(registry, store)
+            // Two DISTINCT query ids (a real double-tap) on the SAME token/message — redelivery
+            // dedup (keyed by query id) must not be what prevents the double run here.
+            let firstPress = pressFor token "q-double-tap-1" 1L
+            let secondPress = pressFor token "q-double-tap-2" 1L
+            let api = FakeBotApiClient()
+            let observer = FakeHookObserver()
+            let source = FakeUpdateSource [ ButtonPressed firstPress; ButtonPressed secondPress ]
+
+            // The REAL dispatcher: both presses land on the SAME chat, so its per-chat channel runs
+            // their enqueued work sequentially — exactly the shape a fast double-tap produces in
+            // production (unlike `FakeDispatcher`, which the test itself drives one item at a time).
+            let dispatcher = new PerChatChannelDispatcher(shutdownBudget = TimeSpan.FromSeconds 5.0)
+            let processor = UpdateProcessor(source, InMemoryHookStore(), api, dispatcher, observer, toolDispatch = dispatch)
+
+            (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()
+            // Drain: waits for both enqueued work items (including the slow tool) to finish.
+            ((dispatcher :> IPressDispatcher).DisposeAsync()).AsTask().GetAwaiter().GetResult()
+
+            Expect.equal runCount 1 "the single-use binding must be consumed at the FIRST tap's resolution, before either tap's tool ever runs — the second tap must never invoke the tool"
     ]
