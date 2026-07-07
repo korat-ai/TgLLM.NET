@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using TgLLM.FSharp;
@@ -38,6 +39,47 @@ public sealed class PressContext
     /// argument-less tool button.
     /// </summary>
     public string? Arg => _core.Arg;
+
+    /// <summary>
+    /// Deserializes the bound argument as <typeparamref name="T"/> (System.Text.Json). An
+    /// argument-less press, or a payload that is not valid JSON for <typeparamref name="T"/>,
+    /// throws rather than returning a default value — use <see cref="TryGetArg{T}"/> for a
+    /// non-throwing variant.
+    /// </summary>
+    public T GetArg<T>()
+    {
+        if (_core.Arg is not { } json)
+        {
+            throw new InvalidOperationException("PressContext.GetArg: this press carries no argument.");
+        }
+
+        return JsonSerializer.Deserialize<T>(json)!;
+    }
+
+    /// <summary>
+    /// The safe variant of <see cref="GetArg{T}"/>: returns <c>false</c> for an argument-less press
+    /// or a payload that fails to deserialize as <typeparamref name="T"/>, never an exception.
+    /// </summary>
+    public bool TryGetArg<T>(out T value)
+    {
+        if (_core.Arg is { } json)
+        {
+            try
+            {
+                value = JsonSerializer.Deserialize<T>(json)!;
+                return true;
+            }
+            catch (JsonException)
+            {
+                // falls through to the "no value" return below
+            }
+        }
+
+        // The `out` parameter contract requires SOME value on the false path — the BCL's own
+        // `TryParse`/`TryGetValue` pattern does the same (`default(T)` on failure).
+        value = default!;
+        return false;
+    }
 
     /// <summary>
     /// Sets the ack directive for a tool button's deferred-ack path: the processor sends it via

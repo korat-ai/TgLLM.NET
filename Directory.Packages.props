@@ -27,6 +27,12 @@
          (SQLite's native e_sqlite3 carries an unresolved CVE that the repo's NuGet audit rejects). -->
     <PackageVersion Include="LiteDB" Version="5.0.21" />
 
+    <!-- Structured tool-button arguments (TgLLM.FSharp façade only — Core stays free of this
+         dependency): a JsonFSharpConverter-configured JsonSerializerOptions so Plan.toolWith<'T>/
+         PressContext.GetArg<'T> round-trip an F# record or discriminated-union payload, not just a
+         C#-shaped one — plain System.Text.Json alone cannot deserialize either shape. -->
+    <PackageVersion Include="FSharp.SystemTextJson" Version="1.4.36" />
+
     <!-- F# test stack: Expecto + FsCheck (Principle I — property-based tests are mandatory
          for the pure kernel).
          NOTE (deviation, disclosed): Expecto 11.1.0 / Expecto.FsCheck 11.1.0 were the originally

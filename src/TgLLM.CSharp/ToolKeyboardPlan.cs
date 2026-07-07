@@ -27,6 +27,18 @@ public sealed class PlanRowBuilder
         return this;
     }
 
+    /// <summary>
+    /// Add a tool button carrying a bound structured payload: <paramref name="arg"/> is serialized
+    /// (System.Text.Json) into the button's opaque argument slot, and comes back out via
+    /// <see cref="PressContext.GetArg{T}"/>/<see cref="PressContext.TryGetArg{T}"/> when the button
+    /// is pressed.
+    /// </summary>
+    public PlanRowBuilder Tool<T>(string label, string toolName, T arg)
+    {
+        Buttons.Add(Plan.toolWith<T>(label, toolName, arg));
+        return this;
+    }
+
     /// <summary>Add a URL button: opens client-side, invokes no tool.</summary>
     public PlanRowBuilder Url(string label, string url)
     {
