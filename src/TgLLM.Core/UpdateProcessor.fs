@@ -61,7 +61,7 @@ type private DeferredAckState =
       /// finished running (whether it won or lost the ack race).
       Finish: unit -> Task }
 
-/// Internal signal ONLY (review #4): `UpdateProcessor.makeEditKeyboardAction`'s `send` closure
+/// Internal signal ONLY: `UpdateProcessor.makeEditKeyboardAction`'s `send` closure
 /// raises this when the edit-keyboard call classifies as `EditNotFound`, so it reaches
 /// `ToolKeyboardOps.deliver`'s EXISTING throw-triggered compensation (removes the just-saved
 /// replacement bindings) exactly as any other `send` failure would — `deliver` itself has no idea
@@ -147,7 +147,7 @@ type UpdateProcessor
     /// thunk — the only one available at enqueue time, and the correct scope for "stop counting
     /// down if the whole processor is shutting down" anyway.
     let startDeferredAck (press: ButtonPress) (ct: CancellationToken) : DeferredAckState =
-        // ONE field, written ONCE per directive (review #8) — `AnswerAction` used to write
+        // ONE field, written ONCE per directive — `AnswerAction` used to write
         // `ackText`/`ackAlert` as two SEPARATE mutable fields, read separately by `sendAckOnce`.
         // Those two fields have no ordering relationship to each other: `AnswerAction` runs on
         // whichever thread the tool itself completes on, while `sendAckOnce` can run
@@ -366,7 +366,7 @@ type UpdateProcessor
     /// ack-first path then reports it via `OnUnknownToken`, the same observable outcome an
     /// unknown/stale token already gets. No separate "expired" branch is needed downstream.
     ///
-    /// Single-use consumption ALSO happens HERE (review #1), not after the tool has run: a
+    /// Single-use consumption ALSO happens HERE, not after the tool has run: a
     /// `SingleUse` binding is removed from the store the instant it resolves live, before this
     /// press is ever handed to `dispatcher.Enqueue`. `resolvePress` is only ever called from
     /// `processPress`, itself only ever called from `RunAsync`'s single sequential

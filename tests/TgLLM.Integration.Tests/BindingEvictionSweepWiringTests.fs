@@ -1,4 +1,4 @@
-/// A bot's own binding-eviction sweep runs automatically once wired up (review #2):
+/// A bot's own binding-eviction sweep runs automatically once wired up:
 /// `IBindingStore.EvictExpired` has no production caller of its own, so before `TgBot.wireBot`
 /// started a `BindingEvictionSweeper`, an expiring/expired binding accumulated forever regardless
 /// of which store backed a bot. No test here ever calls `EvictExpired`/`SweepOnce` itself — the

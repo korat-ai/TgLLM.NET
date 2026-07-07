@@ -25,8 +25,8 @@ open TgLLM.Core
 /// `PressContext.GetArg`/`TryGetArg` (`TgLLM.CSharp/PressContext.cs`) must deserialize with this
 /// EXACT same instance — see `CSharpSupport.structuredArgJsonOptions` (CSharpSupport.fs, same
 /// assembly) for the one deliberate public entry point that exposes it across the assembly
-/// boundary (review #3: reading with `System.Text.Json`'s bare defaults instead of this desynced
-/// the two sides and broke the round-trip for exactly the payload shapes this converter changes).
+/// boundary — reading with `System.Text.Json`'s bare defaults instead of this desynced the two
+/// sides and broke the round-trip for exactly the payload shapes this converter changes.
 module internal StructuredArgJson =
     let options: JsonSerializerOptions = JsonFSharpOptions.Default().ToJsonSerializerOptions()
 
@@ -96,8 +96,8 @@ type ToolRegistry private (registry: IToolRegistry) =
     /// (empty-after-trim) `name` is a programmer error by the host (Always-Rule 6) — it fails fast
     /// rather than threading a `Result` through a fluent builder API.
     ///
-    /// `description`/`argSchema` are normalized through `Option.bind Option.ofObj` before use
-    /// (review #5, mirroring `ToolRegistrations.Register`'s own bridge in CSharpSupport.fs): F#'s
+    /// `description`/`argSchema` are normalized through `Option.bind Option.ofObj` before use,
+    /// mirroring `ToolRegistrations.Register`'s own bridge in CSharpSupport.fs: F#'s
     /// "omitted argument becomes `None`" convenience is a source-level feature of an F# CALLER —
     /// a C#/interop caller has no such sugar, and its optional-parameter calling convention wraps
     /// ANY value (including a literal `null`) in `Some`, so a `null` it passes arrives here as

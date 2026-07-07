@@ -500,8 +500,8 @@ let toolDispatchProcessorTests =
             // A VERY tight watchdog budget, repeated many times, so the tool's own write of its
             // ack directive (`ctx.Answer`, on the dispatcher's own thread) has a real chance of
             // landing concurrently with the watchdog's read of it (on a threadpool timer thread) —
-            // exactly the two-independent-threads shape review #8 is about. Every recorded ack MUST
-            // be one of the two VALID complete states (the watchdog's default, or the tool's own
+            // a race between two independent threads writing/reading shared state. Every recorded
+            // ack MUST be one of the two VALID complete states (the watchdog's default, or the tool's own
             // full directive) — never a mix of one field from each (e.g. the new alert flag with
             // the OLD/default text, or vice versa).
             let iterations = 300

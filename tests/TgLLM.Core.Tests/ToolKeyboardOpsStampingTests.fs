@@ -2,8 +2,8 @@
 /// call produces carries the SAME send-time `owner`/`deniedNotice`/`expiresAt`/`singleUse` —
 /// uniformly, regardless of how many tool buttons the plan has — while each binding's own
 /// `ToolName`/`Arg` stay exactly what the input `PlanButton` specified. Complements the
-/// hand-written example-based coverage already in `ToolDispatchProcessorTests.fs` (review #4's own
-/// compensation test, the EditKeyboardAsync tests) with a property over an ARBITRARY plan shape and
+/// hand-written example-based coverage already in `ToolDispatchProcessorTests.fs` (its compensation
+/// test and its `EditKeyboardAsync` tests) with a property over an ARBITRARY plan shape and
 /// arbitrary send-time options, rather than one fixed example.
 module TgLLM.Core.Tests.ToolKeyboardOpsStampingTests
 

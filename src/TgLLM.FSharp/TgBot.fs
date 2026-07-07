@@ -362,7 +362,7 @@ type TgBot
         // Started here — alongside the run loop, below — and disposed alongside it
         // (`DisposeAsync`): `IBindingStore.EvictExpired` has no other production caller, so
         // WITHOUT this, `bindingStore` (whichever store backs this bot, default or host-supplied)
-        // would grow unbounded with expiring/expired bindings forever (review #2). Shares this
+        // would grow unbounded with expiring/expired bindings forever. Shares this
         // bot's OWN `clock`, so a host that overrides it for deterministic tests gets a
         // deterministic sweep too.
         let evictionSweeper = new BindingEvictionSweeper(bindingStore, clock, ?interval = common.BindingEvictionInterval)

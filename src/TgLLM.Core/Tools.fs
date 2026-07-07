@@ -419,8 +419,8 @@ type InMemoryBindingStore() =
 
 /// Periodically calls `IBindingStore.EvictExpired` so a long-lived bot's binding store doesn't
 /// grow unbounded: `EvictExpired` itself has no other production caller, so without a background
-/// sweeper, an expiring/expired binding accumulates forever regardless of which store backs a bot
-/// (review #2). Owns its own background loop and `CancellationTokenSource`, STARTED at
+/// sweeper, an expiring/expired binding accumulates forever regardless of which store backs a bot.
+/// Owns its own background loop and `CancellationTokenSource`, STARTED at
 /// construction and stopped via `IAsyncDisposable.DisposeAsync` — mirrors
 /// `PerChatChannelDispatcher`'s "start eagerly, dispose cleanly" shape, and is wired into every
 /// bot's lifecycle the same way (`TgBot.wireBot`, TgLLM.FSharp/TgBot.fs): started alongside the

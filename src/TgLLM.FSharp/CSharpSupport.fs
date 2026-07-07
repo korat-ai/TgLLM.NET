@@ -31,7 +31,7 @@ module CSharpSupport =
     /// structured tool-button argument — exposed here (the one deliberate public entry point
     /// across the assembly boundary) so the C# façade's `PressContext.GetArg<T>`/`TryGetArg<T>`
     /// deserialize with the IDENTICAL `JsonFSharpConverter` configuration, rather than
-    /// `System.Text.Json`'s bare defaults (review #3). Without this, a payload whose wire shape
+    /// `System.Text.Json`'s bare defaults. Without this, a payload whose wire shape
     /// this configuration changes — e.g. a tuple, serialized as a JSON array rather than
     /// `System.Text.Json`'s own default shape — fails to round-trip on the host's own button.
     let structuredArgJsonOptions: JsonSerializerOptions = StructuredArgJson.options
