@@ -66,6 +66,15 @@ candidate spec — a moving target we stay *aware* of, not *coupled* to). It bui
   Collection-Scope / `List` template iteration and two-way input binding are out of scope this slice.
 - Q: Is A2UI's license compatible? → A: Yes — A2UI is Apache-2.0; implementing the protocol is
   compatible with this library's MIT license.
+- Q: A2UI carries no chat/transport identity — how does a surface get a target Telegram chat? → A: The
+  **host supplies the target chat** when it hands a `createSurface` to the renderer; the renderer binds
+  that surface to `(chat, message_id)` on the first render. The library ships no A2UI transport, so the
+  host is what connects an A2UI stream to a specific chat — the renderer's ingest takes `(chat, message)`.
+- Q: What happens on a second `createSurface` for an already-live surface id? → A: **Reject with a
+  surfaced error** — `createSurface` is create-once; a live surface is changed via `updateComponents`/
+  `updateDataModel`, not re-created.
+- Q: What does a bound Text with an unresolved data-model path render as? → A: The **empty string**
+  (documented), never a crash.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -176,16 +185,16 @@ component" (observable), does not crash, and still renders the supported sibling
 - **Unsupported component** (input/rich container) inside a supported surface: surfaced, not silently
   dropped or rendered wrong.
 - **Malformed / wrong-version A2UI message**: surfaced as an error, bot keeps working.
-- **Unresolved data-model path** for a bound Text: a clear, documented outcome (empty or a placeholder),
-  never a crash.
+- **Unresolved data-model path** for a bound Text: renders as the **empty string** (documented), never
+  a crash.
 - **`updateComponents` for an unknown / already-deleted surface**: surfaced, no crash.
 - **Edit-in-place on a vanished surface message** (user deleted it): soft failure (reusing slice-3's
   soft edit-error handling), no exception to the host.
 - **A surface with no renderable content** (only unsupported components): surfaced; no empty message
   spam.
 - **A Button with `wantResponse: true` but no `actionId`**: surfaced as a malformed action.
-- **Duplicate `surfaceId`** (a second createSurface for a live surface): defined rule (replace or
-  reject), surfaced.
+- **Duplicate `surfaceId`** (a second createSurface for a live surface): **rejected** with a surfaced
+  error (create-once); the agent changes a live surface via `updateComponents`/`updateDataModel`.
 
 ## Requirements *(mandatory)*
 
@@ -196,8 +205,10 @@ component" (observable), does not crash, and still renders the supported sibling
 - **FR-002**: The renderer MUST map the **`telegram-basic`** catalog to Telegram: `Text` → message text
   (Markdown); `Button` → inline keyboard button; `Row` → buttons in one keyboard row; `Column` → stacked
   rows; `Divider` → a separator; `Image` (optional) → a photo or link. It MUST render only this subset.
-- **FR-003**: A surface MUST map to a Telegram message identified by `(chat, message_id)`; the initial
-  render sends the message and records that identity; later updates target it.
+- **FR-003**: A surface MUST map to a Telegram message identified by `(chat, message_id)`. Because A2UI
+  carries no chat identity, the **host supplies the target chat** when it hands a `createSurface` to the
+  renderer (the ingest takes the chat alongside the message); the initial render sends the message and
+  records that `(chat, message_id)`; later updates target it.
 - **FR-004**: On a Button press, the renderer MUST build an A2UI **`action`** message (`name`,
   `surfaceId`, `sourceComponentId`, `timestamp`, resolved `context`, `wantResponse`, `actionId`) and
   deliver it to a **host-provided sink**. The library ships no agent transport — the host relays it.
