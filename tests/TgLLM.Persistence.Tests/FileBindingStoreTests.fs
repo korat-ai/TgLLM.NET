@@ -218,4 +218,51 @@ let fileBindingStoreTests =
                 Expect.equal result (ValueSome binding) "the custom notice override survives a restart alongside the owner scope"
             finally
                 File.Delete path
+
+        testCase "a saved expiry and single-use flag reload intact after a reopen (restart) — finishes the on-disk shape US4 left incomplete" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                let token = CallbackToken.generate ()
+                let expiresAt = DateTimeOffset.UtcNow.AddHours 1.0
+
+                let binding =
+                    { ToolBinding.create token (toolName "confirm") None with
+                        ExpiresAt = Some expiresAt
+                        SingleUse = true }
+
+                let firstInstance = FileBindingStore.openAt path :> IBindingStore
+                (firstInstance.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
+
+                // Simulate a restart: nothing but the file on disk connects the two instances.
+                let secondInstance = FileBindingStore.openAt path :> IBindingStore
+                let result = (secondInstance.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal
+                    result
+                    (ValueSome binding)
+                    "the expiry instant and single-use flag survive a restart through the file store, not just for the CURRENT process"
+            finally
+                File.Delete path
+
+        testCase "a binding with no expiry and SingleUse = false still reloads with those exact defaults after a reopen" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                let token = CallbackToken.generate ()
+                let binding = ToolBinding.create token (toolName "approve") None
+
+                let firstInstance = FileBindingStore.openAt path :> IBindingStore
+                (firstInstance.Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
+
+                let secondInstance = FileBindingStore.openAt path :> IBindingStore
+                let result = (secondInstance.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                match result with
+                | ValueSome reloaded ->
+                    Expect.equal reloaded.ExpiresAt None "a never-expiring binding still reloads with no expiry"
+                    Expect.isFalse reloaded.SingleUse "a non-single-use binding still reloads as such"
+                | ValueNone -> failwith "expected the binding to reload"
+            finally
+                File.Delete path
     ]

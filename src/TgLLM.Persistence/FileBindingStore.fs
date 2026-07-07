@@ -28,19 +28,22 @@ open TgLLM.Core
 /// unreachable from outside this assembly in practice despite the accessibility modifier.
 ///
 /// `OwnerUserId`/`DeniedNotice` (US1) round-trip `ToolBinding.Owner`/`DeniedNotice`: `null` ⇒
-/// `Anyone`/no override; a non-null `OwnerUserId` ⇒ `User uid`. A row written before this slice
-/// (no such properties in its JSON) deserializes both as `null` — `Anyone`/no override — which is
-/// exactly `ToolBinding.create`'s own default, so an old file loads unchanged. `ExpiresAt`/
-/// `SingleUse` still do NOT round-trip (accepted, documented limitation — wiring the full field
-/// through the on-disk shape is US4 scope, not this owner-persistence fix). `[<NoComparison>]`:
-/// `Nullable<int64>` doesn't satisfy F#'s auto-derived structural `comparison` constraint (it isn't
-/// needed here — this DTO is never ordered/compared, only (de)serialized).
+/// `Anyone`/no override; a non-null `OwnerUserId` ⇒ `User uid`. `ExpiresAt`/`SingleUse` (US4) round-
+/// trip the same way: a row written before either field existed on this shape deserializes
+/// `ExpiresAt` as `null` and `SingleUse` as its type default (`false`, since `System.Text.Json`
+/// leaves a missing non-nullable property at `default<'T>` rather than failing) — both exactly
+/// `ToolBinding.create`'s own defaults, so an old file loads unchanged either way. `[<NoComparison>]`:
+/// `Nullable<int64>`/`Nullable<DateTimeOffset>` don't satisfy F#'s auto-derived structural
+/// `comparison` constraint (it isn't needed here — this DTO is never ordered/compared, only
+/// (de)serialized).
 [<NoComparison>]
 type BindingDto =
     { Token: string
       ToolName: string
       Arg: string | null
       OwnerUserId: Nullable<int64>
+      ExpiresAt: Nullable<DateTimeOffset>
+      SingleUse: bool
       DeniedNotice: string | null }
 
 module BindingDto =
@@ -52,6 +55,8 @@ module BindingDto =
             match binding.Owner with
             | Anyone -> Nullable()
             | User uid -> Nullable(UMX.untag uid)
+          ExpiresAt = binding.ExpiresAt |> Option.toNullable
+          SingleUse = binding.SingleUse
           DeniedNotice = binding.DeniedNotice |> Option.toObj }
 
     /// `None` for a row this store could never have written itself (a hand-edited or corrupted
@@ -65,13 +70,11 @@ module BindingDto =
         | ValueSome token, Ok toolName ->
             let owner = if dto.OwnerUserId.HasValue then User(UMX.tag<userId> dto.OwnerUserId.Value) else Anyone
 
-            // `ExpiresAt`/`SingleUse` aren't in `BindingDto` yet (still US4 scope) — every row this
-            // store has ever written is slice-2/US1-shaped for those two fields, so
-            // `ToolBinding.create`'s defaults (`None`/`false`) are exactly correct, not a temporary
-            // shortcut.
             Some
                 { ToolBinding.create token toolName (dto.Arg |> Option.ofObj) with
                     Owner = owner
+                    ExpiresAt = dto.ExpiresAt |> Option.ofNullable
+                    SingleUse = dto.SingleUse
                     DeniedNotice = dto.DeniedNotice |> Option.ofObj }
         | _ -> None
 
@@ -130,13 +133,10 @@ type FileBindingStore
 
         /// Sweeps the in-memory index for bindings past their `ExpiresAt` (per `Expiry.isLive`),
         /// removes them, and persists the result — same in-process contract as
-        /// `InMemoryBindingStore.EvictExpired`. NOTE (accepted, documented limitation, mirrors
-        /// `BindingDto`'s own doc comment above): the on-disk `BindingDto` shape does not yet carry
-        /// `ExpiresAt` — every row this store persists and reloads is still slice-2-shaped, so a
-        /// binding's `ExpiresAt` only survives for the lifetime of the CURRENT process, not across
-        /// a restart. `EvictExpired` therefore only ever has something to evict for bindings saved
-        /// (with an expiry) THIS session; wiring the full field through the on-disk DTO is US4
-        /// scope, not this eviction-seam addition.
+        /// `InMemoryBindingStore.EvictExpired`. `ExpiresAt` is part of `BindingDto`'s own on-disk
+        /// shape (see its doc comment), so a binding's expiry survives a restart too: a store
+        /// reopened over the same file still evicts it once `now` passes the SAME instant, not just
+        /// for the process that originally saved it.
         member _.EvictExpired(now: DateTimeOffset) : ValueTask<int> =
             lock gate (fun () ->
                 let expiredTokens =
