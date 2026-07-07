@@ -244,7 +244,7 @@ let editInPlaceTests =
                           )
 
                           // The tool's own edit attempt is classified into an `EditOutcome` and never
-                          // throws (FR-015) — the tool runs to completion, and the processor still
+                          // throws — the tool runs to completion, and the processor still
                           // sends exactly one ack afterwards, the system-level proof this "crashed"
                           // nothing.
                           do! pollUntil 5000 (fun () -> server.RequestsFor "answerCallbackQuery" |> List.isEmpty |> not)

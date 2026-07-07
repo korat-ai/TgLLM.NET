@@ -41,7 +41,7 @@ type IPressDispatcher =
     /// report work exceptions (via `IHookObserver`) without terminating the chat's consumer loop.
     abstract Enqueue: chat: ChatId * work: (CancellationToken -> Task) -> ValueTask
 
-/// The outcome of an edit-in-place call (US4, research D5/FR-015): classifies Telegram's two
+/// The outcome of an edit-in-place call: classifies Telegram's two
 /// well-known, non-fatal `editMessageText`/`editMessageReplyMarkup` errors so `UpdateProcessor`
 /// never has to let them propagate as an exception to a tool author. `EditNotModified` ("message
 /// is not modified") is a successful no-op — the tool's own re-render already matches what's on
@@ -79,7 +79,7 @@ type IBotApiClient =
     /// `editMessageText` semantics: omitting `reply_markup` preserves whatever markup the message
     /// already has); `Some` replaces it, same as `SendKeyboard`'s unconditional markup.
     /// Implementations classify the two well-known non-fatal `ApiRequestException`s (`"message to
-    /// edit not found"`/`"message is not modified"`) into `EditOutcome` (US4, FR-015) rather than
+    /// edit not found"`/`"message is not modified"`) into `EditOutcome` rather than
     /// letting them propagate; any OTHER exception still propagates unchanged, caught and reported
     /// by `UpdateProcessor`'s existing per-tool try/with (`buildToolWork`) exactly as before.
     abstract EditMessageText:
@@ -97,7 +97,7 @@ type IHookObserver =
     abstract OnHookFailed: press: ButtonPress * error: exn -> unit
     abstract OnUnknownToken: press: ButtonPress -> unit
 
-    /// An edit-in-place softly failed (US4, FR-015): `EditNotFound` — the edited message vanished
+    /// An edit-in-place softly failed: `EditNotFound` — the edited message vanished
     /// between send and edit. NOT an exception to the tool author: `PressContext.EditTextAsync`/
     /// `EditKeyboardAsync` complete normally regardless; this is the ONLY way such a soft failure
     /// is ever surfaced. `reason` describes the classified outcome. `EditNotModified` is a silent

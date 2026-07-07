@@ -88,12 +88,12 @@ type UpdateProcessor
     /// ordinary tool work. Tests override it to keep the watchdog path fast.
     let watchdogBudget = defaultArg watchdogBudget (TimeSpan.FromSeconds 2.0)
 
-    /// "Now", injected rather than read ambiently (US4, research D5) — defaults to real wall-clock
+    /// "Now", injected rather than read ambiently — defaults to real wall-clock
     /// time; tests override it to drive `Expiry.isLive`'s decision deterministically. Feeds BOTH
     /// the expiry check (`resolvePress`) and `processedQueries`' own TTL bookkeeping below.
     let clock = defaultArg clock (fun () -> DateTimeOffset.UtcNow)
 
-    /// At-most-once redelivery dedup (US4, research D6): the FIRST sighting of a callback query's
+    /// At-most-once redelivery dedup: the FIRST sighting of a callback query's
     /// identity may proceed; any repeat within the tracker's TTL is dropped before it ever reaches
     /// resolution — see `processPress`'s own gate below.
     let processedQueries = ProcessedQueryTracker(clock)
@@ -177,7 +177,7 @@ type UpdateProcessor
                 } }
 
     /// Interprets an `EditOutcome` for the tool author: `EditApplied`/`EditNotModified` both
-    /// complete silently (the second is a successful no-op, FR-015); `EditNotFound` is surfaced via
+    /// complete silently (the second is a successful no-op); `EditNotFound` is surfaced via
     /// `IHookObserver.OnEditFailed` — never as an exception, regardless of outcome.
     let reportEditOutcome (press: ButtonPress) (outcome: EditOutcome) : unit =
         match outcome with
@@ -189,7 +189,7 @@ type UpdateProcessor
     /// PRESSED message's text, leaving its current keyboard untouched (`None`). An invalid `text`
     /// is a programmer error by the tool author (Always-Rule 6), same fail-fast convention as
     /// `makeReplyTextAsync` — raised synchronously, unaffected by the `task {}` wrapper the `Ok`
-    /// branch below needs to await and classify the edit's `EditOutcome` (FR-015).
+    /// branch below needs to await and classify the edit's `EditOutcome`.
     let makeEditTextAction (press: ButtonPress) (workCt: CancellationToken) (text: string) : Task =
         match MessageText.create text with
         | Error error -> invalidArg (nameof text) $"PressContext.EditTextAsync: invalid text ({error})"
@@ -259,7 +259,7 @@ type UpdateProcessor
                 with ex ->
                     observer.OnHookFailed(press, ex)
 
-                // Single-use consumption (US4, research D6): after the binding's tool has been
+                // Single-use consumption: after the binding's tool has been
                 // invoked, remove it from the store so a LATER tap on the same token resolves as
                 // unknown — the confirm-once mode. Removed regardless of whether the tool itself
                 // threw above: the button was pressed and its tool ran once, which is exactly what
@@ -325,7 +325,7 @@ type UpdateProcessor
     /// `IHookStore` resolver. See `PressResolution.ackPolicy` for the ack policy each outcome
     /// implies — `processPress` below carries it out via whichever branch it dispatches to.
     ///
-    /// Expiry (US4, research D5) is checked HERE, right after resolution: a binding whose
+    /// Expiry is checked HERE, right after resolution: a binding whose
     /// `ExpiresAt` has passed (per `Expiry.isLive`, fed THIS processor's injected `clock`) falls
     /// back to `HookStoreResolution` exactly like a miss on `dispatch.Resolve` — the slice-1
     /// ack-first path then reports it via `OnUnknownToken`, the same observable outcome an
@@ -353,7 +353,7 @@ type UpdateProcessor
     /// silently doing the wrong thing.
     let processPress (ct: CancellationToken) (press: ButtonPress) : Task =
         task {
-            // At-most-once redelivery dedup (US4, research D6) — FIRST, before any resolution:
+            // At-most-once redelivery dedup — FIRST, before any resolution:
             // Telegram's `callback_query.id` (and this library's own webhook transport under
             // retry) can redeliver an update; a repeat within `processedQueries`' TTL is dropped
             // entirely here — no ack, no hook/tool, nothing. Re-acking the SAME query id would

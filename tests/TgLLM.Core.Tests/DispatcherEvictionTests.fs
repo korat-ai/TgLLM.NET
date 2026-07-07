@@ -1,4 +1,4 @@
-/// Tests for `PerChatChannelDispatcher`'s idle per-chat reclaim (US4, FR-012, SC-007): a chat's
+/// Tests for `PerChatChannelDispatcher`'s idle per-chat reclaim: a chat's
 /// channel/consumer-loop entry is reclaimed once no new work has arrived for the configured idle
 /// deadline, WITHOUT dropping or reordering any in-flight/buffered press — and a chat that keeps
 /// receiving work faster than the deadline is never reclaimed. `?idleTimeout` defaults to `None`

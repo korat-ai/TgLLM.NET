@@ -14,7 +14,7 @@ using TelegramJson = TgLLM.Integration.Tests.FakeBotApiServer.TelegramJson;
 namespace TgLLM.CSharp.Tests;
 
 /// <summary>
-/// Acceptance test for the lifecycle store seam (US4) driven entirely through the C# façade: a
+/// Acceptance test for the lifecycle store seam driven entirely through the C# façade: a
 /// keyboard sent before a simulated restart still routes — and its owner scope is still enforced —
 /// through a REOPENED <see cref="LiteDbBindingStore"/>. Mirrors <see cref="OwnerAuthorizationTests"/>'s
 /// structure and reuses the same fake Bot API server.

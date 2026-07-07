@@ -28,7 +28,7 @@ open TgLLM.Core
 /// unreachable from outside this assembly in practice despite the accessibility modifier.
 ///
 /// `OwnerUserId`/`DeniedNotice` (US1) round-trip `ToolBinding.Owner`/`DeniedNotice`: `null` ⇒
-/// `Anyone`/no override; a non-null `OwnerUserId` ⇒ `User uid`. `ExpiresAt`/`SingleUse` (US4) round-
+/// `Anyone`/no override; a non-null `OwnerUserId` ⇒ `User uid`. `ExpiresAt`/`SingleUse` round-
 /// trip the same way: a row written before either field existed on this shape deserializes
 /// `ExpiresAt` as `null` and `SingleUse` as its type default (`false`, since `System.Text.Json`
 /// leaves a missing non-nullable property at `default<'T>` rather than failing) — both exactly

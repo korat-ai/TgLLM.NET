@@ -1,4 +1,4 @@
-/// Acceptance tests for lifecycle & reliability (US4): a binding whose expiry has lapsed is refused
+/// Acceptance tests for lifecycle & reliability: a binding whose expiry has lapsed is refused
 /// like an unknown token; a single-use binding runs its tool once and is then unknown; a callback
 /// query Telegram (or this library's own webhook retry) redelivers invokes the bound tool at most
 /// once; and a keyboard sent before a restart still routes through a reopened `LiteDbBindingStore`.

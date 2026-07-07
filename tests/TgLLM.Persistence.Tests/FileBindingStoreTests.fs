@@ -219,7 +219,7 @@ let fileBindingStoreTests =
             finally
                 File.Delete path
 
-        testCase "a saved expiry and single-use flag reload intact after a reopen (restart) — finishes the on-disk shape US4 left incomplete" <| fun _ ->
+        testCase "a saved expiry and single-use flag reload intact after a reopen (restart)" <| fun _ ->
             let path = tempPath ()
 
             try

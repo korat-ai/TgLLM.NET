@@ -72,8 +72,8 @@ type private CountingObserver() =
 let private pressOf (token: CallbackToken) (chat: int64) : AgentEvent =
     ButtonPressed
         { Token = token
-          // A fresh id per press (not a shared constant): `UpdateProcessor` now dedupes by
-          // `QueryId` (US4, at-most-once redelivery) — a literal `"q"` reused across many DISTINCT
+          // A fresh id per press (not a shared constant): `UpdateProcessor` dedupes by
+          // `QueryId` (at-most-once redelivery) — a literal `"q"` reused across many DISTINCT
           // presses would make every press after the first look like a redelivery of the same
           // callback query and get silently dropped, which is not what this suite is about (it
           // tests per-token/per-chat routing at scale, not redelivery dedup).

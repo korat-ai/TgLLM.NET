@@ -123,7 +123,7 @@ module Mapping =
             | _ -> ValueSome(AckOnly(UMX.tag<callbackQueryId> query.Id))
 
 /// Classifies Telegram's two well-known, non-fatal `editMessageText`/`editMessageReplyMarkup`
-/// errors (US4, FR-015) into an `EditOutcome` instead of letting them propagate as an exception.
+/// errors into an `EditOutcome` instead of letting them propagate as an exception.
 ///
 /// Verified against the installed Telegram.Bot 22.10.1 assembly by decompilation (Principle V),
 /// not assumed: `TelegramBotClient.SendRequest` hands an unsuccessful Bot API response to
@@ -210,8 +210,8 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
         /// message's CURRENT keyboard untouched, verified against Telegram.Bot's own
         /// `EditMessageText` extension (Principle V); `Some` replaces it, same unconditional
         /// mapping `SendKeyboard` already uses. Classifies `"message to edit not found"`/`"message
-        /// is not modified"` into `EditOutcome` (`EditErrorClassification.classify`, FR-015)
-        /// instead of letting them propagate; any OTHER exception still propagates, caught by
+        /// is not modified"` into `EditOutcome` (`EditErrorClassification.classify`) instead of
+        /// letting them propagate; any OTHER exception still propagates, caught by
         /// `UpdateProcessor`'s existing per-tool try/with same as before.
         member _.EditMessageText
             (

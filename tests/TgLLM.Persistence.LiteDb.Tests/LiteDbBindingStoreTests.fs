@@ -1,8 +1,8 @@
-/// Tests for `LiteDbBindingStore`, the embedded-LiteDB `IBindingStore` (US4, research D8): proves
-/// the store seam generalizes beyond the file store (SC-010) — Save/TryGet/Remove/EvictExpired
+/// Tests for `LiteDbBindingStore`, the embedded-LiteDB `IBindingStore`: proves
+/// the store seam generalizes beyond the file store — Save/TryGet/Remove/EvictExpired
 /// round-trip the FULL evolved `ToolBinding` (owner/expiry/single-use), restart persistence holds
 /// (a fresh instance over the SAME file resolves what a previous instance saved), and a
-/// minimal/slice-2-shaped document (one this store never wrote itself — missing owner/expiry/
+/// minimal, earlier-shaped document (one this store never wrote itself — missing owner/expiry/
 /// single-use fields entirely) still loads with `ToolBinding.create`'s own defaults.
 module TgLLM.Persistence.LiteDb.Tests.LiteDbBindingStoreTests
 
@@ -103,7 +103,7 @@ let liteDbBindingStoreTests =
             finally
                 File.Delete path
 
-        testCase "re-opening the SAME file in a NEW instance still resolves a previously saved binding (restart persistence, SC-010)" <| fun _ ->
+        testCase "re-opening the SAME file in a NEW instance still resolves a previously saved binding (restart persistence)" <| fun _ ->
             let path = tempPath ()
 
             try
@@ -213,9 +213,8 @@ let liteDbBindingStoreTests =
                 let token = CallbackToken.generate ()
 
                 // Insert a document by hand, bypassing this store's own DTO entirely — simulates a
-                // row from before the owner/expiry/single-use fields existed on the on-disk shape
-                // (research D8: "MUST read slice-2 records — missing owner/expiry fields default to
-                // Anyone/none").
+                // row from before the owner/expiry/single-use fields existed on the on-disk shape:
+                // missing owner/expiry fields must still default to Anyone/none.
                 do
                     use db = new LiteDatabase(path)
                     let collection: ILiteCollection<BsonDocument> = db.GetCollection "bindings"

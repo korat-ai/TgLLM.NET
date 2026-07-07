@@ -75,8 +75,8 @@ let private pressOf (token: CallbackToken) (chat: int64) : AgentEvent =
     ButtonPressed
         { Token = token
           // A fresh id per press, not just per token: this suite taps the SAME token many times
-          // (`expectedPer` repeats each), and `UpdateProcessor` now dedupes by `QueryId` (US4,
-          // at-most-once redelivery) — deriving the id from the token alone would make every
+          // (`expectedPer` repeats each), and `UpdateProcessor` dedupes by `QueryId`
+          // (at-most-once redelivery) — deriving the id from the token alone would make every
           // repeat tap after the first look like a redelivery of the same callback query and get
           // silently dropped, which is not what this suite is about (it tests per-token/per-arg
           // routing at scale, not redelivery dedup).

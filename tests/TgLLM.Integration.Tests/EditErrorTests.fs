@@ -1,4 +1,4 @@
-/// Soft edit-in-place error handling (FR-015): a tool's `ctx.EditTextAsync`/`ctx.EditKeyboardAsync`
+/// Soft edit-in-place error handling: a tool's `ctx.EditTextAsync`/`ctx.EditKeyboardAsync`
 /// must never throw to the tool author when Telegram returns `"message is not modified"` (treated
 /// as a successful no-op — the tool keeps running exactly as if the edit had applied) or
 /// `"message to edit not found"` (surfaced as a soft, OBSERVED failure via `IHookObserver`, but the

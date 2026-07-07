@@ -81,11 +81,11 @@ type CommonConfig =
       /// in-process `InMemoryBindingStore`; `Some` (e.g. a `TgLLM.Persistence.FileBindingStore`, or
       /// `TgLLM.Persistence.LiteDb.LiteDbBindingStore`) makes bindings survive a restart.
       BindingStore: IBindingStore option
-      /// Reclaims a per-chat dispatcher channel/worker once idle this long with nothing buffered
-      /// (US4, FR-012). `None` (the default) keeps slice-1 behavior — a chat's resources live for
+      /// Reclaims a per-chat dispatcher channel/worker once idle this long with nothing buffered.
+      /// `None` (the default) keeps slice-1 behavior — a chat's resources live for
       /// the whole run, exactly `PerChatChannelDispatcher`'s own no-`idleTimeout` default.
       IdleChatEviction: TimeSpan option
-      /// "Now", as seen by expiry/redelivery-dedup decisions (US4, research D5/D6). `None` (the
+      /// "Now", as seen by expiry/redelivery-dedup decisions. `None` (the
       /// default) uses real wall-clock time; overriding it is primarily useful for deterministic
       /// tests of a host's own expiry logic, not something a production bot normally needs.
       Clock: Clock option }

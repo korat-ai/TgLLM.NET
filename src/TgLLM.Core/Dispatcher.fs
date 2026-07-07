@@ -25,7 +25,7 @@ type private WaitOutcome =
     /// consumer's normal, permanent end.
     | ChannelDone
     /// No item arrived within the configured idle deadline, and the channel is NOT completed —
-    /// this chat is idle; its resources are eligible for reclaim (US4, FR-012).
+    /// this chat is idle; its resources are eligible for reclaim.
     | IdleTimedOut
 
 /// Default `IPressDispatcher`: one unbounded, `SingleReader = true` channel + one consumer loop
@@ -40,10 +40,10 @@ type private WaitOutcome =
 /// `UpdateProcessor`, which wraps the hook invocation in its own try/with before ever handing the
 /// resulting thunk to `Enqueue`. This dispatcher's catch is a structural safety net only.
 ///
-/// `idleTimeout` (US4, FR-012): `None` (the default) means a chat's channel/consumer lives for the
-/// dispatcher's WHOLE lifetime — exactly slice-1 behavior, and what every caller that doesn't pass
-/// it explicitly still gets. `Some` deadline reclaims a chat's resources once no new work has
-/// arrived for that long (SC-007), so a long-lived bot serving many short-lived chats doesn't grow
+/// `idleTimeout`: `None` (the default) means a chat's channel/consumer lives for the
+/// dispatcher's WHOLE lifetime — exactly the original behavior, and what every caller that doesn't
+/// pass it explicitly still gets. `Some` deadline reclaims a chat's resources once no new work has
+/// arrived for that long, so a long-lived bot serving many short-lived chats doesn't grow
 /// this dictionary unbounded. Reclaim never drops or reorders in-flight/buffered work: the idle
 /// wait can only fire while the consumer has NOTHING buffered (an item's arrival always wins the
 /// race, per `waitForWork` below), and the channel's writer is completed (rejecting only FUTURE
@@ -58,7 +58,7 @@ type PerChatChannelDispatcher(?shutdownBudget: TimeSpan, ?idleTimeout: TimeSpan)
 
     /// Waits for this chat's next item, distinguishing "an item arrived" from "idle beyond the
     /// deadline" from "shut down" — see `WaitOutcome`'s own doc comment. With no `idleTimeout`
-    /// configured, this is exactly the original (pre-US4) `WaitToReadAsync` wait, unchanged.
+    /// configured, this is exactly the original `WaitToReadAsync` wait, unchanged.
     let waitForWork (reader: ChannelReader<CancellationToken -> Task>) : Task<WaitOutcome> =
         match idleTimeout with
         | None ->
@@ -111,7 +111,7 @@ type PerChatChannelDispatcher(?shutdownBudget: TimeSpan, ?idleTimeout: TimeSpan)
                     | ChannelDone -> keepReading <- false
                     | HasWork -> do! runBuffered ()
                     | IdleTimedOut ->
-                        // Reclaim (US4, FR-012): complete the writer FIRST — this only rejects
+                        // Reclaim: complete the writer FIRST — this only rejects
                         // FUTURE writes (`Channel<T>`'s own contract), so anything that raced in
                         // just before this point is still buffered and safely readable below.
                         // `Enqueue` retries against a freshly (re)created channel if it instead
@@ -137,7 +137,7 @@ type PerChatChannelDispatcher(?shutdownBudget: TimeSpan, ?idleTimeout: TimeSpan)
         channel
 
     /// The number of chats currently holding a live channel/consumer — a concrete-type-only
-    /// testability hook (not part of `IPressDispatcher`), so idle reclaim (FR-012) is directly
+    /// testability hook (not part of `IPressDispatcher`), so idle reclaim is directly
     /// observable rather than inferred from side effects alone.
     member _.ActiveChatCount: int = channels.Count
 

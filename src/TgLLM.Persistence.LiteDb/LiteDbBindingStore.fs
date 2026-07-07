@@ -1,5 +1,5 @@
-/// A durable, embedded-LiteDB `IBindingStore` (US4, research D8): the second durable backend
-/// proving the store seam generalizes beyond the file store (SC-010), using a pure-managed,
+/// A durable, embedded-LiteDB `IBindingStore`: a second durable backend
+/// proving the store seam generalizes beyond the file store, using a pure-managed,
 /// single-file document store — no external server, no native dependency.
 namespace TgLLM.Persistence.LiteDb
 
@@ -63,7 +63,7 @@ module BindingDocument =
     /// `None` for a document this store could never have produced itself (hand-edited/corrupt) —
     /// skipped by the caller rather than failing the whole read, same total-read contract as
     /// `TgLLM.Persistence.BindingDto.toDomain`. A document missing the owner/expiry/single-use
-    /// fields ENTIRELY (a slice-2/US1-era row — research D8's backward-compatibility requirement)
+    /// fields ENTIRELY (an earlier-shaped row, from before those fields existed on this shape)
     /// still loads: `Nullable<_>.HasValue` is simply `false` for an absent field, `Arg`/
     /// `DeniedNotice` are simply `null`, so every new field falls through to `ToolBinding.create`'s
     /// own defaults (`Anyone`/`None`/`false`) exactly as if the row had never carried them.
@@ -126,7 +126,7 @@ type LiteDbBindingStore
 
             ValueTask.CompletedTask
 
-        /// A collection delete-by-query (research D7/D8): every document whose `ExpiresAtUtc` is
+        /// A collection delete-by-query: every document whose `ExpiresAtUtc` is
         /// set and at-or-before `now` (matching `Expiry.isLive`'s own boundary — the exact expiry
         /// instant already counts as expired). A document with no `ExpiresAtUtc` is never matched.
         member _.EvictExpired(now: DateTimeOffset) : ValueTask<int> =
@@ -136,8 +136,8 @@ type LiteDbBindingStore
     interface IDisposable with
         member _.Dispose() : unit = db.Dispose()
 
-    /// Opens (or creates) a durable binding store backed by `path`. Indexes `ExpiresAtUtc` (research
-    /// D8: "expiry indexed") so `EvictExpired`'s delete-by-query doesn't scan the whole collection.
+    /// Opens (or creates) a durable binding store backed by `path`. Indexes `ExpiresAtUtc`
+    /// so `EvictExpired`'s delete-by-query doesn't scan the whole collection.
     ///
     /// Sets the `UTC_DATE` engine pragma (verified against the installed 5.0.21 assembly by
     /// decompilation, Principle V — `LiteDatabase.UtcDate` itself is get-only, backed by
