@@ -13,6 +13,22 @@ core stays MAF-agnostic (and remains A2UI-agnostic); MAF lives only in the new l
 and both transports (long polling / webhooks) are supported. Additive on the earlier slices — their public
 behavior and tests are not changed.
 
+## Clarifications
+
+### Session 2026-07-08
+
+- Q: Who authors the approval message body and button labels — the bridge receives the tool name and
+  arguments and must turn them into a message? → A: The bridge auto-renders a default body (tool name +
+  arguments) with fixed Approve/Reject controls, AND the host may supply an optional formatter to override
+  the body and/or labels (e.g. to redact sensitive arguments or localize). Zero-configuration works out of
+  the box; customization is available when needed.
+- Q: Who is the "owner" of an approval button (the only one who may tap) when a run is started by the host
+  rather than by an incoming user message? → A: Ownership is a host-configurable policy, not a rule the
+  library hard-codes — the bridge reuses the library's existing owner-scope (anyone, or a specific user).
+  The host selects the scope for a run; where it is obvious the bridge infers a sensible default (the sender
+  for a user-initiated turn, the peer in a private chat). The library stays agnostic of any single business
+  process.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Approve or reject an agent's tool call from a Telegram button (Priority: P1)
@@ -44,7 +60,7 @@ accordingly — all without the integrator writing any button or callback handli
    with an approval, performs the step, and the original message updates in place to reflect the outcome.
 3. **Given** those buttons, **When** the initiator taps Reject, **Then** the agent resumes with a rejection,
    does not perform the step, and the message updates in place to reflect that.
-4. **Given** an approval message, **When** someone other than the conversation's initiator taps a button,
+4. **Given** an approval message, **When** someone outside the run's configured owner scope taps a button,
    **Then** the tap is refused and the agent is not resumed.
 5. **Given** an approval already decided, **When** the same button is tapped again, **Then** the second tap
    is refused and the agent is not resumed a second time (the decision takes effect exactly once).
@@ -130,8 +146,8 @@ handled per its rule with no silent loss.
 
 ### Edge Cases
 
-- **Non-owner tap** on an approval button → refused; the agent is not resumed (owner-scoped, per the earlier
-  slice's ownership rule).
+- **Tap outside the configured owner scope** on an approval button → refused; the agent is not resumed (the
+  scope is host-configured per run, reusing the library's owner-scope).
 - **Double tap / repeat decision** on an already-resolved approval → refused; the decision takes effect
   exactly once (single-use).
 - **Stale / expired / unknown decision** — the run already ended, the in-memory session is gone, or the token
@@ -158,14 +174,18 @@ handled per its rule with no silent loss.
 - **FR-001**: The bridge MUST detect when a running agent pauses to request human approval for a tool call and
   present that request in the conversation's chat as a single message carrying an Approve control and a Reject
   control.
-- **FR-002**: The bridge MUST let the host specify which chat a conversation belongs to when a run is started
-  (the agent framework is chat-agnostic; the host supplies the target).
+- **FR-002**: The bridge MUST let the host specify which chat a conversation belongs to — and optionally the
+  owner scope for its approvals (see FR-005) — when a run is started (the agent framework is chat-agnostic;
+  the host supplies the target).
 - **FR-003**: On Approve, the bridge MUST resume the agent with an approval for the corresponding request; on
   Reject, it MUST resume with a rejection; in both cases the agent continues from where it paused.
 - **FR-004**: After a decision, the bridge MUST update the original approval message in place to reflect the
   outcome or the next step, rather than sending a new message for each step.
-- **FR-005**: The bridge MUST restrict who can act on an approval to the conversation's initiator; a tap by
-  anyone else MUST be refused and MUST NOT resume the agent (owner-scoped).
+- **FR-005**: The bridge MUST scope who can act on an approval using a host-configurable owner policy — the
+  library's existing owner-scope (anyone, or a specific user) — rather than a fixed rule; a tap outside the
+  configured scope MUST be refused and MUST NOT resume the agent. The host selects the scope when starting a
+  run; where it is obvious the bridge infers a sensible default (the message sender for a user-initiated
+  turn, the peer in a private chat).
 - **FR-006**: The bridge MUST ensure each approval decision takes effect at most once; a repeated tap on an
   already-resolved decision MUST be refused and MUST NOT resume the agent again (single-use).
 - **FR-007**: When the agent raises a further approval request after one is resolved, the bridge MUST present
@@ -210,6 +230,15 @@ handled per its rule with no silent loss.
 - **FR-021**: Every host-observable failure mode named above MUST be reportable through an observation seam,
   consistent with the "never silently drop" rule established in the previous slice.
 
+**Approval message rendering**
+
+- **FR-022**: By default the bridge MUST render an approval request into the message body from the tool's
+  name and arguments, with fixed Approve and Reject controls, so the feature works with no host rendering
+  code (a zero-configuration default).
+- **FR-023**: The bridge MUST let the host supply an optional formatter that overrides the approval message
+  body and/or the control labels (e.g. to redact sensitive arguments, or to localize); when provided, the
+  formatter takes precedence over the default rendering.
+
 ### Key Entities *(include if feature involves data)*
 
 - **Conversation**: an ongoing exchange between one person and the agent, bound to exactly one chat; carries
@@ -217,12 +246,12 @@ handled per its rule with no silent loss.
   processed serially.
 - **Approval Request**: a pending human decision raised by the agent — which tool, with what arguments, for
   which conversation/owner — identified by a token so a later tap can be matched back to it.
-- **Approval Decision**: the person's approve-or-reject answer to a specific Approval Request; owner-scoped and
-  single-use.
+- **Approval Decision**: the person's approve-or-reject answer to a specific Approval Request; scoped by the
+  run's configured owner policy and single-use.
 - **Tool Declaration → Tool Projection**: an agent-declared tool (name, description, parameter schema) and its
   image in the library's tool registry/manifest.
 - **Bridge**: the top-level object that wires one agent to Telegram — accepts incoming text and taps, drives
-  the agent, renders approvals, and reports failures.
+  the agent, renders approvals (default rendering or a host-supplied formatter), and reports failures.
 - **Observation**: the reporting seam through which the host learns of surfaced conditions (stale/unknown
   decision, malformed decision, resume failure, projection problem).
 
@@ -235,8 +264,8 @@ handled per its rule with no silent loss.
   target chat.
 - **SC-002**: When the agent requests approval, the decision buttons appear in the chat within the time of a
   single message send under normal conditions.
-- **SC-003**: 100% of taps by anyone other than the conversation's initiator are refused (no non-owner tap
-  ever resumes the agent).
+- **SC-003**: 100% of taps outside the run's configured owner scope are refused (no out-of-scope tap ever
+  resumes the agent).
 - **SC-004**: 100% of repeated taps on an already-resolved decision are refused (no decision ever resumes the
   agent more than once).
 - **SC-005**: Across a multi-step approval conversation, the number of messages the bot sends does not grow
@@ -252,8 +281,13 @@ handled per its rule with no silent loss.
 
 ## Assumptions
 
-- **Ownership** of an approval follows the previous slice's rule: the conversation's initiator is the owner;
-  only they may act on the approval, and each approval is single-use.
+- **Ownership** of an approval is a host-configurable policy, not a rule the library hard-codes — the bridge
+  reuses the library's existing owner-scope (anyone, or a specific user). The host may set it per run; where
+  obvious the bridge defaults it (the sender for a user-initiated turn, the peer in a private chat). Each
+  approval remains single-use. The library is deliberately not tied to any one ownership/business model.
+- **Approval message rendering** defaults to the tool name and arguments with fixed Approve/Reject controls
+  and is overridable by an optional host formatter; showing arguments by default serves informed consent,
+  while a host that must hide sensitive arguments supplies a formatter to redact them.
 - **Multiple approval requests in one agent turn** are each presented as their own decision; the turn proceeds
   once its pending requests are decided. (Refinable in clarification; the common case is a single request.)
 - **Conversation state is in-memory for this release** — surviving a process restart mid-approval (durable
