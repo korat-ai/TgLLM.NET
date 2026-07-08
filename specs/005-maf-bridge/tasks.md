@@ -68,7 +68,7 @@ user / double tap → refused, no second resume.
 ### Tests for User Story 1 (write first, MUST FAIL) ⚠️
 
 - [ ] T015 [P] [US1] Build the offline `ScriptedAgent : AIAgent` (override `RunCoreAsync` + `CreateSessionCoreAsync`; `Serialize/DeserializeSessionCoreAsync`/`RunCoreStreamingAsync` → `NotSupportedException`) in `tests/TgLLM.Integration.Tests/MafScriptedAgent.fs` — a step script yielding text or a `ToolApprovalRequestContent`, asserting the resumed `RequestId`/`Approved`.
-- [ ] T016 [P] [US1] Integration tests for the approve/reject happy paths in `tests/TgLLM.Integration.Tests/MafBridgeApprovalTests.fs` via `FakeBotApiServer` — one message with `[Approve][Reject]`; Approve → resume(true) → outcome edited in place; Reject → resume(false) → rejection edited in place; a follow-up approval in the same turn → fresh buttons on the SAME message (message count does not grow). MUST FAIL.
+- [ ] T016 [P] [US1] Integration tests for the approve/reject happy paths in `tests/TgLLM.Integration.Tests/MafBridgeApprovalTests.fs` via `FakeBotApiServer` — one message with `[Approve][Reject]`; Approve → resume(true) → outcome edited in place; Reject → resume(false) → rejection edited in place; a follow-up approval in the same turn → fresh buttons on the SAME message (message count does not grow); a host-supplied formatter overrides the body/labels while the zero-config default is used when none is set. MUST FAIL.
 - [ ] T017 [P] [US1] Integration tests for refusals in `tests/TgLLM.Integration.Tests/MafBridgeRefusalTests.fs` — out-of-scope tap refused (denied notice, no resume); repeat tap on a decided approval refused (single-use + table consume, no second resume); a sibling-button race resolves at most once. MUST FAIL.
 - [ ] T018 [P] [US1] Integration test for the resume-failure path in `tests/TgLLM.Integration.Tests/MafBridgeFailureTests.fs` — a scripted throw on resume → `IMafObserver.OnResumeFailed` + the message edited to a failure note with NO live buttons remaining. MUST FAIL.
 
@@ -76,12 +76,13 @@ user / double tap → refused, no second resume.
 
 - [ ] T019 [US1] Implement `Conversation` + `Conversations` (lazy per-chat `AgentSession`, `GetOrCreate`/`Drop`) in `src/TgLLM.Maf/Conversations.fs` (MAF-typed, leaf-only, `ValueTask` from `CreateSessionAsync`).
 - [ ] T020 [US1] Implement approval detection in `src/TgLLM.Maf/ApprovalDetection.fs` — scan `AgentResponse.Messages[*].Contents` for `ToolApprovalRequestContent`, extract `RequestId` + `FunctionCallContent` (`Name`/`Arguments`) into an `ApprovalPrompt`; total (no approvals → empty).
-- [ ] T021 [US1] Implement the bridge core in `src/TgLLM.Maf/Bridge.fs` — register `maf-approve`/`maf-reject` into the bot's `ToolRegistry` (double-attach guard, as `A2ui.renderer`); render+send one approval message (`SendKeyboardPlan`, owner scope from `RunOwner.resolve`, single-use, optional expiry); record the `PendingApproval`.
+- [ ] T021 [US1] Implement the bridge core in `src/TgLLM.Maf/Bridge.fs` — register `maf-approve`/`maf-reject` into the bot's `ToolRegistry` (double-attach guard, as `A2ui.renderer`); render+send one approval message — body/labels from `MafBridgeOptions.Formatter` when the host supplied one, else `ApprovalRendering.defaultRender`, run through `ApprovalRendering.validate` before send — (`SendKeyboardPlan`, owner scope from `RunOwner.resolve`, single-use, optional expiry); record the `PendingApproval`.
 - [ ] T022 [US1] Implement the decision tool handlers in `src/TgLLM.Maf/Bridge.fs` — parse the descriptor, `TryConsume` the pending entry, resume via `request.CreateResponse(approved) → ChatMessage(User,[..]) → RunAsync(session)` (multi-second work inside the tool → slice-3 deferred-ack rides for free), then edit-in-place: outcome text, or the next request's fresh `[Approve][Reject]` (bot-level `EditKeyboardPlan`); clean up the sibling token; on resume throw → `OnResumeFailed` + failure-note edit, `AbandonAllFor` the rest.
 - [ ] T023 [US1] Implement the start functions in `src/TgLLM.Maf/Bridge.fs` — `Maf.startPolling` / `startPollingWith` / `startWebhook` (+ `…With`): build the bot from config (requires `.WithTools`), register the tools, return `MafBridge` (`Bot`, `StartRun : chat*prompt*?owner → Task` routed through the chat's dispatcher lane, `IAsyncDisposable`).
 - [ ] T024 [US1] Wire `MafBridgeOptions.Observer` (default → bot logger, else Noop) so US1's stale/resume-fail paths report; confirm T015–T018 green and the existing 462 suite still green.
+- [ ] T024a [P] [US1] Build the leaf's C#-idiomatic bridge surface in `src/TgLLM.Maf/CSharpSurface.fs` — `MafTelegramBridge` (sealed; static `StartPolling`/`StartWebhook`, `StartRunAsync`, `IAsyncDisposable`), `MafBridgeSettings` (BCL delegates incl. `OnSurfaced`, nullable options), `ApprovalPromptInfo`/`ApprovalRenderInfo` records — wrapping the F# bridge; NO `FSharpFunc`/`FSharpOption`/`FSharpValueOption` on the surface (the Principle II canary applies to the leaf's C# API). Depends on T021–T024.
 
-**Checkpoint**: MVP — an approval-requiring agent is a working Telegram approval bot via `StartRun`.
+**Checkpoint**: MVP — an approval-requiring agent is a working Telegram approval bot via `StartRun`, from both F# and C#.
 
 ---
 
@@ -101,6 +102,7 @@ with matching name/description/schema; an invalid/duplicate declaration is surfa
 
 - [ ] T027 [US2] Implement `MafTools.project : ToolRegistry → AIFunction seq → ProjectionReport` in `src/TgLLM.Maf/Projection.fs` — per-tool `Result`, siblings register, problems collected + mirrored to the observer; the registered handler parses the arg into `AIFunctionArguments` and calls `InvokeAsync`.
 - [ ] T028 [US2] Confirm T025–T026 green; manifest parity verified; existing suite green.
+- [ ] T028a [P] [US2] Add the C#-idiomatic `MafTools.Project(ToolRegistry, IEnumerable<AIFunction>) : ToolProjectionResult` static over the F# `MafTools.project` in `src/TgLLM.Maf/CSharpSurface.fs` — C#-clean result type, no F# idioms; a C# projection test in `tests/TgLLM.CSharp.Tests/MafToolsTests.cs`.
 
 **Checkpoint**: US1 + US2 both work independently.
 
@@ -170,7 +172,7 @@ answered in arrival order; a `MessageReceived` with no `OnMessage` wired is a no
 ### Phase dependencies
 
 - **Setup (P1)** → **Foundational (P2)** blocks all stories → **US1 (P3)** MVP → US2 / US3 / US4 → **Polish (P7)**.
-- US1 depends only on Foundational (drivable via `StartRun`, no message seam). US2 depends only on Foundational. US3 adds the Core seam (extends `Bridge.fs`'s start functions from US1). US4 hardens US1's loop (extends `Bridge.fs`).
+- US1 depends only on Foundational (drivable via `StartRun`, no message seam). US2 depends only on Foundational. US3 adds the Core seam (extends `Bridge.fs`'s start functions from US1) and reuses US1's `Conversations`; US4 hardens US1's loop (extends `Bridge.fs`). US2/US3/US4 therefore build on US1's leaf infrastructure — each is independently *testable* (its own behavior, its own tests) but not independently *deliverable* ahead of US1's MVP.
 - Because US3 and US4 both extend `src/TgLLM.Maf/Bridge.fs`, they are sequential with US1's `Bridge.fs` tasks, not `[P]` against them.
 
 ### Within each story
