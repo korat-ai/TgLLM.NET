@@ -6,7 +6,7 @@ open System.Threading.Tasks
 open FSharp.UMX
 
 /// The ack timing a resolved press requires. `AckFirst` acks immediately, before any hook/tool
-/// runs — the slice-1 `IHookStore` resolver's policy (including its "unknown/stale token"
+/// runs — the `IHookStore` resolver's policy (including its "unknown/stale token"
 /// outcome). `Deferred` acks after the tool runs, or a watchdog fires, whichever is first — the
 /// Tool Router resolver's policy, carried out by `UpdateProcessor`'s own `buildToolWork`/
 /// `sendAckOnce`.
@@ -16,7 +16,7 @@ type AckPolicy =
 
 /// Which resolver a press's token matched, carrying whatever that resolver needs to run the
 /// press's work. The Tool Router's resolver (`ToolDispatch`) takes priority; a miss there — or no
-/// `ToolDispatch` at all — falls back to the slice-1 `IHookStore` resolver, represented here as
+/// `ToolDispatch` at all — falls back to the `IHookStore` resolver, represented here as
 /// `HookStoreResolution` regardless of whether IT then finds a hook (an unknown/stale token is
 /// still acked, just with no hook to run — `processHookStorePress` decides that on its own).
 [<NoComparison; NoEquality>]
@@ -79,11 +79,11 @@ exception private EditKeyboardNotFoundSignal
 /// TgLLM.Core.fsproj for why.
 ///
 /// Takes an OPTIONAL `?toolDispatch` collaborator. When present and it resolves a press's token,
-/// the press takes the deferred-ack TOOL path instead of the slice-1 ack-first `IHookStore` path.
-/// Slice-1 callers construct this type WITHOUT `toolDispatch` (F# optional parameter), so their
-/// behavior is byte-identical to before — `?toolDispatch` defaults to `None`, and every branch
-/// below that matters for slice-1 callers is exactly the original `processPress` body, just
-/// renamed `processHookStorePress`.
+/// the press takes the deferred-ack TOOL path instead of the ack-first `IHookStore` path.
+/// A caller that constructs this type WITHOUT `toolDispatch` (F# optional parameter) keeps
+/// byte-identical behavior — `?toolDispatch` defaults to `None`, and every branch below that
+/// matters for such a caller is exactly the original `processPress` body, just renamed
+/// `processHookStorePress`.
 [<Sealed>]
 type UpdateProcessor
     (
@@ -361,7 +361,7 @@ type UpdateProcessor
 
     /// Ack-first: resolve, then `AnswerCallback` immediately regardless of outcome, THEN — only if
     /// a hook was found — enqueue it. Unknown/stale/malformed tokens are acked with no hook and no
-    /// error; the observer just hears about it. This is slice-1's original `processPress` body,
+    /// error; the observer just hears about it. This is the ORIGINAL `processPress` body,
     /// unchanged — used both when `toolDispatch` is absent, and as the fallback when it misses
     /// (unknown token, or a binding whose tool is no longer registered).
     let processHookStorePress (ct: CancellationToken) (press: ButtonPress) : Task =
@@ -376,14 +376,14 @@ type UpdateProcessor
         }
 
     /// The single place that decides which resolver a press's token routes through: the Tool
-    /// Router's resolver (if `toolDispatch` is wired in) takes priority over the slice-1
+    /// Router's resolver (if `toolDispatch` is wired in) takes priority over the
     /// `IHookStore` resolver. See `PressResolution.ackPolicy` for the ack policy each outcome
     /// implies — `processPress` below carries it out via whichever branch it dispatches to.
     ///
     /// Expiry is checked HERE, right after resolution: a binding whose
     /// `ExpiresAt` has passed (per `Expiry.isLive`, fed THIS processor's injected `clock`) falls
-    /// back to `HookStoreResolution` exactly like a miss on `dispatch.Resolve` — the slice-1
-    /// ack-first path then reports it via `OnUnknownToken`, the same observable outcome an
+    /// back to `HookStoreResolution` exactly like a miss on `dispatch.Resolve` — the ack-first
+    /// `IHookStore` path then reports it via `OnUnknownToken`, the same observable outcome an
     /// unknown/stale token already gets. No separate "expired" branch is needed downstream.
     ///
     /// Single-use consumption ALSO happens HERE, not after the tool has run: a
@@ -488,8 +488,8 @@ type UpdateProcessor
                             observer.OnHookFailed(press, ex)
                     | AckOnly queryId -> do! processAcknowledgeOnly ct queryId
                     | MessageReceived message ->
-                        // No `?onMessage` wired: a no-op, byte-identical to every pre-slice-005
-                        // build where this case didn't exist at all. `dispatcher.Enqueue` itself
+                        // No `?onMessage` wired: a no-op, byte-identical to every build before
+                        // `MessageReceived` existed as a case. `dispatcher.Enqueue` itself
                         // is guarded the same way `processPress` is guarded above — a failure to
                         // ENQUEUE (as opposed to a failure INSIDE the handler, already caught by
                         // `buildMessageWork`) still can't take down the whole run loop.

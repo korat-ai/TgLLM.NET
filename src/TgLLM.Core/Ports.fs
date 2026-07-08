@@ -88,7 +88,7 @@ type IBotApiClient =
     abstract AnswerCallback: query: CallbackQueryId * ct: CancellationToken -> Task
 
     /// Acknowledges a callback query with an optional toast/alert. Used ONLY by the Tool Router's
-    /// deferred-ack path — the slice-1 ack-first path keeps using the no-arg overload above,
+    /// deferred-ack path — the ack-first `IHookStore` path keeps using the no-arg overload above,
     /// unchanged. `answerCallbackQuery` is one-shot server-side: a second call for the same query
     /// fails (`"query is too old and response timeout expired or query ID is invalid"`), which the
     /// caller is expected to catch and swallow when racing a watchdog — this port itself does not.

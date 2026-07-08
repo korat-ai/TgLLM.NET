@@ -422,6 +422,155 @@ var renderer = A2uiRenderer.Create(agent, sink, onError: error =>
 - The same tap → action → re-render loop works identically over long polling and webhooks, and in
   both the F# and C# façades.
 
+## MAF bridge
+
+[Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/) (`Microsoft.Agents.AI`) is
+Microsoft's .NET agent-orchestration framework: an `AIAgent` runs tool calls on your behalf, and can
+pause a run mid-turn to ask a human to approve or reject one before it executes
+(`ToolApprovalRequestContent`/`ToolApprovalResponseContent`). `TgLLM.Maf` turns that pause into an
+owner-scoped, single-use Telegram `[Approve][Reject]` keyboard — no button or callback plumbing
+written by the host — reusing the Tool Router and edit-in-place machinery above: a tap resumes the
+agent exactly once and edits the SAME message in place to the outcome.
+
+**Author the agent** (plain MAF — your own code; `TgLLM.Maf` never sees your model or your tools'
+implementations).
+
+```fsharp
+open System.ComponentModel
+open Microsoft.Extensions.AI
+
+// Tool methods live on a class so AIFunctionFactory can reflect parameter names and [<Description>]
+// attributes into the tool's JSON schema — a let-bound F# function compiles to FSharpFunc, whose
+// MethodInfo carries neither.
+type MailTools() =
+    [<Description "Send an email to a recipient.">]
+    member _.SendEmail
+        ([<Description "Recipient address">] toAddr: string, [<Description "Message body">] body: string) : string =
+        $"Sent to {toAddr}."
+
+let mailTools = MailTools()
+
+// The lambda wrap is required: F# gives an instance method with tupled arguments (`SendEmail`'s own
+// shape) the function type `string * string -> string`, and a bare method-group reference does not
+// adapt directly to a multi-argument `Func<_,_,_>` constructor — wrap it explicitly.
+let sendEmailTool =
+    AIFunctionFactory.Create(Func<string, string, string>(fun toAddr body -> mailTools.SendEmail(toAddr, body)), name = "send_email")
+
+// ApprovalRequiredAIFunction is what makes the agent PAUSE and ask a human before this tool runs.
+let agent =
+    chatClient.AsAIAgent(   // any IChatClient backend (OpenAI, Azure, local, ...)
+        instructions = "You are a helpful assistant.",
+        tools = [| ApprovalRequiredAIFunction(sendEmailTool) :> AITool |])
+```
+
+**Wire the bridge and start a run.**
+
+```fsharp
+open TgLLM.FSharp
+open TgLLM.Maf
+
+task {
+    let tools = ToolRegistry.create ()   // Maf.startPolling registers maf-approve/maf-reject here
+    let! bridge = Maf.startPolling ((TgBotConfig.create "<BOT_TOKEN>").WithTools tools) agent
+
+    do! bridge.StartRun(chatId, "Email alice@example.com that the deploy is done.")
+    // bridge.Bot is a regular TgBot for anything else the host wants to send.
+}
+```
+
+```csharp
+using TgLLM.FSharp;
+using TgLLM.Maf;
+
+var tools = ToolRegistry.create();
+var config = TgBotConfig.create("<BOT_TOKEN>").WithTools(tools);
+
+await using var bridge = await MafTelegramBridge.StartPollingAsync(config, agent);
+await bridge.StartRunAsync(chatId, "Email alice@example.com that the deploy is done.");
+```
+
+**The approval loop.**
+
+```text
+user:  Email alice@example.com that the deploy is done.
+bot:   Approval required: send_email            ← ONE message, buttons scoped to the sender
+       toAddr: "alice@example.com"
+       body: "The deploy is done."
+       [ Approve ]  [ Reject ]
+```
+
+The tap is acknowledged immediately (the agent's continuation may take seconds). **Approve** runs the
+tool and edits that SAME message to the outcome (`✔ send_email approved — Sent to
+alice@example.com.`); **Reject** skips the tool and edits it to the rejection instead. Someone else
+tapping is refused with "This button isn't for you." — the agent is never resumed; a second tap on an
+already-decided approval is refused the same way. If the turn immediately raises a further approval,
+the SAME message gets that next request's fresh buttons — the chat never fills with one message per
+decision step.
+
+**The text turn** (automatic): a person writes to the bot, and the bridge runs one agent turn and
+replies in the same chat — no extra wiring beyond `Maf.startPolling`/`MafTelegramBridge.StartPollingAsync`
+itself. Messages and taps in one chat are processed one at a time, in arrival order, so the
+conversation keeps its context across turns.
+
+```text
+user:  What can you do?
+bot:   I can draft and send emails for you. …
+```
+
+**Custom rendering and host-initiated runs** (optional). Redact arguments or localize labels with a
+formatter; `owner` on `StartRun` (or `DefaultOwner` on the options) overrides who may decide an
+approval a host-initiated run raises — a message-initiated turn always defaults to its own sender.
+
+```fsharp
+let options =
+    { Formatter = ValueSome(fun p -> { Body = $"Allow {p.Tool}?"; ApproveLabel = "Да"; RejectLabel = "Нет" })
+      Observer = ValueNone
+      DefaultOwner = ValueNone
+      ApprovalExpiry = ValueSome(TimeSpan.FromMinutes 10.) }
+
+let! bridge = Maf.startPollingWith options (TgBotConfig.create("<BOT_TOKEN>").WithTools tools) agent
+```
+
+```csharp
+await using var bridge = await MafTelegramBridge.StartPollingAsync(config, agent, new MafBridgeSettings
+{
+    ApprovalExpiry = TimeSpan.FromMinutes(10),
+    Formatter = p => new ApprovalRenderInfo($"Allow {p.Tool}?"),
+    OnSurfaced = e => logger.LogWarning("MAF bridge: {Event}", e),   // stale/malformed/failed — never silent
+});
+```
+
+**Tool projection — one call, no double descriptions.** The agent's own declared `AIFunction`s
+(name, description, JSON schema) become Tool Router tools and appear in `ManifestJson()` verbatim; an
+unprojectable declaration is reported while its siblings still register.
+
+```fsharp
+let report = MafTools.project tools [ sendEmailTool; searchTool ]
+// report.Registered = ["send_email"; "search"]; report.Problems = []
+```
+
+```csharp
+var result = MafTools.Project(tools, new[] { sendEmailTool, searchTool });
+```
+
+**Nothing is silently dropped.** Every `IMafObserver` member (F#) / `MafBridgeSettings.OnSurfaced`
+event (C#) reports a condition the bridge could not honor rather than swallowing it: a stale/unknown
+decision, a malformed decision payload, a resume failure (the message is left with no live buttons),
+an empty turn, or over-long/invalid output.
+
+**Honest limits.**
+
+- The agent's conversation (`AgentSession`) is held **in memory** for this release. Decision buttons
+  ride the durable binding store, so a tap on a pre-restart approval message still routes, is
+  acknowledged, and is owner-checked — it is then surfaced as **stale** rather than silently dropped
+  or wrongly resumed, since the run it belonged to no longer exists after a restart.
+- The reply path is non-streaming: one turn, one reply message.
+- `Microsoft.Agents.AI` is a preview package, pinned to an exact version — it has renamed types
+  across releases, so an upgrade is a deliberate, verified change, not a routine bump.
+
+Full runnable examples: [`examples/MafFSharp`](../examples/MafFSharp),
+[`examples/MafCSharp`](../examples/MafCSharp).
+
 ## What you can rely on
 
 - **Right hook, every tap.** Each button routes to exactly its own handler; taps never cross.

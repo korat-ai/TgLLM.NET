@@ -158,12 +158,12 @@ answered in arrival order; a `MessageReceived` with no `OnMessage` wired is a no
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T043 [P] Complete the runnable F# example `examples/MafFSharp/Program.fs` — a MAF agent with an approval-required tool wired to a bot in ~20 lines (approval buttons + a text turn), matching `quickstart.md`.
-- [ ] T044 [P] Complete the runnable C# example `examples/MafCSharp/Program.cs` — the same via the C# surface (`MafTelegramBridge.StartPolling`), idiom-clean.
-- [ ] T045 [P] Update user documentation (`README.md` + `docs/`) for the MAF bridge — the approval-as-button quickstart, the tool-projection one-liner, both façades, the in-memory-session + preview-churn caveats; English; cite code + MAF/Bot API docs only.
-- [ ] T046 Principle VII sweep across all new `src/TgLLM.Maf`, Core-seam, façade, test, and example files — remove any `FR/SC/US/T0xx/research-D#/spec-file/branch-slug` reference from comments/test names/assertions (the recurring slip); comments cite code + MAF/Telegram/.NET docs only.
-- [ ] T047 Run the `quickstart.md` walkthrough end to end (both façades) against `FakeBotApiServer`; fix any drift between the doc and the shipped API.
-- [ ] T048 Final gate: `dotnet build -c Release` (0 warn/0 err) + `dotnet test -c Release` all green (462 prior + new); `git diff --stat` confirms `src/TgLLM.Core` carries no MAF reference and slice-1/2/3/4 sources are untouched; a leaf-boundary check confirms no MAF type appears in Core/façade signatures.
+- [X] T043 [P] Complete the runnable F# example `examples/MafFSharp/Program.fs` — a MAF agent with an approval-required tool wired to a bot in ~20 lines (approval buttons + a text turn), matching `quickstart.md`.
+- [X] T044 [P] Complete the runnable C# example `examples/MafCSharp/Program.cs` — the same via the C# surface (`MafTelegramBridge.StartPolling`), idiom-clean.
+- [X] T045 [P] Update user documentation (`README.md` + `docs/`) for the MAF bridge — the approval-as-button quickstart, the tool-projection one-liner, both façades, the in-memory-session + preview-churn caveats; English; cite code + MAF/Bot API docs only.
+- [X] T046 Principle VII sweep across all new `src/TgLLM.Maf`, Core-seam, façade, test, and example files — remove any `FR/SC/US/T0xx/research-D#/spec-file/branch-slug` reference from comments/test names/assertions (the recurring slip); comments cite code + MAF/Telegram/.NET docs only.
+- [X] T047 Run the `quickstart.md` walkthrough end to end (both façades) against `FakeBotApiServer`; fix any drift between the doc and the shipped API.
+- [X] T048 Final gate: `dotnet build -c Release` (0 warn/0 err) + `dotnet test -c Release` all green (462 prior + new); `git diff --stat` confirms `src/TgLLM.Core` carries no MAF reference and slice-1/2/3/4 sources are untouched; a leaf-boundary check confirms no MAF type appears in Core/façade signatures.
 
 ---
 

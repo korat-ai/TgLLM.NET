@@ -8,8 +8,8 @@
 ///     unpadded base64url string (16 bytes encoded), well under that limit.
 ///   - `answerCallbackQuery` must be called for every callback query (known or not) to clear the
 ///     client's loading spinner; it accepts no keyboard-specific state, only the query id plus
-///     optional notification text/alert/url/cache-time (all left at their defaults here — this
-///     slice has no requirement to show the user a notification banner).
+///     optional notification text/alert/url/cache-time (all left at their defaults here — nothing
+///     in this client requires showing the user a notification banner).
 ///   - `sendMessage`'s `text` is capped at 4096 characters — matches `MessageText.MaxLength`
 ///     (`TgLLM.Core.Values`), enforced upstream by `MessageText.create`/`unsafe` before any text
 ///     reaches this client.
@@ -106,7 +106,7 @@ module Mapping =
     /// when the update is neither a `CallbackQuery` nor a plain user text `Message` (e.g. an
     /// edited message, a channel post, a media message with no text) — a different update kind
     /// entirely, nothing to ack, nothing to route; media/captions/edits/channel posts keep being
-    /// SKIPPED, not guessed at (slice 005's own additive scope: user TEXT messages only). A
+    /// SKIPPED, not guessed at (this mapping's own additive scope: user TEXT messages only). A
     /// `CallbackQuery` this library CAN'T map to a `ButtonPress` — no `Data` (e.g. a `Game`
     /// callback), `Data` that doesn't parse to a canonical `CallbackToken`, or no `Message` (the
     /// callback query originated from an inline-mode message, or the original message is too old

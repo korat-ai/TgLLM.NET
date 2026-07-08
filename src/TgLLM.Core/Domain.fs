@@ -77,16 +77,17 @@ type PressContext
     /// not a business error to route through `Result`.
     member _.ReplyTextAsync(text: string) : Task<MessageId> = replyTextAsync text
 
-    /// The bound tool argument. `null` for slice-1 closure-style hooks and for argument-less tool
-    /// buttons — annotated nullable, not `string option`, because this is a public API boundary
-    /// consumed directly by the C# façade (Principle II: no `FSharpOption` on the C# surface).
+    /// The bound tool argument. `null` for `IHookStore`-resolved closure-style hooks and for
+    /// argument-less tool buttons — annotated nullable, not `string option`, because this is a
+    /// public API boundary consumed directly by the C# façade (Principle II: no `FSharpOption` on
+    /// the C# surface).
     member _.Arg: string | null = arg |> Option.toObj
 
     /// Sets the ack directive for the deferred-ack tool path: the processor sends it via
     /// `AnswerCallback` exactly once, after the tool returns (or the watchdog fires, whichever
-    /// first). Available ONLY on the deferred-ack TOOL path — on the slice-1 closure
-    /// (`IHookStore`) path the ack has already fired ack-first before the hook ever runs, so
-    /// `answerAction` is absent there and calling this is a programmer error by the hook author:
+    /// first). Available ONLY on the deferred-ack TOOL path — on the `IHookStore` closure path the
+    /// ack has already fired ack-first before the hook ever runs, so `answerAction` is absent there
+    /// and calling this is a programmer error by the hook author:
     /// it fails fast (`InvalidOperationException`) rather than silently doing nothing.
     member _.Answer(text: string, ?alert: bool) : unit =
         match answerAction with
@@ -94,9 +95,10 @@ type PressContext
         | None -> invalidOp "PressContext.Answer is available only for Tool Router buttons; a plain hook should reply/send instead."
 
     /// Edit the pressed message's text in place. Wired ONLY on the deferred-ack TOOL path
-    /// (`UpdateProcessor.buildToolWork`) — a slice-1 closure-style hook has no keyboard-plan/
-    /// binding-store concept to re-plan against, so `editTextAction` is absent there and calling
-    /// this is a programmer error by the hook author (same fail-fast convention as `Answer`).
+    /// (`UpdateProcessor.buildToolWork`) — an `IHookStore`-resolved closure-style hook has no
+    /// keyboard-plan/binding-store concept to re-plan against, so `editTextAction` is absent there
+    /// and calling this is a programmer error by the hook author (same fail-fast convention as
+    /// `Answer`).
     member _.EditTextAsync(text: string) : Task =
         match editTextAction with
         | Some action -> action text
@@ -137,25 +139,24 @@ type IncomingMessage =
 /// Transport-agnostic domain event. Future update kinds slot in here without touching
 /// transports.
 ///
-/// `AckOnly` (review #8, folded into the Foundational phase): a callback query the transport
-/// received but could NOT map to a `ButtonPress` — its `Data` didn't parse to a canonical
-/// `CallbackToken`, or it carried no originating `Message` to attribute a chat/message id to (e.g.
-/// an inline-mode callback). Previously such a callback query was simply dropped
-/// (`Mapping.toAgentEvent` returned nothing at all), so it was NEVER acked — the port's own
-/// `IBotApiClient.AnswerCallback` contract says "MUST be called for EVERY press, including
-/// unknown/stale ones", and a callback that never even became an `AgentEvent` couldn't reach that
-/// guarantee. This case carries just enough — the query id — for `UpdateProcessor` to send exactly
-/// one `AnswerCallback` for it, with no hook/tool ever invoked (there is nothing resolvable here).
-/// Named `AckOnly`, not `AcknowledgeOnly`, to avoid colliding with (and being silently shadowed by)
-/// `Routing.RouteDecision.AcknowledgeOnly` — a DIFFERENT type's case that happens to compile later
-/// and would otherwise win unqualified name resolution in `UpdateProcessor.fs`, where both types
-/// are in scope.
+/// `AckOnly`: a callback query the transport received but could NOT map to a `ButtonPress` — its
+/// `Data` didn't parse to a canonical `CallbackToken`, or it carried no originating `Message` to
+/// attribute a chat/message id to (e.g. an inline-mode callback). Such a callback query would
+/// otherwise be simply dropped (`Mapping.toAgentEvent` returning nothing at all), and therefore
+/// never acked — the port's own `IBotApiClient.AnswerCallback` contract says "MUST be called for
+/// EVERY press, including unknown/stale ones", and a callback that never even became an
+/// `AgentEvent` couldn't reach that guarantee. This case carries just enough — the query id — for
+/// `UpdateProcessor` to send exactly one `AnswerCallback` for it, with no hook/tool ever invoked
+/// (there is nothing resolvable here). Named `AckOnly`, not `AcknowledgeOnly`, to avoid colliding
+/// with (and being silently shadowed by) `Routing.RouteDecision.AcknowledgeOnly` — a DIFFERENT
+/// type's case that happens to compile later and would otherwise win unqualified name resolution
+/// in `UpdateProcessor.fs`, where both types are in scope.
 ///
-/// `MessageReceived` (additive on top of slice 1/2/3/4's `ButtonPressed`/`AckOnly`): a plain user
-/// text message, mapped by the SAME shared `Mapping.toAgentEvent` both transports already call, so
-/// neither transport gains code of its own for it. `UpdateProcessor` treats this as a no-op unless
-/// a host wired a `MessageHandler` in — every pre-existing consumer that never does so keeps
-/// behaving byte-identically.
+/// `MessageReceived` (additive on top of the existing `ButtonPressed`/`AckOnly` cases): a plain
+/// user text message, mapped by the SAME shared `Mapping.toAgentEvent` both transports already
+/// call, so neither transport gains code of its own for it. `UpdateProcessor` treats this as a
+/// no-op unless a host wired a `MessageHandler` in — every pre-existing consumer that never does
+/// so keeps behaving byte-identically.
 type AgentEvent =
     | ButtonPressed of ButtonPress
     | AckOnly of queryId: CallbackQueryId

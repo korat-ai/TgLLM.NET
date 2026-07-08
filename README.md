@@ -22,6 +22,11 @@ C# consumers.
   [A2UI protocol](https://a2ui.org) (Text, Button, Row, Column, Divider, Image) onto the Tool Router
   and edit-in-place, bidirectionally — an agent that already speaks A2UI drives a Telegram bot with no
   Telegram-specific code; taps flow back as A2UI `action` messages to a host-provided sink.
+- **MAF bridge**: turn a [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/)
+  agent's tool-approval pause into an owner-scoped, single-use `[Approve][Reject]` Telegram keyboard
+  — a tap resumes the agent exactly once and edits the same message in place to the outcome. Also
+  projects the agent's own declared `AIFunction`s into the Tool Router's manifest in one call, and
+  answers an incoming chat message with the agent's reply automatically.
 - React in place: edit the tapped message's text/keyboard, or answer with a toast/alert.
 - **Owner-scoped keyboards**: restrict a keyboard's tool buttons to the one user it was sent for; a
   different presser is acked with a notice and no tool ever runs.
@@ -159,6 +164,49 @@ A component outside `telegram-basic`, an unknown catalog, or a malformed message
 surfaced — never silently dropped or rendered wrong. See
 [`docs/quickstart.md`](docs/quickstart.md#a2ui-renderer) for the full walkthrough (the tap → action →
 re-render loop and the error observer).
+
+## MAF bridge
+
+`TgLLM.Maf` turns a [Microsoft Agent Framework](https://learn.microsoft.com/agent-framework/)
+(`Microsoft.Agents.AI`) agent's human-in-the-loop tool approval into Telegram buttons — no button or
+callback plumbing written by the host. A run that pauses on an approval-required tool renders one
+owner-scoped `[Approve][Reject]` message; a tap resumes the agent exactly once and edits that same
+message in place to the outcome (or to the next request's fresh buttons, for a chained approval).
+
+```fsharp
+// F#
+open TgLLM.FSharp
+open TgLLM.Maf
+
+let tools = ToolRegistry.create ()   // Maf.startPolling registers maf-approve/maf-reject here
+
+task {
+    let! bridge = Maf.startPolling ((TgBotConfig.create botToken).WithTools tools) agent
+    do! bridge.StartRun(chatId, "Email alice@example.com that the deploy is done.")
+    // bridge.Bot is a regular TgBot for anything else the host wants to send.
+}
+```
+
+```csharp
+// C#
+using TgLLM.Maf;
+
+var tools = ToolRegistry.create();
+var config = TgBotConfig.create(botToken).WithTools(tools);
+
+await using var bridge = await MafTelegramBridge.StartPollingAsync(config, agent);
+await bridge.StartRunAsync(chatId, "Email alice@example.com that the deploy is done.");
+```
+
+The agent's own declared `AIFunction`s project into the SAME Tool Router manifest in one call
+(`MafTools.project`/`MafTools.Project`), and an incoming chat message is answered by the agent's
+reply automatically, on the same per-chat ordering the rest of the Tool Router uses.
+
+The agent's conversation session lives in memory for this release — a process restart loses any
+in-flight approval; a tap on a pre-restart approval message is still acknowledged and owner-checked,
+then surfaced as stale rather than silently misrouted. See
+[`docs/quickstart.md`](docs/quickstart.md#maf-bridge) for the full walkthrough, including the
+approval formatter override and the honest limits.
 
 ## Project layout
 

@@ -87,7 +87,7 @@ module CSharpSupport =
     let structuredArgJsonOptions: JsonSerializerOptions = StructuredArgJson.options
 
 /// C#-facing bridge for Tool Router registration: keeps F# curried functions and `ToolName`'s
-/// smart constructor OUT of the C# call site, mirroring `Keyboards.Build`'s role for slice-1's
+/// smart constructor OUT of the C# call site, mirroring `Keyboards.Build`'s role for the plain
 /// keyboard builder.
 type ToolRegistrations =
 

@@ -52,7 +52,7 @@ let messageMappingTests =
             | other -> failtestf "expected MessageReceived, got %A" other
 
         testCase "an update with neither a CallbackQuery nor a text Message is skipped (ValueNone)" <| fun _ ->
-            // No `message`/`callback_query` field at all — an update kind this slice does not map.
+            // No `message`/`callback_query` field at all — an update kind `Mapping.toAgentEvent` does not map.
             let update = Webhook.parseUpdate """{ "update_id": 1 }"""
             Expect.equal (Mapping.toAgentEvent update) ValueNone "an unmappable update kind is skipped, not guessed at"
 
@@ -218,7 +218,7 @@ let updateProcessorMessageSeamTests =
             let dispatcher = FakeDispatcher()
             let observer = FakeHookObserver()
             let source = FakeUpdateSource [ MessageReceived message ]
-            // No `?onMessage` — the exact call shape every pre-slice-005 caller already uses.
+            // No `?onMessage` — the exact call shape every pre-existing caller already uses.
             let processor = UpdateProcessor(source, store, api, dispatcher, observer)
 
             (processor.RunAsync CancellationToken.None).GetAwaiter().GetResult()

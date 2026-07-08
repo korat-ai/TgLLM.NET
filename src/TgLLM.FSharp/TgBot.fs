@@ -85,15 +85,15 @@ type CommonConfig =
       BaseUrl: string option
       Logger: ILogger option
       /// Tools available to `SendKeyboardPlan`-sent keyboards. `None` (the default) means the bot
-      /// has no Tool Router wired in — plain slice-1 behavior.
+      /// has no Tool Router wired in — plain closure-hook behavior.
       Tools: ToolRegistry option
       /// The store backing every tool-button binding (`SendKeyboardPlan`'s saves AND
-      /// `ToolDispatch`'s resolves). `None` (the default) keeps slice-1/MVP behavior — an
+      /// `ToolDispatch`'s resolves). `None` (the default) keeps the baseline behavior — an
       /// in-process `InMemoryBindingStore`; `Some` (e.g. a `TgLLM.Persistence.FileBindingStore`, or
       /// `TgLLM.Persistence.LiteDb.LiteDbBindingStore`) makes bindings survive a restart.
       BindingStore: IBindingStore option
       /// Reclaims a per-chat dispatcher channel/worker once idle this long with nothing buffered.
-      /// `None` (the default) keeps slice-1 behavior — a chat's resources live for
+      /// `None` (the default) keeps the baseline behavior — a chat's resources live for
       /// the whole run, exactly `PerChatChannelDispatcher`'s own no-`idleTimeout` default.
       IdleChatEviction: TimeSpan option
       /// "Now", as seen by expiry/redelivery-dedup decisions. `None` (the
@@ -107,7 +107,7 @@ type CommonConfig =
       /// `BindingEvictionSweeper`'s own built-in interval. Only the INTERVAL is configurable.
       BindingEvictionInterval: TimeSpan option
       /// The host's reaction to an incoming user text message (the Core seam's `MessageHandler`).
-      /// `None` (the default) keeps every pre-slice-005 bot's behavior byte-identical — a
+      /// `None` (the default) keeps every pre-existing bot's behavior byte-identical — a
       /// `MessageReceived` event reaching `UpdateProcessor` with no handler wired is a no-op.
       /// Config-time only (see `WithOnMessage`'s own doc comment for why): a bot already ingesting
       /// updates cannot late-bind this.
@@ -276,7 +276,7 @@ type TgBot
     /// here: a fresh send has no previous binding to remove.
     ///
     /// `owner` scopes every tool button on this keyboard to that presser; omitted (or
-    /// `Owner.anyone`) preserves slice-2 behavior — any presser resolves the button, unchanged.
+    /// `Owner.anyone`) preserves the baseline behavior — any presser resolves the button, unchanged.
     /// `deniedNotice` overrides the notice a refused non-owner sees; omitted uses the built-in
     /// default (`OwnerScope.DefaultDeniedNotice`).
     ///

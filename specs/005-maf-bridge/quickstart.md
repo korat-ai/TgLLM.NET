@@ -23,9 +23,11 @@ type MailTools() =
 
 let mailTools = MailTools()
 
-// The explicit Func wrap is required: F# method groups do not auto-coerce to System.Delegate.
+// The lambda wrap is required: a tupled F# instance method does not adapt directly to a
+// multi-argument Func<_,_,_> constructor — wrap it explicitly.
 // ApprovalRequiredAIFunction is what makes the agent PAUSE and ask a human before executing.
-let sendEmailTool = AIFunctionFactory.Create(Func<string, string, string>(mailTools.SendEmail), name = "send_email")
+let sendEmailTool =
+    AIFunctionFactory.Create(Func<string, string, string>(fun toAddr body -> mailTools.SendEmail(toAddr, body)), name = "send_email")
 let approvalRequired = ApprovalRequiredAIFunction(sendEmailTool) :> AITool
 
 let agent =
@@ -43,12 +45,15 @@ open TgLLM.Maf
 let tools = ToolRegistry.create ()             // the bridge registers maf-approve / maf-reject here
 let store = LiteDbBindingStore.OpenAt "maf-bindings.db"   // durable: taps survive a restart
 
-let bridge =
-    Maf.startPolling
-        (TgBotConfig.create(token).WithTools(tools).WithBindingStore(store))
-        agent
+task {
+    let! bridge =
+        Maf.startPolling
+            (TgBotConfig.create(token).WithTools(tools).WithBindingStore(store))
+            agent
 
-// That's it. bridge.Bot is a regular TgBot for anything else the host wants to send.
+    // That's it. bridge.Bot is a regular TgBot for anything else the host wants to send.
+    ()
+}
 ```
 
 ## 3. The text turn (automatic)
@@ -94,7 +99,7 @@ let options =
     { Formatter = ValueSome(fun p -> { Body = $"Allow {p.Tool}?"; ApproveLabel = "Да"; RejectLabel = "Нет" })
       Observer = ValueNone; DefaultOwner = ValueNone; ApprovalExpiry = ValueSome(TimeSpan.FromMinutes 10.) }
 
-let bridge = Maf.startPollingWith options (TgBotConfig.create(token).WithTools(tools)) agent
+let! bridge = Maf.startPollingWith options (TgBotConfig.create(token).WithTools(tools)) agent
 ```
 
 ## 6. Tool projection — one call, no double descriptions
@@ -112,7 +117,7 @@ let report = MafTools.project tools [ sendEmailTool; searchTool ]
 var tools = ToolRegistry.create();
 var config = TgBotConfig.create(token).WithTools(tools).WithBindingStore(store);
 
-await using var bridge = MafTelegramBridge.StartPolling(config, agent, new MafBridgeSettings
+await using var bridge = await MafTelegramBridge.StartPollingAsync(config, agent, new MafBridgeSettings
 {
     ApprovalExpiry = TimeSpan.FromMinutes(10),
     Formatter = p => new ApprovalRenderInfo($"Allow {p.Tool}?"),

@@ -48,7 +48,7 @@ public sealed class TelegramAgentOptions
 
     /// <summary>React to an incoming user text message, run on that message's chat's dispatcher
     /// lane (serialized with that chat's own button presses, in arrival order). <c>null</c> (the
-    /// default) means this bot does not answer text messages at all — every pre-slice-005 bot's
+    /// default) means this bot does not answer text messages at all — every pre-existing bot's
     /// behavior stays byte-identical. Config-time only: a bot already ingesting updates cannot
     /// late-bind a handler, so this must be set before <see cref="TelegramAgent.StartPollingAsync"/>/
     /// <see cref="TelegramAgent.StartWebhookAsync"/> is called. Mirrors the F# façade's
