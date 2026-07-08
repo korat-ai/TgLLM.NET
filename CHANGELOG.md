@@ -6,7 +6,38 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-07-08
+
 ### Added
+
+- **Microsoft Agent Framework (MAF) bridge** (a new `TgLLM.Maf` leaf project; `TgLLM.Core` and both
+  façades carry no MAF dependency — MAF lives only in the leaf, pinned to an exact version):
+  - Turns a MAF agent's human-in-the-loop tool approval into a Telegram decision: when a run pauses on
+    an `ApprovalRequiredAIFunction`, the bridge sends one message with **Approve**/**Reject** buttons,
+    owner-scoped and single-use, rendered by default from the tool name and arguments (overridable by a
+    host formatter); a tap resumes the agent with the decision and edits the same message in place to
+    the outcome or the next request — riding the hardened Tool Router engine (deferred ack,
+    edit-in-place, durable bindings), no new dispatcher. Only the run's configured owner may decide
+    (reusing `OwnerScope`); each decision takes effect at most once.
+  - **Tool-surface unification**: `MafTools.project`/`MafTools.Project` projects a MAF agent's declared
+    `AIFunction`s into the library's tool registry and manifest in one call (name, description, and
+    JSON schema carried verbatim), so the two systems agree by construction; an unrepresentable or
+    reserved-named declaration is surfaced while its valid siblings still register.
+  - **Agent as a bot**: an additive, MAF-agnostic core seam (`AgentEvent.MessageReceived`, a
+    config-time `OnMessage` handler, and a new `IMessageObserver`) surfaces an incoming user text
+    message through the shared transport mapping, so both long polling and webhooks answer a text
+    message via the agent — processed one at a time per chat on the same lane as taps, giving
+    serialized access to the per-chat agent session. Non-streaming this release (the reply is produced
+    whole).
+  - **Nothing silently dropped**: a stale/unknown/malformed/failed decision, an empty turn, an
+    over-long reply, a failed agent turn, and a projection problem all reach a single `IMafObserver`.
+    The conversation/session is in-memory this release — a process restart loses an in-flight approval,
+    and a post-restart tap is surfaced as stale rather than wrongly resumed (durable sessions are a
+    documented backlog item).
+  - Idiomatic façades live in the leaf itself: F# `Maf.startPolling`/`startWebhook` return a
+    `MafBridge` (`StartRun`, `Bot`, `IAsyncDisposable`); C# `MafTelegramBridge.StartPollingAsync`/
+    `StartWebhookAsync` with a `MafBridgeSettings` — no F# idioms on the C# surface (the idiom-leak
+    canary covers it). Runnable `examples/MafFSharp` and `examples/MafCSharp`.
 
 - **A2UI renderer** (a new `TgLLM.A2UI` leaf project; every existing project's public API and tests
   are unchanged — `TgLLM.Core` carries no A2UI dependency):
@@ -133,6 +164,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Fixed
 
+- An owner-scoped **single-use** button is no longer consumed by a refused non-owner tap: single-use
+  removal now happens only after the owner check passes, so a non-owner can neither run nor burn a
+  button that isn't theirs, while a fast double-tap by the owner is still honored exactly once.
 - The update-ingestion run loop is now supervised end to end: a fault is reported through
   `IHookObserver.OnRunLoopFailed` instead of silently leaving the bot stopped with no signal, and
   long polling retries a transient `getUpdates` failure with a bounded exponential backoff instead
@@ -142,7 +176,9 @@ All notable changes to this project are documented in this file. The format is b
 
 ### Notes
 
-- Ships single-target `net10.0` for now; the `net8.0;net10.0` shipping matrix is enabled in CI
-  (only the .NET 10 SDK/runtime is available locally). See `Directory.Build.props`.
-- Not yet published to NuGet; packaging, public-API XML-doc coverage, and a smoke test against the
-  live Telegram Bot API remain backlog items.
+- Ships single-target `net10.0` for this release; the `net8.0;net10.0` shipping matrix remains a
+  backlog item (only the .NET 10 SDK/runtime was available while building this release). See
+  `Directory.Build.props`.
+- Published to NuGet from a `v*` tag via `.github/workflows/publish.yml` (`dotnet pack` + push).
+  Remaining backlog: `net8.0` multi-targeting, full public-API XML-doc coverage, and a smoke test
+  against the live Telegram Bot API and a live MAF agent.

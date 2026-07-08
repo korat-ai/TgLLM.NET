@@ -50,3 +50,6 @@ Thumbs.db
 *.tmp
 *.log
 launchSettings.json
+
+# NuGet pack output
+artifacts/

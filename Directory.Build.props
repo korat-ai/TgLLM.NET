@@ -23,10 +23,26 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Authors>TgLLM.NET contributors</Authors>
+    <Version>0.1.0</Version>
+    <Authors>korat-ai</Authors>
+    <Company>korat-ai</Company>
+    <Product>TgLLM.NET</Product>
+    <Copyright>Copyright (c) 2026 TgLLM.NET contributors</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/TgLLM-NET/TgLLM.NET</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/TgLLM-NET/TgLLM.NET</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/korat-ai/TgLLM.NET</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/korat-ai/TgLLM.NET</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>telegram;bot;fsharp;dotnet;llm;agent;tool-router;a2ui;maf;webhooks;long-polling</PackageTags>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <!-- Bundle the repository README into every produced package. A non-packable project (tests,
+       examples) never runs pack, so the Pack="true" item is simply inert there. -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
 </Project>
