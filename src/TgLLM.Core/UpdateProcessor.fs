@@ -36,7 +36,7 @@ module PressResolution =
         | ToolResolution _ -> Deferred
         | HookStoreResolution -> AckFirst
 
-/// Shared "ack exactly once" state for the Tool Router's deferred-ack path (review #3). Built and
+/// Shared "ack exactly once" state for the Tool Router's deferred-ack path. Built and
 /// STARTED at ENQUEUE time (press arrival) by `UpdateProcessor.processPress`'s `Deferred` branch,
 /// rather than inside the enqueued work thunk itself (`buildToolWork`) — a tool queued behind a
 /// slow tool on the SAME chat previously inherited that queue wait before its own watchdog clock
@@ -141,7 +141,7 @@ type UpdateProcessor
                     observer.OnHookFailed(press, ex)
             }
 
-    /// Builds and STARTS a `DeferredAckState` for `press` (review #3) — called at ENQUEUE time,
+    /// Builds and STARTS a `DeferredAckState` for `press` — called at ENQUEUE time,
     /// before the tool's work is ever handed to `dispatcher.Enqueue`, so the watchdog's countdown
     /// begins at press arrival regardless of how deep the chat's queue is. The watchdog races the
     /// tool so a slow tool can't blow the client's spinner budget; it does NOT cancel the tool —
@@ -277,7 +277,7 @@ type UpdateProcessor
     /// the watchdog. `ackState` was already built and STARTED at ENQUEUE time
     /// (`startDeferredAck`, called from `processPress`'s `Deferred` branch) — this thunk only runs
     /// once the per-chat dispatcher gets to it, which may be well after the watchdog's countdown
-    /// already began (review #3).
+    /// already began.
     let buildToolWork
         (press: ButtonPress)
         (tool: Tool)
@@ -314,7 +314,7 @@ type UpdateProcessor
                 do! ackState.Finish()
             }
 
-    /// The ack-only path (review #8, folded into the Foundational phase): a callback query the
+    /// The ack-only path: a callback query the
     /// transport could not map to a `ButtonPress` at all (non-canonical `Data`, or no originating
     /// `Message`) still gets exactly one `AnswerCallback` — no hook/tool ever runs, since there is
     /// nothing resolvable here. Unlike `processHookStorePress`'s unknown-token outcome, there is no

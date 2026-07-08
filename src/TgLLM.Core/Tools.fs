@@ -7,7 +7,7 @@ open System.Threading
 open System.Threading.Tasks
 
 /// The Tool Router surface: tool errors/names, the neutral keyboard plan, tool bindings, ports,
-/// and tool dispatch. Additive on top of slice 1: nothing here changes slice-1 types except
+/// and tool dispatch. Additive: nothing here changes the earlier types except
 /// `RegisteredButton` (Keyboard.fs), which stays behaviorally identical for callbacks.
 ///
 /// Compiles right after Keyboard.fs: `ToolPlan.plan` produces `RegisteredKeyboard`/`RegisteredButton`
@@ -648,7 +648,7 @@ module ToolKeyboardOps =
     /// edit path: a tool that re-renders its own keyboard, e.g. a paginator/counter, must not leak
     /// one row per edit); `None` skips this (a fresh send has nothing stale to remove).
     ///
-    /// Ordering (review #4 fix): the OLD tokens are removed only AFTER `send` has succeeded — never
+    /// Ordering: the OLD tokens are removed only AFTER `send` has succeeded — never
     /// before. Removing them first (the original ordering) meant a failed edit left the OLD
     /// keyboard visibly on the wire (Telegram never applied the failed edit) with its bindings
     /// already erased from the store — a stranded live keyboard whose buttons ack but resolve to

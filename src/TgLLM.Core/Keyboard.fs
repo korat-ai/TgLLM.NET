@@ -15,8 +15,8 @@ type ButtonSpec = { Label: string; Hook: Hook }
 type KeyboardSpec = private KeyboardSpec of (ButtonLabel * Hook) list list
 
 /// One button on the wire-facing keyboard, after token assignment. Was a plain `{ Label; Token }`
-/// record in slice 1; becomes a DU so a keyboard can mix hook/tool (`Callback`) and (`Url`)
-/// buttons in the same layout. `Callback`'s shape is exactly slice-1's old record fields in case
+/// record; becomes a DU so a keyboard can mix hook/tool (`Callback`) and (`Url`)
+/// buttons in the same layout. `Callback`'s shape is exactly that former record's fields in case
 /// order, so `Mapping.toInlineKeyboardMarkup`'s callback-button behavior is unchanged — only the
 /// syntax at each call site (construction/pattern-match) changes from field access to this case.
 type RegisteredButton =

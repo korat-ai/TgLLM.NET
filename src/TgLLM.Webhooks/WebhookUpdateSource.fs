@@ -53,7 +53,7 @@ type WebhookUpdateSource() =
     /// Map one pushed `Update` to a domain event and buffer it. An update mappable to neither a
     /// `CallbackQuery` outcome nor a plain user text `Message` (`ValueNone`) is dropped, matching
     /// the long-polling source. A `CallbackQuery` this library can't route to a `ButtonPress`
-    /// (review #8: non-canonical `Data`, or no originating `Message`) is NOT dropped —
+    /// (non-canonical `Data`, or no originating `Message`) is NOT dropped —
     /// `Mapping.toAgentEvent` yields `AckOnly queryId` for it; a user text message is NOT dropped
     /// either — it yields `MessageReceived` — both flow through this same channel like any other
     /// `AgentEvent` and reach `UpdateProcessor`'s own handling — this transport needs no code

@@ -111,7 +111,7 @@ module Mapping =
     /// callback), `Data` that doesn't parse to a canonical `CallbackToken`, or no `Message` (the
     /// callback query originated from an inline-mode message, or the original message is too old
     /// for Telegram to attach; `ButtonPress` requires `Chat`/`MessageId`, which only the message
-    /// carries) — still yields `AckOnly query.Id` (review #8) rather than being silently dropped:
+    /// carries) — still yields `AckOnly query.Id` rather than being silently dropped:
     /// every callback query Telegram sent gets exactly one ack somewhere downstream, even when
     /// this library has nothing sensible to route it to.
     let toAgentEvent (update: Update) : AgentEvent voption =
