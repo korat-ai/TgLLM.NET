@@ -155,6 +155,19 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
     /// actually needs the preamble surfaced — the fix is local (prepend it to the render's own
     /// `Body` via a formatter, or send it before `sendNewApproval` for the FIRST detected approval
     /// only), not an engine change.
+    ///
+    /// The SENDS themselves (`bot.SendText`, and each `sendNewApproval` inside the multi-approval
+    /// loop) are wrapped in their own try/with, reporting a failure via `OnInvalidOutput`/
+    /// `DeliveryFailed` — the same split `HandleDecision` already uses between "the agent's own
+    /// step" and "getting its result onto the wire" (see that member's own doc comment). Without
+    /// this, a Telegram-side failure here — e.g. the SECOND message of a THREE-approval turn,
+    /// after the first already reached the wire — would escape uncaught to `StartRun`'s/
+    /// `HandleIncomingMessage`'s own outer try/with and be misreported as `OnTurnFailed`, whose
+    /// own doc comment promises "no message was sent for this turn" — false here, since the FIRST
+    /// approval's message (and its pending entry) already exist and stay live regardless of a
+    /// LATER sibling's delivery failure. `OnTurnFailed` is reserved for the turn never reaching
+    /// this function at all (`agent.RunAsync`/`CreateSessionAsync` throwing); once `response` is
+    /// in hand, any failure putting it on the wire is `OnInvalidOutput`.
     let processInitialResponse (chat: ChatId) (owner: OwnerScope) (response: AgentResponse) : Task =
         task {
             match ApprovalDetection.detect chat response with
@@ -164,14 +177,21 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                 if not (String.IsNullOrWhiteSpace text) then
                     match MessageText.create text with
                     | Ok _ ->
-                        let! _ = bot.SendText(chat, text)
-                        ()
+                        try
+                            let! _ = bot.SendText(chat, text)
+                            ()
+                        with deliveryEx ->
+                            observer.OnInvalidOutput(chat, DeliveryFailed $"failed to send this turn's reply text: %s{deliveryEx.Message}")
                     | Error(TextTooLong(length, max)) -> observer.OnInvalidOutput(chat, ReplyTooLong(length, max))
                     | Error e -> observer.OnInvalidOutput(chat, BodyInvalid $"%A{e}")
                 else
                     observer.OnEmptyTurn chat
-            | detected -> for d in detected do
-                              do! sendNewApproval chat owner d
+            | detected ->
+                try
+                    for d in detected do
+                        do! sendNewApproval chat owner d
+                with deliveryEx ->
+                    observer.OnInvalidOutput(chat, DeliveryFailed $"failed to deliver one of this turn's approval messages: %s{deliveryEx.Message}")
         }
         :> Task
 
@@ -283,11 +303,19 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                                 match pendingApprovals.TryConsume(chat, descriptor.RequestId) with
                                 | ValueNone -> observer.OnStaleDecision descriptor
                                 | ValueSome pending ->
-                                    let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
-
+                                    // `conversations.GetOrCreate` runs INSIDE this same try, alongside
+                                    // `agent.RunAsync` — not before it: a `CreateSessionAsync` fault it
+                                    // surfaces (this chat's cached session was dropped by an earlier
+                                    // resume failure, and re-creating it now fails too) must classify the
+                                    // SAME way an `agent.RunAsync` fault does, `OnResumeFailed`, not
+                                    // escape uncaught to the Tool Router's own `OnHookFailed` — a
+                                    // DIFFERENT, Core-level seam a host's `IMafObserver` may never be
+                                    // listening on at all (mirrors `StartRun`/`HandleIncomingMessage`'s
+                                    // own reasoning for wrapping their `GetOrCreate` call the same way).
                                     let! resumed =
                                         task {
                                             try
+                                                let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
                                                 let responseContent = pending.Request.CreateResponse approved
                                                 let contents = ResizeArray<AIContent> [ responseContent :> AIContent ]
                                                 let resumeMessage = ChatMessage(ChatRole.User, contents)
@@ -526,7 +554,16 @@ module Maf =
             try
                 return BridgeBuild.build bot agent options
             with ex ->
-                do! (bot :> IAsyncDisposable).DisposeAsync()
+                // The cleanup dispose itself is guarded so a fault IN IT (e.g. the bot's background
+                // run loop or dispatcher drain throwing during teardown) can never mask `ex` — the
+                // ORIGINAL build failure (no `.WithTools`, or a double-attach) is always the one a
+                // caller sees; a disposal problem on top of an already-failed build has nothing more
+                // useful to add.
+                try
+                    do! (bot :> IAsyncDisposable).DisposeAsync()
+                with _ ->
+                    ()
+
                 return raise ex
         }
 

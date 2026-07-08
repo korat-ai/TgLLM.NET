@@ -306,10 +306,10 @@ type UpdateProcessor
                 with ex ->
                     observer.OnHookFailed(press, ex)
 
-                // Single-use consumption itself already happened earlier, in `resolvePress` —
-                // BEFORE this work item was ever enqueued (see that member's own doc comment). By
-                // the time this thunk runs, a single-use `binding` has already been removed from
-                // the store; nothing further to do here.
+                // Single-use consumption itself already happened earlier, in `processPress`'s own
+                // `Deferred, ToolResolution` branch — BEFORE this work item was ever enqueued (see
+                // that branch's own doc comment). By the time this thunk runs, a single-use
+                // `binding` has already been removed from the store; nothing further to do here.
                 do! ackState.SendAckOnce()
                 do! ackState.Finish()
             }
@@ -386,19 +386,12 @@ type UpdateProcessor
     /// `IHookStore` path then reports it via `OnUnknownToken`, the same observable outcome an
     /// unknown/stale token already gets. No separate "expired" branch is needed downstream.
     ///
-    /// Single-use consumption ALSO happens HERE, not after the tool has run: a
-    /// `SingleUse` binding is removed from the store the instant it resolves live, before this
-    /// press is ever handed to `dispatcher.Enqueue`. `resolvePress` is only ever called from
-    /// `processPress`, itself only ever called from `RunAsync`'s single sequential
-    /// update-ingestion loop — so a second, fast-following tap's own call into this function
-    /// cannot start until this one has returned. Removing the binding here, rather than inside
-    /// `buildToolWork` after the tool finishes, closes exactly the window a fast double-tap used
-    /// to race through: two distinct `callback_query.id`s each resolving the still-present
-    /// binding before either tap's (possibly slow) tool had a chance to consume it. This makes
-    /// single-use "consume on ATTEMPT", not "consume on success" — a tool that itself later throws
-    /// still leaves the binding gone, and a losing/refused second tap never runs the tool at all.
-    /// That is the intended safety for a confirm-once/destructive button: better to refuse a
-    /// legitimate retry than to risk running the same tool twice.
+    /// Single-use consumption does NOT happen here — see `processPress`'s own `Deferred,
+    /// ToolResolution` branch for where, and why. Resolution alone says nothing about who is
+    /// pressing: consuming a `SingleUse` binding purely on resolving live, before the owner check
+    /// downstream ever runs, would let ANY presser — including one the owner scope goes on to
+    /// refuse — burn the binding on a tap that never ran the tool, leaving the legitimate owner
+    /// with nothing left to press.
     let resolvePress (ct: CancellationToken) (press: ButtonPress) : Task<PressResolution> =
         task {
             match toolDispatch with
@@ -407,11 +400,7 @@ type UpdateProcessor
                 let! resolved = dispatch.Resolve(press.Token, ct)
 
                 match resolved with
-                | ValueSome(tool, binding) when Expiry.isLive (clock ()) binding.ExpiresAt ->
-                    if binding.SingleUse then
-                        do! dispatch.Store.Remove([ binding.Token ], ct)
-
-                    return ToolResolution(tool, binding, dispatch)
+                | ValueSome(tool, binding) when Expiry.isLive (clock ()) binding.ExpiresAt -> return ToolResolution(tool, binding, dispatch)
                 | ValueSome _ -> return HookStoreResolution
                 | ValueNone -> return HookStoreResolution
         }
@@ -448,12 +437,33 @@ type UpdateProcessor
                     // non-owner (or unidentifiable) presser is refused here and never reaches
                     // `startDeferredAck`/`buildToolWork` at all.
                     if OwnerScope.isAllowed binding.Owner (Some press.User.Id) then
+                        // Single-use consumption happens HERE — on an ALLOWED presser's attempt,
+                        // after the owner check passes but still BEFORE the tool is ever enqueued —
+                        // not inside `resolvePress` (which runs before the owner check even sees
+                        // the press) and not after the tool finishes. Consuming any earlier lets a
+                        // REFUSED non-owner tap burn the binding out from under the legitimate
+                        // owner, who would then find nothing left to press. Consuming any LATER
+                        // (e.g. inside `buildToolWork`, once the tool has run) would reopen the
+                        // double-tap race this removal exists to close: `processPress` only ever
+                        // runs from `RunAsync`'s single sequential update-ingestion loop, so
+                        // removing the binding HERE — still synchronously, still before
+                        // `dispatcher.Enqueue` — guarantees a second, fast-following ALLOWED press
+                        // on the same token finds it already gone. This makes single-use "consume
+                        // on the first ALLOWED attempt", not "consume on success" and not "consume
+                        // on any attempt regardless of who": a tool that itself later throws still
+                        // leaves the binding gone, a losing/refused second ALLOWED tap never runs
+                        // the tool, and a REFUSED (non-owner) tap never touches the binding at all.
+                        if binding.SingleUse then
+                            do! dispatch.Store.Remove([ binding.Token ], ct)
+
                         // Start the watchdog NOW (press arrival) — not once the per-chat dispatcher
                         // eventually RUNS the enqueued work; see `startDeferredAck`'s own doc comment
                         // for why.
                         let ackState = startDeferredAck press ct
                         do! dispatcher.Enqueue(press.Chat, buildToolWork press tool binding dispatch ackState)
                     else
+                        // A refused (non-owner) press never runs the tool and never consumes a
+                        // single-use binding — the legitimate owner must still be able to decide.
                         do! refuseNonOwnerPress ct press binding
                 | AckFirst, HookStoreResolution -> do! processHookStorePress ct press
                 | Deferred, HookStoreResolution

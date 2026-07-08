@@ -212,4 +212,69 @@ let ownerRoutingTests =
                 api.Calls
                 [ AckDeferred(press.QueryId, Some "Ask Alice instead.", false) ]
                 "the keyboard's own notice override wins over the built-in default"
+
+        testCase
+            "a refused non-owner press on an owner-scoped SINGLE-USE binding must not consume it — the owner's later press still runs the tool"
+        <| fun _ ->
+            let token = CallbackToken.generate ()
+            let ownerId = 1L
+            let presserId = 2L
+            let mutable runCount = 0
+            let tool: Tool = fun _ -> runCount <- runCount + 1; Task.CompletedTask
+            let registry = InMemoryToolRegistry() :> IToolRegistry
+            registry.Register(toolName "approve", tool)
+            let store = InMemoryBindingStore() :> IBindingStore
+
+            let binding =
+                { ToolBinding.create token (toolName "approve") None with
+                    Owner = User(UMX.tag<userId> ownerId)
+                    SingleUse = true }
+
+            store.Save([ binding ], CancellationToken.None).GetAwaiter().GetResult()
+            let dispatch = ToolDispatch(registry, store)
+            let nonOwnerPress = pressFrom token presserId
+            let api = FakeBotApiClient()
+            let dispatcher = FakeDispatcher()
+            let observer = FakeHookObserver()
+
+            run (FakeUpdateSource [ ButtonPressed nonOwnerPress ]) api dispatcher observer dispatch
+
+            Expect.equal runCount 0 "a refused non-owner press must never run the tool"
+            Expect.isEmpty dispatcher.Enqueued "no work is enqueued for a refused non-owner press"
+
+            Expect.equal
+                api.Calls
+                [ AckDeferred(nonOwnerPress.QueryId, Some OwnerScope.DefaultDeniedNotice, false) ]
+                "the refusal is acked with the default notice"
+
+            match (store.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult() with
+            | ValueSome stillBound -> Expect.equal stillBound.Token token "the single-use binding is untouched by a refused non-owner press"
+            | ValueNone -> failtest "a refused non-owner press must NOT consume the owner's single-use binding"
+
+            // A SEPARATE press, from the owner, on the SAME token: must still resolve and run.
+            let ownerPress = pressFrom token ownerId
+            let ownerApi = FakeBotApiClient()
+            let ownerDispatcher = FakeDispatcher()
+            let ownerObserver = FakeHookObserver()
+
+            run (FakeUpdateSource [ ButtonPressed ownerPress ]) ownerApi ownerDispatcher ownerObserver dispatch
+
+            match ownerDispatcher.Enqueued with
+            | [ (_, work) ] -> (work CancellationToken.None).GetAwaiter().GetResult()
+            | other -> failwithf "expected exactly one enqueued item for the owner's press, got %d" (List.length other)
+
+            Expect.equal runCount 1 "the owner's press, after a prior non-owner refusal, still runs the tool exactly once"
+            Expect.isEmpty ownerObserver.Unknown "the owner's press is not itself a refusal"
+
+            // The single-use binding is now genuinely consumed: a THIRD press (even the owner's own)
+            // finds nothing.
+            let thirdPress = pressFrom token ownerId
+            let thirdApi = FakeBotApiClient()
+            let thirdDispatcher = FakeDispatcher()
+            let thirdObserver = FakeHookObserver()
+
+            run (FakeUpdateSource [ ButtonPressed thirdPress ]) thirdApi thirdDispatcher thirdObserver dispatch
+
+            Expect.equal runCount 1 "a single-use binding stays consumed after the owner's own successful press"
+            Expect.isEmpty thirdDispatcher.Enqueued "no work is enqueued for the already-consumed binding"
     ]

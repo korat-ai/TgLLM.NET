@@ -35,8 +35,8 @@ type ApprovalRenderInfo(body: string, approveLabel: string, rejectLabel: string)
 /// One condition `IMafObserver` surfaced, flattened to a stable string tag (`Kind`) a C# host can
 /// switch on without touching an F# union, plus a human-readable `Description` for logging —
 /// mirrors the A2UI C# façade's `A2uiErrorInfo` split. `Exception` carries the ORIGINAL exception
-/// object (not just its flattened `.Message`, already folded into `Description`) for the ONE event
-/// that has one (`OnResumeFailed`/`OnTurnFailed`) — `null` for every other kind. Method
+/// object (not just its flattened `.Message`, already folded into `Description`) for the events
+/// that have one (`OnResumeFailed`/`OnTurnFailed`) — `null` for every other kind. Method
 /// overloading (the 2-arg constructor), not an F# optional parameter, stands in for the
 /// C#-optional-third-argument shape — same convention this file's own doc comment already commits
 /// to for `MafBridgeSettings`.

@@ -51,10 +51,12 @@ type private RecordingObserver() =
     let resumeFailures = ResizeArray<ApprovalDescriptor * exn>()
     let staleDecisions = ResizeArray<ApprovalDescriptor>()
     let invalidOutput = ResizeArray<ChatId * MafError>()
+    let turnFailed = ResizeArray<ChatId * exn>()
 
     member _.ResumeFailures: (ApprovalDescriptor * exn) list = List.ofSeq resumeFailures
     member _.StaleDecisions: ApprovalDescriptor list = List.ofSeq staleDecisions
     member _.InvalidOutput: (ChatId * MafError) list = List.ofSeq invalidOutput
+    member _.TurnFailed: (ChatId * exn) list = List.ofSeq turnFailed
 
     interface IMafObserver with
         member _.OnStaleDecision(descriptor) = staleDecisions.Add descriptor
@@ -63,7 +65,7 @@ type private RecordingObserver() =
         member _.OnEmptyTurn(_chat) = ()
         member _.OnInvalidOutput(chat, error) = invalidOutput.Add(chat, error)
         member _.OnProjectionProblem(_problem) = ()
-        member _.OnTurnFailed(_chat, _error) = ()
+        member _.OnTurnFailed(chat, error) = turnFailed.Add(chat, error)
 
 [<Tests>]
 let mafBridgeFailureTests =
@@ -211,6 +213,63 @@ let mafBridgeFailureTests =
                         (observer.StaleDecisions |> List.map (fun d -> d.RequestId))
                         [ "req-2" ]
                         "the SIBLING pending approval (req-2) was abandoned and surfaced, not silently dropped"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync
+            "a Telegram delivery failure mid a multi-approval INITIAL turn is surfaced via OnInvalidOutput, never OnTurnFailed — the already-sent approval stays live"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 7206L
+
+                    let agent =
+                        ScriptedAgent [
+                            PausesForMany [ ("req-1", "send_email", []); ("req-2", "send_sms", []); ("req-3", "post_slack", []) ]
+                            RepliesWith "sent"
+                        ]
+
+                    let observer = RecordingObserver()
+
+                    let options: MafBridgeOptions =
+                        { MafBridgeOptions.defaults with
+                            Observer = ValueSome(observer :> IMafObserver) }
+
+                    let tools = ToolRegistry.create ()
+                    let config = (TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
+                    use! bridge = Maf.startPollingWith options config agent
+
+                    // Send #1 (req-1's own message) succeeds normally; send #2 (req-2's) fails.
+                    server.EnqueueResult("sendMessage", $"""{{"message_id":1,"date":0,"chat":{{"id":{chat},"type":"private"}}}}""")
+                    server.EnqueueError("sendMessage", 500, "Internal Server Error")
+
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Notify the team.")
+
+                    Expect.equal
+                        (List.length (server.RequestsFor "sendMessage"))
+                        2
+                        "send #1 succeeded, send #2 failed and stopped the loop — send #3 was never attempted"
+
+                    Expect.isEmpty
+                        observer.TurnFailed
+                        "a delivery failure mid-loop must never be classified as OnTurnFailed — message #1 was already sent for this turn"
+
+                    match observer.InvalidOutput with
+                    | [ (failedChat, DeliveryFailed _) ] ->
+                        Expect.equal failedChat (UMX.tag<chatId> chat) "the failure is attributed to the chat whose turn hit it"
+                    | other -> failtestf "expected exactly one DeliveryFailed InvalidOutput, got %A" other
+
+                    // Message #1's own pending entry survived the sibling's send failure: the owner
+                    // can still tap Approve on it and the agent still resumes normally.
+                    let firstSend = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken1 = callbackDataAt 0 0 firstSend
+
+                    do! deliverTap server 1 "q-mid-loop-owner" approveToken1 chat 1 chat
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "editMessageText" |> List.isEmpty |> not)
+
+                    Expect.equal agent.RunCount 2 "message #1's pending entry survived the sibling send failure and still resumes normally"
                 }
                 |> Async.AwaitTask
         }

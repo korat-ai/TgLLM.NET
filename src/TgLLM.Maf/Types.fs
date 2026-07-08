@@ -97,9 +97,14 @@ type IMafObserver =
     /// One declared tool could not be projected into the registry (its siblings still were).
     abstract OnProjectionProblem: problem: ProjectionProblem -> unit
     /// A whole turn (a host-initiated `StartRun`, or an incoming text message) failed before it
-    /// ever produced a reply or a pending approval — most commonly `agent.RunAsync`/
-    /// `CreateSessionAsync` throwing (a network/backend error). No message was sent for this turn;
-    /// the chat's own lock is still released normally, so the NEXT turn on this chat can proceed.
+    /// ever produced a reply or a pending approval — `agent.RunAsync`/`CreateSessionAsync`
+    /// throwing (a network/backend error), the only two calls that can fail before there is a
+    /// `response` to process. No message was sent for this turn; the chat's own lock is still
+    /// released normally, so the NEXT turn on this chat can proceed. NOT for a failure delivering
+    /// an already-produced `response` (an approval message, or the plain reply text) onto the
+    /// wire — `Bridge.fs`'s `processInitialResponse` catches those itself and reports
+    /// `OnInvalidOutput`/`DeliveryFailed` instead, since by then a reply or approval may already
+    /// have reached the chat (a multi-approval turn's earlier messages, most commonly).
     abstract OnTurnFailed: chat: ChatId * error: exn -> unit
 
 /// Reports nothing — the default when a caller has no need to observe MAF-bridge conditions,

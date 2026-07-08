@@ -231,4 +231,48 @@ let mafBridgeRefusalTests =
                 }
                 |> Async.AwaitTask
         }
+
+        testCaseAsync
+            "a refused non-owner tap on an owner-scoped approval must not burn its single-use binding — the owner's own tap still resumes"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 7106L
+                    let ownerId = 8005L
+                    let otherId = 8006L
+
+                    let agent = ScriptedAgent [ PausesFor("req-1", "send_email", []); RepliesWith "sent" ]
+                    let tools = ToolRegistry.create ()
+                    let config = (TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
+                    use! bridge = Maf.startPolling config agent
+
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Email alice.", owner = Owner.user ownerId)
+
+                    let sent = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken = callbackDataAt 0 0 sent
+
+                    // A DIFFERENT user taps first — refused by the engine. This must not consume the
+                    // owner's own single-use binding: the whole point of a group-chat approval is
+                    // that a bystander tap can never cost the owner their ability to decide.
+                    do! deliverTap server 1 "q-nonowner-first" approveToken chat 1 otherId
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "answerCallbackQuery" |> List.isEmpty |> not)
+
+                    Expect.equal agent.RunCount 1 "the non-owner's refused tap never resumes the agent"
+
+                    match server.RequestsFor "answerCallbackQuery" with
+                    | [ ack ] ->
+                        let ackBody = ack.Body |> Option.get
+                        Expect.equal (ackBody |> field "text" |> asString) OwnerScope.DefaultDeniedNotice "the non-owner sees the denied notice"
+                    | other -> failwithf "expected exactly one answerCallbackQuery so far, got %d" (List.length other)
+
+                    // The OWNER now taps the SAME token (a different query id) — it must still
+                    // resolve and resume the agent, exactly as if the earlier refusal never happened.
+                    do! deliverTap server 2 "q-owner-second" approveToken chat 1 ownerId
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "editMessageText" |> List.isEmpty |> not)
+
+                    Expect.equal agent.RunCount 2 "the owner's own tap, after a prior non-owner refusal, still resumes the agent"
+                }
+                |> Async.AwaitTask
+        }
     ]
