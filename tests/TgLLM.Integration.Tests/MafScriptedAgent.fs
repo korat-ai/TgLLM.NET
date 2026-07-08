@@ -21,6 +21,12 @@ type ScriptedStep =
     | RepliesWith of text: string
     /// The agent pauses, asking for approval of one tool call.
     | PausesFor of requestId: string * toolName: string * args: (string * (obj | null)) list
+    /// The agent pauses, asking for approval of SEVERAL tool calls in the SAME turn — one
+    /// `ToolApprovalRequestContent` per entry, all in one `AgentResponse`. Distinct from returning
+    /// several `PausesFor` steps in a row: those would each be a SEPARATE `RunCoreAsync` call
+    /// (i.e. separate turns/resumes), while this is ALL of them raised by a SINGLE call, exactly
+    /// the shape a resume (or an initial turn) that raises multiple pending requests at once needs.
+    | PausesForMany of requests: (string * string * (string * (obj | null)) list) list
     /// The agent's turn ends with no text and no approval — an empty turn.
     | EndsEmpty
     /// The agent throws while producing this turn (or resuming into it).
@@ -46,12 +52,18 @@ let private toArguments (args: (string * (obj | null)) list) : IDictionary<strin
 /// message call, and one further call per resumed decision). `onResume` — if supplied — is invoked
 /// with `(requestId, approved)` whenever the incoming messages carry a `ToolApprovalResponseContent`,
 /// BEFORE the next step is popped, so a test can assert exactly what the bridge resumed with.
-type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit) =
+/// `failCreateSessionCount` — if supplied — makes the FIRST that-many calls to
+/// `CreateSessionCoreAsync` throw (a scripted "session backend unreachable" turn); every call
+/// after that succeeds normally. Lets a test simulate a session-creation failure that recovers on
+/// retry, independent of anything in `steps` (which only governs `RunCoreAsync`).
+type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit, ?failCreateSessionCount: int) =
     inherit AIAgent()
 
     let queue = Queue<ScriptedStep>(steps)
     let onResume = defaultArg onResume (fun _ -> ())
+    let failCreateSessionCount = defaultArg failCreateSessionCount 0
     let runCount = ref 0
+    let createSessionAttempts = ref 0
 
     /// Produces one `AgentResponse` for `step`, recursing through `Delayed`'s wrapped step after
     /// awaiting its delay — kept separate from `RunCoreAsync` itself so `Delayed` can wrap ANY
@@ -66,6 +78,14 @@ type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit) =
                 let call = FunctionCallContent("call-1", toolName, toArguments args)
                 let request = ToolApprovalRequestContent(requestId, call)
                 let contents = ResizeArray<AIContent>[ request :> AIContent ]
+                return AgentResponse(ChatMessage(ChatRole.Assistant, contents))
+            | PausesForMany requests ->
+                let contents =
+                    ResizeArray<AIContent>
+                        [ for requestId, toolName, args in requests ->
+                              let call = FunctionCallContent($"call-{requestId}", toolName, toArguments args)
+                              ToolApprovalRequestContent(requestId, call) :> AIContent ]
+
                 return AgentResponse(ChatMessage(ChatRole.Assistant, contents))
             | Delayed(delay, inner) ->
                 do! Task.Delay delay
@@ -99,7 +119,12 @@ type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit) =
         }
 
     override _.CreateSessionCoreAsync(_ct: CancellationToken) : ValueTask<AgentSession> =
-        ValueTask<AgentSession>(ScriptedSession() :> AgentSession)
+        createSessionAttempts.Value <- createSessionAttempts.Value + 1
+
+        if createSessionAttempts.Value <= failCreateSessionCount then
+            ValueTask.FromException<AgentSession>(InvalidOperationException "scripted CreateSession failure")
+        else
+            ValueTask<AgentSession>(ScriptedSession() :> AgentSession)
 
     override _.SerializeSessionCoreAsync
         (_session: AgentSession, _options: JsonSerializerOptions, _ct: CancellationToken)

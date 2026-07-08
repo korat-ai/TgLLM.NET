@@ -56,6 +56,15 @@ let private startBridge (server: FakeBotApiServer) (agent: ScriptedAgent) : Task
     let config = (TgLLM.FSharp.TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
     TgLLM.Maf.Maf.startPolling config agent
 
+let private startBridgeWith
+    (server: FakeBotApiServer)
+    (agent: ScriptedAgent)
+    (options: TgLLM.Maf.MafBridgeOptions)
+    : Task<TgLLM.Maf.MafBridge> =
+    let tools = TgLLM.FSharp.ToolRegistry.create ()
+    let config = (TgLLM.FSharp.TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
+    TgLLM.Maf.Maf.startPollingWith options config agent
+
 [<Tests>]
 let mafTextTurnTests =
     testList "MafBridge text turn" [
@@ -147,6 +156,56 @@ let mafTextTurnTests =
 
                     let outcome = (server.RequestsFor "editMessageText").Head.Body |> Option.get |> field "text" |> asString
                     Expect.stringContains outcome "Sent." "the outcome carries the agent's own concluding reply"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "an agent that throws during a TEXT turn is surfaced via OnTurnFailed — never silent, and the chat's lock is released for the NEXT turn"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 9004L
+                    let senderId = 4245L
+                    let failure = System.InvalidOperationException "the model backend is unreachable"
+
+                    let turnFailures = ResizeArray<TgLLM.Core.ChatId * exn>()
+
+                    let observer =
+                        { new TgLLM.Maf.IMafObserver with
+                            member _.OnStaleDecision(_) = ()
+                            member _.OnMalformedDecision(_) = ()
+                            member _.OnResumeFailed(_, _) = ()
+                            member _.OnEmptyTurn(_) = ()
+                            member _.OnInvalidOutput(_, _) = ()
+                            member _.OnProjectionProblem(_) = ()
+                            member _.OnTurnFailed(chat, error) = turnFailures.Add(chat, error) }
+
+                    let agent = ScriptedAgent [ Throws failure; RepliesWith "recovered" ]
+
+                    let options: TgLLM.Maf.MafBridgeOptions =
+                        { TgLLM.Maf.MafBridgeOptions.defaults with
+                            Observer = ValueSome observer }
+
+                    use! bridge = startBridgeWith server agent options
+                    ignore bridge
+
+                    deliverText server 1 chat 5 senderId "Nadia" "Hi agent"
+                    do! pollUntil 5000 (fun () -> turnFailures.Count > 0)
+
+                    Expect.equal turnFailures.Count 1 "the throw during the text turn was surfaced exactly once"
+                    let failedChat, failedError = turnFailures[0]
+                    Expect.equal (FSharp.UMX.UMX.untag failedChat: int64) chat "surfaced for the right chat"
+                    Expect.equal failedError.Message failure.Message "the surfaced error is the one the agent threw"
+                    Expect.isEmpty (server.RequestsFor "sendMessage") "no reply was ever sent for the failed turn"
+
+                    // The chat's own lock was still released normally — a SECOND message on the
+                    // SAME chat still reaches the agent and gets a reply.
+                    deliverText server 2 chat 6 senderId "Nadia" "Try again"
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "sendMessage" |> List.isEmpty |> not)
+
+                    let sent = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    Expect.equal (sent |> field "text" |> asString) "recovered" "the chat recovered on the NEXT turn — its lock was not left held"
                 }
                 |> Async.AwaitTask
         }

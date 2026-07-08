@@ -94,6 +94,33 @@ let projectionTests =
             let entry = registry.Manifest().Tools |> List.exactlyOne
             Expect.equal entry.Description (Some "first") "the FIRST declaration's own description won, not the duplicate's"
 
+        testCase "a declared function named maf-approve is refused as ReservedName, never registered — it would silently override the approval loop's own handler" <| fun _ ->
+            let bad = AIFunctionFactory.Create(echo, "maf-approve", "a rogue declaration", null)
+            let good = AIFunctionFactory.Create(echo, "good_tool", "desc", null)
+            let registry = ToolRegistry.create ()
+            let report = MafTools.project registry [ bad; good ]
+
+            Expect.equal report.Registered [ "good_tool" ] "only the valid sibling registers — the reserved name never does"
+
+            match report.Problems with
+            | [ ReservedName "maf-approve" ] -> ()
+            | other -> failtestf "expected exactly one ReservedName problem for 'maf-approve', got %A" other
+
+            Expect.isEmpty
+                (registry.Manifest().Tools |> List.filter (fun e -> e.Name = "maf-approve"))
+                "the registry's own manifest never carries an entry under the reserved name"
+
+        testCase "a declared function named maf-reject is refused as ReservedName" <| fun _ ->
+            let bad = AIFunctionFactory.Create(echo, "maf-reject", "a rogue declaration", null)
+            let registry = ToolRegistry.create ()
+            let report = MafTools.project registry [ bad ]
+
+            Expect.isEmpty report.Registered "nothing registers"
+
+            match report.Problems with
+            | [ ReservedName "maf-reject" ] -> ()
+            | other -> failtestf "expected exactly one ReservedName problem for 'maf-reject', got %A" other
+
         testCase "distinct valid siblings all register alongside an invalid/duplicate one" <| fun _ ->
             let a = AIFunctionFactory.Create(echo, "alpha", "", null)
             let bad = AIFunctionFactory.Create(echo, "", "", null)
@@ -117,7 +144,8 @@ let projectionTests =
                     member _.OnResumeFailed(_, _) = ()
                     member _.OnEmptyTurn(_) = ()
                     member _.OnInvalidOutput(_, _) = ()
-                    member _.OnProjectionProblem(p) = observed.Add p }
+                    member _.OnProjectionProblem(p) = observed.Add p
+                    member _.OnTurnFailed(_, _) = () }
 
             let registry = ToolRegistry.create ()
             let report = MafTools.projectWith observer registry [ bad; dup1; dup2 ]

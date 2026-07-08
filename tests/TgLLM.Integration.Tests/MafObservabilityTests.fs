@@ -72,6 +72,7 @@ type private RecordingObserver() =
     let emptyTurn = ResizeArray<ChatId>()
     let invalidOutput = ResizeArray<ChatId * MafError>()
     let projectionProblem = ResizeArray<ProjectionProblem>()
+    let turnFailed = ResizeArray<ChatId * exn>()
 
     member _.Stale: ApprovalDescriptor list = List.ofSeq stale
     member _.Malformed: string list = List.ofSeq malformed
@@ -79,6 +80,7 @@ type private RecordingObserver() =
     member _.EmptyTurn: ChatId list = List.ofSeq emptyTurn
     member _.InvalidOutput: (ChatId * MafError) list = List.ofSeq invalidOutput
     member _.ProjectionProblem: ProjectionProblem list = List.ofSeq projectionProblem
+    member _.TurnFailed: (ChatId * exn) list = List.ofSeq turnFailed
 
     interface IMafObserver with
         member _.OnStaleDecision(descriptor) = stale.Add descriptor
@@ -87,6 +89,7 @@ type private RecordingObserver() =
         member _.OnEmptyTurn(chat) = emptyTurn.Add chat
         member _.OnInvalidOutput(chat, error) = invalidOutput.Add(chat, error)
         member _.OnProjectionProblem(problem) = projectionProblem.Add problem
+        member _.OnTurnFailed(chat, error) = turnFailed.Add(chat, error)
 
 let private startBridgeWith (server: FakeBotApiServer) (agent: ScriptedAgent) (observer: IMafObserver) (bindingStore: IBindingStore option) : Task<MafBridge> =
     let tools = ToolRegistry.create ()
@@ -288,12 +291,21 @@ let mafObservabilityTests =
                     let badDeclaration = AIFunctionFactory.Create(echo, "", "desc", null)
                     MafTools.projectWith (observer :> IMafObserver) registry [ badDeclaration ] |> ignore
 
+                    // OnTurnFailed — a host-initiated run whose OWN turn throws (session creation
+                    // or `agent.RunAsync` itself), never reaching a reply or a pending approval.
+                    use! turnFailServer = FakeBotApiServer.start ()
+                    let turnFailAgent = ScriptedAgent [ Throws(System.Exception "turn boom") ]
+                    use! turnFailBridge = startBridgeWith turnFailServer turnFailAgent (observer :> IMafObserver) None
+                    do! turnFailBridge.StartRun(UMX.tag<chatId> 7506L, "go")
+                    do! pollUntil 5000 (fun () -> not (List.isEmpty observer.TurnFailed))
+
                     Expect.isNonEmpty observer.Stale "OnStaleDecision has a real triggering path"
                     Expect.isNonEmpty observer.Malformed "OnMalformedDecision has a real triggering path"
                     Expect.isNonEmpty observer.ResumeFailed "OnResumeFailed has a real triggering path"
                     Expect.isNonEmpty observer.EmptyTurn "OnEmptyTurn has a real triggering path"
                     Expect.isNonEmpty observer.InvalidOutput "OnInvalidOutput has a real triggering path"
                     Expect.isNonEmpty observer.ProjectionProblem "OnProjectionProblem has a real triggering path"
+                    Expect.isNonEmpty observer.TurnFailed "OnTurnFailed has a real triggering path"
                 }
                 |> Async.AwaitTask
         }

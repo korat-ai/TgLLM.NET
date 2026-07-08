@@ -1,6 +1,7 @@
 namespace TgLLM.Maf
 
 open System.Collections.Concurrent
+open System.Collections.Generic
 open System.Threading.Tasks
 open Microsoft.Agents.AI
 open TgLLM.Core
@@ -20,14 +21,28 @@ type Conversation = { Chat: ChatId; Session: AgentSession }
 type Conversations() =
     let sessions = ConcurrentDictionary<ChatId, Lazy<Task<AgentSession>>>()
 
-    /// Returns the chat's conversation, creating (and caching) its session on first call.
+    /// Returns the chat's conversation, creating (and caching) its session on first call. A
+    /// FAILED create is NOT replayed forever: the classic `Lazy<Task<T>>` pitfall is that the
+    /// factory delegate itself returns a `Task` SUCCESSFULLY (so `Lazy` caches that task
+    /// reference, once, for good) even though the task it returned later transitions to Faulted —
+    /// so a chat whose first `CreateSessionAsync` throws would otherwise be bricked permanently,
+    /// with every later turn replaying the SAME captured exception. On a fault, THIS lazy instance
+    /// is evicted (only if it is still the published one — a concurrent `Drop`/retry may already
+    /// have replaced it, in which case there is nothing of this attempt's to remove), so the NEXT
+    /// call gets a fresh attempt instead.
     member _.GetOrCreate(chat: ChatId, create: unit -> ValueTask<AgentSession>) : ValueTask<Conversation> =
         let lazySession = sessions.GetOrAdd(chat, (fun _ -> Lazy<Task<AgentSession>>(fun () -> (create ()).AsTask())))
 
         ValueTask<Conversation>(
             task {
-                let! session = lazySession.Value
-                return { Chat = chat; Session = session }
+                try
+                    let! session = lazySession.Value
+                    return { Chat = chat; Session = session }
+                with ex ->
+                    (sessions :> ICollection<KeyValuePair<ChatId, Lazy<Task<AgentSession>>>>).Remove(KeyValuePair(chat, lazySession))
+                    |> ignore
+
+                    return raise ex
             }
         )
 

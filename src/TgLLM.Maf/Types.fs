@@ -11,6 +11,27 @@ type MafError =
     | BodyInvalid of detail: string
     /// A rendered body over the Bot API's `sendMessage`/`editMessageText` length limit.
     | ReplyTooLong of length: int * max: int
+    /// A Telegram delivery call (an edit, most commonly) failed for a reason OTHER than the
+    /// classified `EditNotFound`/`EditNotModified` outcomes — e.g. a transient Bot API error —
+    /// AFTER the operation it was reporting on (a resume, a chained-approval render) had already
+    /// succeeded on the MAF side. Kept distinct from `OnResumeFailed`: the agent's own turn is
+    /// fine; only getting the result onto the wire failed.
+    | DeliveryFailed of detail: string
+
+/// The two tool names this bridge itself owns and registers (`MafBridge.RegisterTools`) — a
+/// single source of truth shared by `Projection.fs` (which must refuse a declared MAF function
+/// under either name, `ProjectionProblem.ReservedName`, rather than let it silently override the
+/// approval loop's own handler) and `Bridge.fs` (which registers the real handlers under these
+/// exact names). Declared here, ahead of both, so neither has to duplicate the literal strings —
+/// `Projection.fs` compiles before `Bridge.fs` (see the .fsproj's own compile-order comment), so
+/// this is the earliest shared file both can reach.
+module ReservedToolNames =
+
+    [<Literal>]
+    let Approve = "maf-approve"
+
+    [<Literal>]
+    let Reject = "maf-reject"
 
 /// What the default renderer (and any host formatter) works from — extracted from the MAF
 /// request's `FunctionCallContent` (`Name` + `Arguments`) by `ApprovalDetection`, so a formatter
@@ -39,6 +60,11 @@ type ProjectionProblem =
     /// Two declared functions in ONE projected set share a name — a broken declaration, not an
     /// ordinary re-registration.
     | DuplicateName of name: string
+    /// The declared function's name collides with a reserved decision-tool name
+    /// (`ReservedToolNames.Approve`/`.Reject`) — registering it would silently override the
+    /// bridge's own approval-loop handler (`IToolRegistry.Register` is add-or-replace), breaking
+    /// every pending/future approval this bridge ever renders. Refused, not registered.
+    | ReservedName of name: string
 
 /// One `MafTools.project` call's outcome: what registered, what was surfaced.
 type ProjectionReport =
@@ -49,9 +75,13 @@ type ProjectionReport =
 /// reaches ONE observer, mirroring the A2UI leaf's `IA2uiObserver` shape. Noop default; the F#
 /// start functions bridge it to the bot's own logger when one is wired.
 type IMafObserver =
-    /// A well-formed decision whose pending request is no longer known (already decided, the run
-    /// ended, the process restarted, or the binding expired). Acked by the engine as always, but
-    /// never resumed.
+    /// A well-formed decision whose pending request is no longer known — the run already
+    /// resolved it, the run ended and abandoned its remaining siblings, or the process restarted
+    /// (this bridge's `PendingApprovals` table is in-memory only). Acked by the engine as always,
+    /// but never resumed. NOTE: a genuinely EXPIRED binding (`SendKeyboardPlan`'s own
+    /// `expiresIn`) never reaches this far at all — `Expiry.isLive` refuses it inside the engine's
+    /// own press resolution, which reports it via `IHookObserver.OnUnknownToken`, a Core-level
+    /// seam this leaf's own observer has no visibility into.
     abstract OnStaleDecision: descriptor: ApprovalDescriptor -> unit
     /// A decision arg that did not parse back into a descriptor. Acked, never acted upon.
     abstract OnMalformedDecision: raw: string -> unit
@@ -66,6 +96,11 @@ type IMafObserver =
     abstract OnInvalidOutput: chat: ChatId * error: MafError -> unit
     /// One declared tool could not be projected into the registry (its siblings still were).
     abstract OnProjectionProblem: problem: ProjectionProblem -> unit
+    /// A whole turn (a host-initiated `StartRun`, or an incoming text message) failed before it
+    /// ever produced a reply or a pending approval — most commonly `agent.RunAsync`/
+    /// `CreateSessionAsync` throwing (a network/backend error). No message was sent for this turn;
+    /// the chat's own lock is still released normally, so the NEXT turn on this chat can proceed.
+    abstract OnTurnFailed: chat: ChatId * error: exn -> unit
 
 /// Reports nothing — the default when a caller has no need to observe MAF-bridge conditions,
 /// mirroring `NoopHookObserver`/`NoopA2uiObserver`.
@@ -77,6 +112,7 @@ type NoopMafObserver() =
         member _.OnEmptyTurn(_chat: ChatId) = ()
         member _.OnInvalidOutput(_chat: ChatId, _error: MafError) = ()
         member _.OnProjectionProblem(_problem: ProjectionProblem) = ()
+        member _.OnTurnFailed(_chat: ChatId, _error: exn) = ()
 
 /// Options a host may set when wiring the bridge; every field is optional — the zero-config path
 /// (`Maf.startPolling`/`startWebhook`) is complete without any of them.

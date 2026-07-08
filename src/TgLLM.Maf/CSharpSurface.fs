@@ -34,11 +34,18 @@ type ApprovalRenderInfo(body: string, approveLabel: string, rejectLabel: string)
 
 /// One condition `IMafObserver` surfaced, flattened to a stable string tag (`Kind`) a C# host can
 /// switch on without touching an F# union, plus a human-readable `Description` for logging —
-/// mirrors the A2UI C# façade's `A2uiErrorInfo` split.
+/// mirrors the A2UI C# façade's `A2uiErrorInfo` split. `Exception` carries the ORIGINAL exception
+/// object (not just its flattened `.Message`, already folded into `Description`) for the ONE event
+/// that has one (`OnResumeFailed`/`OnTurnFailed`) — `null` for every other kind. Method
+/// overloading (the 2-arg constructor), not an F# optional parameter, stands in for the
+/// C#-optional-third-argument shape — same convention this file's own doc comment already commits
+/// to for `MafBridgeSettings`.
 [<Sealed>]
-type MafSurfacedEvent(kind: string, description: string) =
+type MafSurfacedEvent(kind: string, description: string, error: exn | null) =
+    new(kind: string, description: string) = MafSurfacedEvent(kind, description, null)
     member _.Kind: string = kind
     member _.Description: string = description
+    member _.Exception: exn | null = error
 
 /// Bridges a C#-supplied `Action<MafSurfacedEvent>` (or none) into `IMafObserver`, translating
 /// every F# type (`ApprovalDescriptor`, `MafError`, `ProjectionProblem`, `exn`) at this ONE
@@ -51,6 +58,11 @@ type internal CSharpMafObserverBridge(onSurfaced: Action<MafSurfacedEvent> | nul
         | None -> ()
         | Some action -> action.Invoke(MafSurfacedEvent(kind, description))
 
+    let reportWithError (kind: string) (description: string) (error: exn) : unit =
+        match Option.ofObj onSurfaced with
+        | None -> ()
+        | Some action -> action.Invoke(MafSurfacedEvent(kind, description, error))
+
     interface IMafObserver with
         member _.OnStaleDecision(descriptor: ApprovalDescriptor) =
             report "StaleDecision" $"request {descriptor.RequestId} (tool {descriptor.Tool}) in chat {descriptor.Chat} is no longer pending"
@@ -59,7 +71,10 @@ type internal CSharpMafObserverBridge(onSurfaced: Action<MafSurfacedEvent> | nul
             report "MalformedDecision" $"a decision payload did not parse: {raw}"
 
         member _.OnResumeFailed(descriptor: ApprovalDescriptor, error: exn) =
-            report "ResumeFailed" $"resuming request {descriptor.RequestId} (tool {descriptor.Tool}) failed: {error.Message}"
+            reportWithError
+                "ResumeFailed"
+                $"resuming request {descriptor.RequestId} (tool {descriptor.Tool}) failed: {error.Message}"
+                error
 
         member _.OnEmptyTurn(chat: ChatId) =
             report "EmptyTurn" $"a turn in chat {UMX.untag chat} produced neither text nor an approval"
@@ -69,6 +84,9 @@ type internal CSharpMafObserverBridge(onSurfaced: Action<MafSurfacedEvent> | nul
 
         member _.OnProjectionProblem(problem: ProjectionProblem) =
             report "ProjectionProblem" $"%A{problem}"
+
+        member _.OnTurnFailed(chat: ChatId, error: exn) =
+            reportWithError "TurnFailed" $"a turn in chat {UMX.untag chat} failed: {error.Message}" error
 
 /// Settings for `MafTelegramBridge.StartPollingAsync`/`StartWebhookAsync` — every member is a
 /// plain, mutable, C#-safe property; omitting all of them (`MafBridgeSettings()`) is the
@@ -99,12 +117,22 @@ module private CSharpBridgeSupport =
                   ApproveLabel = render.ApproveLabel
                   RejectLabel = render.RejectLabel })
 
+    /// `Observer` is `ValueNone` — not a REAL-but-silent `CSharpMafObserverBridge` wrapping a
+    /// `null` action — when `s.OnSurfaced` itself is `null`: only THEN does
+    /// `BridgeBuild.resolveObserver`'s own fallback (the bot's own logger, else `NoopMafObserver`)
+    /// ever get a chance to apply. Building a `CSharpMafObserverBridge(null)` unconditionally would
+    /// hand `resolveObserver` a real (if permanently no-op) observer object every time, permanently
+    /// starving the logger fallback even for a host that wired NOTHING else — the exact zero-config
+    /// shape a C# caller reaches by constructing a bare `MafBridgeSettings()`.
     let toOptions (settings: MafBridgeSettings | null) : MafBridgeOptions =
         match Option.ofObj settings with
         | None -> MafBridgeOptions.defaults
         | Some s ->
             { Formatter = toFormatter s.Formatter
-              Observer = ValueSome(CSharpMafObserverBridge s.OnSurfaced :> IMafObserver)
+              Observer =
+                match Option.ofObj s.OnSurfaced with
+                | None -> ValueNone
+                | Some _ -> ValueSome(CSharpMafObserverBridge s.OnSurfaced :> IMafObserver)
               DefaultOwner = (if s.DefaultOwner.HasValue then ValueSome s.DefaultOwner.Value else ValueNone)
               ApprovalExpiry = (if s.ApprovalExpiry.HasValue then ValueSome s.ApprovalExpiry.Value else ValueNone) }
 
@@ -131,8 +159,15 @@ type MafTelegramBridge internal (inner: MafBridge) =
         let fsOwner = if owner.HasValue then Some owner.Value else None
         (inner.StartRun(chat, prompt, ?owner = fsOwner)).WaitAsync(ct)
 
+    /// The zero-config path: goes straight to `MafBridgeOptions.defaults` — NOT through a
+    /// default-constructed `MafBridgeSettings()` and `toOptions` — so this overload's own
+    /// behavior can never drift from F#'s own zero-config `Maf.startPolling` just because
+    /// `MafBridgeSettings`'s defaults happen (or stop happening) to translate to the same options.
     static member StartPollingAsync(config: TgBotConfig, agent: AIAgent) : Task<MafTelegramBridge> =
-        MafTelegramBridge.StartPollingAsync(config, agent, MafBridgeSettings())
+        task {
+            let! bridge = Maf.startPollingWith MafBridgeOptions.defaults config agent
+            return MafTelegramBridge bridge
+        }
 
     /// Builds the bot from `config` (requires `.WithTools`), registers `maf-approve`/`maf-reject`
     /// into its Tool Router, and returns the live bridge — the C#-facing counterpart to
@@ -143,8 +178,12 @@ type MafTelegramBridge internal (inner: MafBridge) =
             return MafTelegramBridge bridge
         }
 
+    /// Same zero-config discipline as the 2-arg `StartPollingAsync` overload above.
     static member StartWebhookAsync(config: TgWebhookConfig, agent: AIAgent) : Task<MafTelegramBridge> =
-        MafTelegramBridge.StartWebhookAsync(config, agent, MafBridgeSettings())
+        task {
+            let! bridge = Maf.startWebhookWith MafBridgeOptions.defaults config agent
+            return MafTelegramBridge bridge
+        }
 
     /// The C#-facing counterpart to `Maf.startWebhookWith`.
     static member StartWebhookAsync(config: TgWebhookConfig, agent: AIAgent, settings: MafBridgeSettings) : Task<MafTelegramBridge> =

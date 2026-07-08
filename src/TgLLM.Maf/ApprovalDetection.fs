@@ -42,6 +42,17 @@ module ApprovalDetection =
         | null -> []
         | args -> [ for kv in args -> kv.Key, renderArgumentValue kv.Value ]
 
+    /// A pending request's tool name for reporting purposes — the SAME `FunctionCallContent.Name`
+    /// (falling back to `ToolCall.CallId` for an unexpected `ToolCall` subtype) `detect` itself
+    /// reads to build a `DetectedApproval.Prompt.Tool` for a FRESH detection. Exposed so a caller
+    /// that only has an already-pending `ToolApprovalRequestContent` on hand (e.g. `Bridge.fs`
+    /// reporting an ABANDONED sibling, which never goes through `detect` again) can build the SAME
+    /// human-readable name without duplicating this match.
+    let toolName (request: ToolApprovalRequestContent) : string =
+        match request.ToolCall with
+        | :? FunctionCallContent as call -> call.Name
+        | other -> other.CallId
+
     /// Extracts every `ToolApprovalRequestContent` across a response's messages, in encounter
     /// order — total: a response with no pending approvals yields `[]`, never a throw. The
     /// request's own `ToolCall` is downcast to `FunctionCallContent` (the concrete subtype MAF's
@@ -53,12 +64,12 @@ module ApprovalDetection =
               for content in message.Contents do
                   match content with
                   | :? ToolApprovalRequestContent as request ->
-                      let name, args =
+                      let args =
                           match request.ToolCall with
-                          | :? FunctionCallContent as call -> call.Name, argumentLines call.Arguments
-                          | other -> other.CallId, []
+                          | :? FunctionCallContent as call -> argumentLines call.Arguments
+                          | _ -> []
 
                       yield
                           { Request = request
-                            Prompt = { Tool = name; Arguments = args; Chat = chat } }
+                            Prompt = { Tool = toolName request; Arguments = args; Chat = chat } }
                   | _ -> () ]

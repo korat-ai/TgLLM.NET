@@ -49,6 +49,22 @@ let pendingApprovalsTests =
             let table = PendingApprovals()
             Expect.isTrue (isMiss (table.TryConsume(chat 1L, "nope"))) "nothing was ever added for this key"
 
+        testCase "TryGet returns the entry WITHOUT removing it — a later TryConsume still finds it" <| fun _ ->
+            let table = PendingApprovals()
+            table.Add(entry 1L "req-peek")
+
+            match table.TryGet(chat 1L, "req-peek") with
+            | ValueSome got -> Expect.equal got.Request.RequestId "req-peek" "the peeked entry is the one that was added"
+            | ValueNone -> failwith "expected ValueSome"
+
+            match table.TryConsume(chat 1L, "req-peek") with
+            | ValueSome _ -> ()
+            | ValueNone -> failwith "TryGet must not have removed the entry — TryConsume should still find it"
+
+        testCase "TryGet on an unknown (chat, requestId) misses" <| fun _ ->
+            let table = PendingApprovals()
+            Expect.isTrue (isMiss (table.TryGet(chat 1L, "nope"))) "nothing was ever added for this key"
+
         testCase "a second TryConsume for the same key misses — at most once" <| fun _ ->
             let table = PendingApprovals()
             table.Add(entry 1L "req-1")

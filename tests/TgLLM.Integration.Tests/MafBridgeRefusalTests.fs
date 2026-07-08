@@ -62,6 +62,7 @@ type private RecordingObserver() =
         member _.OnEmptyTurn(_chat) = ()
         member _.OnInvalidOutput(_chat, _error) = ()
         member _.OnProjectionProblem(_problem) = ()
+        member _.OnTurnFailed(_chat, _error) = ()
 
 [<Tests>]
 let mafBridgeRefusalTests =
@@ -97,6 +98,64 @@ let mafBridgeRefusalTests =
 
                     Expect.isEmpty (server.RequestsFor "editMessageText") "the out-of-scope tap never edits the message"
                     Expect.equal agent.RunCount 1 "only the initial StartRun turn ran — the out-of-scope tap never resumed the agent"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "a chained approval's decision still enforces owner scope in the LEAF — a non-owner tap on it is refused, never resumes"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 7104L
+                    let otherId = 8003L
+
+                    let agent =
+                        ScriptedAgent [
+                            PausesFor("req-1", "send_email", [])
+                            PausesFor("req-2", "send_sms", [])
+                            RepliesWith "All done."
+                        ]
+
+                    let tools = ToolRegistry.create ()
+                    let config = (TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
+                    use! bridge = Maf.startPolling config agent
+
+                    // No explicit owner — RunOwner.resolve's private-chat-peer default applies, so
+                    // the OWNER of both req-1 and (once chained) req-2 is the peer whose id equals
+                    // `chat`.
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Notify the team.")
+
+                    let firstSend = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken1 = callbackDataAt 0 0 firstSend
+
+                    // The OWNER taps Approve on req-1 — this resumes and CHAINS to req-2, rendered
+                    // via `EditKeyboardPlan` on the SAME message; that replacement binding is
+                    // `Anyone`-scoped AT THE ENGINE LEVEL (`TgBot.EditKeyboardPlan` accepts no
+                    // owner parameter), so the engine's own binding-level owner check alone would
+                    // let ANYONE resolve it.
+                    do! deliverTap server 1 "q-chain-owner" approveToken1 chat 1 chat
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "editMessageText" |> List.isEmpty |> not)
+                    Expect.equal agent.RunCount 2 "the owner's tap on req-1 resumed the agent, chaining to req-2"
+
+                    let chainedEdit = (server.RequestsFor "editMessageText").Head.Body |> Option.get
+                    let approveToken2 = callbackDataAt 0 0 chainedEdit
+
+                    // A DIFFERENT user taps Approve on the CHAINED req-2 — the engine's own
+                    // binding-level check would ALLOW this (the binding is `Anyone`), so this must
+                    // be refused by the LEAF's own owner check against the pending entry's OWN
+                    // `Owner` (propagated from req-1's original owner-scoped send).
+                    do! deliverTap server 2 "q-chain-other" approveToken2 chat 1 otherId
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "answerCallbackQuery" |> List.length >= 2)
+
+                    Expect.equal agent.RunCount 2 "the non-owner's tap on the CHAINED approval never resumed the agent a third time"
+                    Expect.equal (List.length (server.RequestsFor "editMessageText")) 1 "the non-owner's tap never produced a second edit"
+
+                    match server.RequestsFor "answerCallbackQuery" with
+                    | [ _; secondAck ] ->
+                        let ackBody = secondAck.Body |> Option.get
+                        Expect.equal (ackBody |> field "text" |> asString) OwnerScope.DefaultDeniedNotice "the non-owner sees the denied notice"
+                    | other -> failtestf "expected exactly two answerCallbackQuery calls, got %d" (List.length other)
                 }
                 |> Async.AwaitTask
         }

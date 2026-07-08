@@ -18,61 +18,81 @@ open TgLLM.FSharp
 module MafTools =
 
     /// Parses `raw` (the tapped button's `ToolBinding.Arg`, conventionally a JSON object) into
-    /// the dictionary `AIFunctionArguments` wraps. Total: `null`, empty, a non-object JSON value,
-    /// or malformed JSON all yield an EMPTY argument set rather than throwing — a malformed tap
-    /// payload is not a reason to crash the tool loop (mirrors `ApprovalDescriptor.tryParse`'s own
-    /// "untrusted wire input" stance). Each property's value is carried as its raw `JsonElement`
-    /// — the same shape MAF's own LLM-driven function-calling loop hands `AIFunctionArguments`
-    /// (a `JsonElement` per argument, converted to the target parameter type by
-    /// `AIFunction.InvokeAsync` itself via its own `JsonSerializerOptions`), reflection-confirmed
-    /// against `AIFunctionFactory.Create`'s delegate-wrapping functions — so a projected tool
-    /// binds arguments identically whether MAF's own model loop or a Telegram button supplied
-    /// them.
-    let private parseArguments (raw: string | null) : AIFunctionArguments =
-        let dict = Dictionary<string, obj | null>()
+    /// the dictionary `AIFunctionArguments` wraps. `null`/empty/whitespace `raw` — a legitimate
+    /// no-argument tap — yields `Ok` of an EMPTY argument set. Anything else that fails to parse as
+    /// a JSON OBJECT (malformed JSON, or well-formed JSON that isn't an object — an array, a bare
+    /// number, ...) is `Error ()`: a MALFORMED payload is a reason to REFUSE the tap, not to
+    /// silently invoke the function with whatever partial/empty argument set happened to result
+    /// (the same "refuse malformed rather than degrade-and-proceed" stance
+    /// `ApprovalDescriptor.tryParse`'s own callers take for a decision button). Each property's
+    /// value is carried as its raw `JsonElement` — the same shape MAF's own LLM-driven
+    /// function-calling loop hands `AIFunctionArguments` (a `JsonElement` per argument, converted
+    /// to the target parameter type by `AIFunction.InvokeAsync` itself via its own
+    /// `JsonSerializerOptions`), reflection-confirmed against `AIFunctionFactory.Create`'s
+    /// delegate-wrapping functions — so a projected tool binds arguments identically whether MAF's
+    /// own model loop or a Telegram button supplied them.
+    let private parseArguments (raw: string | null) : Result<AIFunctionArguments, unit> =
+        let emptyArguments () = AIFunctionArguments(Dictionary<string, obj | null>() :> IDictionary<string, obj | null>)
 
         match Option.ofObj raw with
-        | None -> ()
+        | None -> Ok(emptyArguments ())
+        | Some json when System.String.IsNullOrWhiteSpace json -> Ok(emptyArguments ())
         | Some json ->
             try
                 use document = JsonDocument.Parse json
 
                 if document.RootElement.ValueKind = JsonValueKind.Object then
+                    let dict = Dictionary<string, obj | null>()
+
                     for prop in document.RootElement.EnumerateObject() do
                         dict[prop.Name] <- box (prop.Value.Clone())
-            with :? JsonException ->
-                ()
 
-        AIFunctionArguments(dict :> IDictionary<string, obj | null>)
+                    Ok(AIFunctionArguments(dict :> IDictionary<string, obj | null>))
+                else
+                    Error ()
+            with :? JsonException ->
+                Error ()
 
     /// The registered `Tool` for one projected `AIFunction`: parse the tap's arg, invoke, reply
-    /// the JSON-serialized result. An invalid reply (over the Bot API length limit) is a
-    /// programmer/tool-output error (Always-Rule 6) — `PressContext.ReplyTextAsync` already fails
-    /// fast on that for every other tool in this library, so this is not a condition this leaf's
-    /// `IMafObserver` surfaces separately.
+    /// the JSON-serialized result. A malformed arg (`parseArguments`'s `Error`) never reaches
+    /// `AIFunction.InvokeAsync` at all — the function is skipped and a plain-text refusal is
+    /// replied instead, so a bad payload can never silently run the function with a wrong/empty
+    /// argument set. An invalid reply (over the Bot API length limit) is a programmer/tool-output
+    /// error (Always-Rule 6) — `PressContext.ReplyTextAsync` already fails fast on that for every
+    /// other tool in this library, so this is not a condition this leaf's `IMafObserver` surfaces
+    /// separately.
     let private invoke (f: AIFunction) : Tool =
         fun (ctx: PressContext) ->
             task {
-                let arguments = parseArguments ctx.Arg
-                let! result = f.InvokeAsync(arguments, ctx.CancellationToken)
-                let! _ = ctx.ReplyTextAsync(JsonSerializer.Serialize result)
-                ()
+                match parseArguments ctx.Arg with
+                | Error () ->
+                    let! _ = ctx.ReplyTextAsync $"⚠ {f.Name}: the tapped button's arguments could not be parsed — the tool was not run."
+                    ()
+                | Ok arguments ->
+                    let! result = f.InvokeAsync(arguments, ctx.CancellationToken)
+                    let! _ = ctx.ReplyTextAsync(JsonSerializer.Serialize result)
+                    ()
             }
             :> Task
 
     /// One function's projection outcome: `Ok` carries the tool's validated name, its registered
     /// `Tool`, and the manifest metadata to register it under; `Error` is the surfaced
-    /// `ProjectionProblem` — either the declaration's own invalid name, or a name that repeats an
-    /// EARLIER function already seen in THIS SAME projected sequence (`seenNames` is threaded
-    /// through the whole `Seq.map` fold below, so only the FIRST occurrence of a name ever
-    /// succeeds).
+    /// `ProjectionProblem` — the declaration's own invalid name, a name that collides with one of
+    /// this bridge's OWN reserved decision-tool names (`ReservedName`, checked FIRST: registering
+    /// either would silently override `maf-approve`/`maf-reject`'s own handler, breaking the whole
+    /// approval loop — a strictly worse outcome than an ordinary duplicate, so it is refused even
+    /// before the duplicate-name check below runs), or a name that repeats an EARLIER function
+    /// already seen in THIS SAME projected sequence (`seenNames` is threaded through the whole
+    /// `Seq.map` fold below, so only the FIRST occurrence of a name ever succeeds).
     let private projectOne (seenNames: HashSet<string>) (f: AIFunction) : Result<ToolName * Tool * ToolMetadata, ProjectionProblem> =
         match ToolName.create f.Name with
         | Error e -> Error(InvalidToolName(f.Name, e))
         | Ok toolName ->
             let name = ToolName.value toolName
 
-            if not (seenNames.Add name) then
+            if name = ReservedToolNames.Approve || name = ReservedToolNames.Reject then
+                Error(ReservedName name)
+            elif not (seenNames.Add name) then
                 Error(DuplicateName name)
             else
                 // `AITool.Description` is a non-nullable `string` per the resolved binaries' own

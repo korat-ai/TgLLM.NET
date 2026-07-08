@@ -40,13 +40,8 @@ type LoggingMafObserver(logger: ILogger) =
         member _.OnProjectionProblem(problem: ProjectionProblem) =
             logger.LogWarning("MAF: a tool declaration could not be projected: {Problem}", [| (string problem) :> obj |])
 
-module private DecisionTools =
-
-    [<Literal>]
-    let ApproveName = "maf-approve"
-
-    [<Literal>]
-    let RejectName = "maf-reject"
+        member _.OnTurnFailed(chat: ChatId, error: exn) =
+            logger.LogError(error, "MAF: a turn in chat {Chat} failed before it produced a reply or a pending approval", [| chat :> obj |])
 
 /// The bridge's internal turn-processing helpers — pure with respect to MAF (no `agent.RunAsync`
 /// call lives here), composing `ApprovalDetection`/`ApprovalRendering`/`ApprovalDescriptor` into
@@ -71,8 +66,8 @@ module private TurnProcessing =
             let argJson = ApprovalDescriptor.serialize descriptor
 
             match
-                Plan.rows [ [ Plan.toolWithArg validRender.ApproveLabel DecisionTools.ApproveName argJson
-                              Plan.toolWithArg validRender.RejectLabel DecisionTools.RejectName argJson ] ]
+                Plan.rows [ [ Plan.toolWithArg validRender.ApproveLabel ReservedToolNames.Approve argJson
+                              Plan.toolWithArg validRender.RejectLabel ReservedToolNames.Reject argJson ] ]
             with
             | Ok plan -> Ok(validRender, plan)
             | Error e -> Error(BodyInvalid $"%A{e}")
@@ -144,11 +139,22 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
         }
         :> Task
 
-    /// Processes one INITIAL turn's response (currently only a `StartRun` call reaches this — an
-    /// incoming text message is a future entry point onto the same path): every detected approval
-    /// becomes its own fresh message (a turn that raises several pending requests presents each as
-    /// its own decision); with none pending, the agent's own text reply is sent as a plain message;
-    /// with neither, the turn is empty and surfaced rather than sending nothing silently.
+    /// Processes one INITIAL turn's response (a `StartRun` call, or an incoming text message):
+    /// every detected approval becomes its own fresh message (a turn that raises several pending
+    /// requests presents each as its own decision); with none pending, the agent's own text reply
+    /// is sent as a plain message; with neither, the turn is empty and surfaced rather than
+    /// sending nothing silently.
+    ///
+    /// Deliberate, disclosed choice: when `response` carries BOTH a preamble (`response.Text`,
+    /// e.g. "Let me check that for you...") AND at least one detected approval, ONLY the approval
+    /// message(s) are sent — `response.Text` is dropped, never sent as a SEPARATE plain message
+    /// first. Kept this way rather than sending both: a preamble-then-approval pair would put the
+    /// approval prompt itself in a SECOND message, one edit-in-place target behind the text one
+    /// (`sendNewApproval`'s own message, not the preamble's), for a benefit (a little extra
+    /// narration) that does not obviously outweigh the extra message noise. Revisit if a host
+    /// actually needs the preamble surfaced — the fix is local (prepend it to the render's own
+    /// `Body` via a formatter, or send it before `sendNewApproval` for the FIRST detected approval
+    /// only), not an engine change.
     let processInitialResponse (chat: ChatId) (owner: OwnerScope) (response: AgentResponse) : Task =
         task {
             match ApprovalDetection.detect chat response with
@@ -182,6 +188,14 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
     /// (`TgBot.fs`'s own doc comment: "a tool's own re-rendered keyboard carries none of these
     /// send-time options"). Only the FIRST approval in a turn (`sendNewApproval`, a fresh send) is
     /// fully owner-scoped and single-use; a chained further request inherits this pre-existing gap.
+    ///
+    /// `EditKeyboardPlan` never throws for a vanished message — it classifies the outcome instead
+    /// (`TgBot.EditKeyboardPlan`'s own doc comment). `EditApplied`/`EditNotModified` both proceed
+    /// normally (a pending entry against `messageId`, exactly as before); `EditNotFound` (the user
+    /// deleted the message between the earlier decision and this chained request) is surfaced and
+    /// FALLS BACK to `sendNewApproval` for a fresh, owner-scoped message — never records a pending
+    /// entry against a message with no buttons anywhere, which would hang the turn invisibly (no
+    /// way for anyone to ever decide it).
     let sendChainedApproval (chat: ChatId) (owner: OwnerScope) (messageId: MessageId) (detected: ApprovalDetection.DetectedApproval) : Task =
         task {
             match TurnProcessing.buildKeyboard formatter chat detected with
@@ -190,13 +204,23 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                 match MessageText.create render.Body with
                 | Error _ -> observer.OnInvalidOutput(chat, BodyInvalid "the validated render's body failed to re-parse as MessageText")
                 | Ok bodyText ->
-                    let! _ = bot.EditKeyboardPlan(chat, messageId, bodyText, plan)
+                    let! outcome = bot.EditKeyboardPlan(chat, messageId, bodyText, plan)
 
-                    pendingApprovals.Add
-                        { Chat = chat
-                          Request = detected.Request
-                          Owner = owner
-                          MessageId = messageId }
+                    match outcome with
+                    | EditApplied
+                    | EditNotModified ->
+                        pendingApprovals.Add
+                            { Chat = chat
+                              Request = detected.Request
+                              Owner = owner
+                              MessageId = messageId }
+                    | EditNotFound ->
+                        observer.OnInvalidOutput(
+                            chat,
+                            DeliveryFailed "the approval message to chain the next request onto no longer exists — sending a fresh one"
+                        )
+
+                        do! sendNewApproval chat owner detected
         }
         :> Task
 
@@ -216,13 +240,31 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
         }
         :> Task
 
-    /// The `maf-approve`/`maf-reject` tool handler: parses the tapped button's descriptor,
-    /// consumes the matching pending entry (at-most-once — a miss is stale, surfaced and refused),
-    /// resumes the agent with the decision, and edits the approval message to the outcome or the
-    /// next chained request. A resume failure is surfaced and leaves no live buttons behind
+    /// Reports every entry `PendingApprovals.AbandonAllFor` drained for `chat` — a failed run's own
+    /// leftover sibling decisions — via `IMafObserver.OnStaleDecision`, one call per entry, so none
+    /// is silently dropped: whatever remains on THEIR messages' buttons will now only ever hit the
+    /// stale path if tapped, and the host/observer should know that ahead of time rather than
+    /// discover it only when (or if) a user taps one.
+    let reportAbandoned (chat: ChatId) : unit =
+        for abandoned in pendingApprovals.AbandonAllFor chat do
+            observer.OnStaleDecision(ApprovalDescriptor.make chat abandoned.Request.RequestId (ApprovalDetection.toolName abandoned.Request))
+
+    /// The `maf-approve`/`maf-reject` tool handler: parses the tapped button's descriptor, checks
+    /// the presser against the pending entry's OWN owner scope (needed here, in the leaf, because
+    /// a CHAINED approval's replacement binding is `Anyone`/reusable — `TgBot.EditKeyboardPlan`
+    /// accepts no owner parameter, per `sendChainedApproval`'s own doc comment — so the engine's
+    /// binding-level owner check alone would let a non-owner resume a chained decision; this check
+    /// closes that gap without needing `EditKeyboardPlan` itself to grow owner-scoping), consumes
+    /// the matching pending entry (at-most-once — a miss is stale, surfaced and refused), resumes
+    /// the agent with the decision, and edits the approval message to the outcome or the next
+    /// chained request(s). A resume failure is surfaced and leaves no live buttons behind
     /// (`OnResumeFailed` + a failure-note edit); the rest of this chat's pending entries are
-    /// abandoned and its conversation is dropped, since the agent's own continuation is now
-    /// presumably dead.
+    /// abandoned (and reported — see `reportAbandoned`) and its conversation is dropped, since the
+    /// agent's own continuation is now presumably dead. A failure delivering the OUTCOME itself
+    /// (the resume succeeded, but editing the message to show it — or to chain the next request —
+    /// failed) is a DIFFERENT, milder condition: surfaced via `OnInvalidOutput`, never treated as a
+    /// resume failure, and never abandons this chat's other pending entries or its conversation —
+    /// the agent's own turn is fine; only getting ITS result onto the wire failed.
     member private _.HandleDecision(approved: bool) (ctx: PressContext) : Task<unit> =
         task {
             match ApprovalDescriptor.tryParse ctx.Arg with
@@ -233,25 +275,64 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                 do!
                     withChatLock chat (fun () ->
                         task {
-                            match pendingApprovals.TryConsume(chat, descriptor.RequestId) with
+                            match pendingApprovals.TryGet(chat, descriptor.RequestId) with
                             | ValueNone -> observer.OnStaleDecision descriptor
-                            | ValueSome pending ->
-                                let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
+                            | ValueSome peeked when not (OwnerScope.isAllowed peeked.Owner (Some ctx.User.Id)) ->
+                                ctx.Answer(OwnerScope.DefaultDeniedNotice)
+                            | ValueSome _ ->
+                                match pendingApprovals.TryConsume(chat, descriptor.RequestId) with
+                                | ValueNone -> observer.OnStaleDecision descriptor
+                                | ValueSome pending ->
+                                    let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
 
-                                try
-                                    let responseContent = pending.Request.CreateResponse approved
-                                    let contents = ResizeArray<AIContent> [ responseContent :> AIContent ]
-                                    let resumeMessage = ChatMessage(ChatRole.User, contents)
-                                    let! response = agent.RunAsync(resumeMessage, conversation.Session, cancellationToken = cts.Token)
+                                    let! resumed =
+                                        task {
+                                            try
+                                                let responseContent = pending.Request.CreateResponse approved
+                                                let contents = ResizeArray<AIContent> [ responseContent :> AIContent ]
+                                                let resumeMessage = ChatMessage(ChatRole.User, contents)
+                                                let! response = agent.RunAsync(resumeMessage, conversation.Session, cancellationToken = cts.Token)
+                                                return Ok response
+                                            with ex ->
+                                                return Error ex
+                                        }
 
-                                    match ApprovalDetection.detect chat response with
-                                    | next :: _ -> do! sendChainedApproval chat pending.Owner pending.MessageId next
-                                    | [] -> do! editOutcome chat ctx approved descriptor.Tool response
-                                with ex ->
-                                    observer.OnResumeFailed(descriptor, ex)
-                                    do! ctx.EditTextAsync(TurnProcessing.failureNote descriptor.Tool)
-                                    pendingApprovals.AbandonAllFor chat |> ignore
-                                    conversations.Drop chat
+                                    match resumed with
+                                    | Error ex ->
+                                        observer.OnResumeFailed(descriptor, ex)
+
+                                        try
+                                            do! ctx.EditTextAsync(TurnProcessing.failureNote descriptor.Tool)
+                                        with editEx ->
+                                            observer.OnInvalidOutput(
+                                                chat,
+                                                DeliveryFailed $"failed to edit the approval message to its failure note: %s{editEx.Message}"
+                                            )
+
+                                        reportAbandoned chat
+                                        conversations.Drop chat
+                                    | Ok response ->
+                                        // The resume itself already succeeded by this point — a
+                                        // failure delivering ITS outcome (the edit-in-place, or a
+                                        // chained/further approval's own send) is a Telegram-side
+                                        // problem, not an agent-side one; caught HERE, separately
+                                        // from the resume's own try/with above, so it is reported
+                                        // as `OnInvalidOutput`/`DeliveryFailed` — never mistaken
+                                        // for `OnResumeFailed`, and never abandons this chat's
+                                        // other pending entries or drops its conversation.
+                                        try
+                                            match ApprovalDetection.detect chat response with
+                                            | [] -> do! editOutcome chat ctx approved descriptor.Tool response
+                                            | first :: rest ->
+                                                do! sendChainedApproval chat pending.Owner pending.MessageId first
+
+                                                for further in rest do
+                                                    do! sendNewApproval chat pending.Owner further
+                                        with deliveryEx ->
+                                            observer.OnInvalidOutput(
+                                                chat,
+                                                DeliveryFailed $"failed to deliver the resumed turn's outcome: %s{deliveryEx.Message}"
+                                            )
                         })
         }
 
@@ -263,15 +344,25 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
     /// lock (see `chatLocks`'s doc comment) with this bridge's other turns for the same chat.
     /// `owner` overrides the owner scope for approvals THIS run raises; omitted, `RunOwner.resolve`
     /// applies the bridge's configured default, then the private-chat-peer/`Anyone` fallback.
+    ///
+    /// The WHOLE turn — session creation, `agent.RunAsync`, and processing its response — is one
+    /// unit for failure-reporting purposes: an unexpected throw anywhere in it (most commonly a
+    /// network/backend error out of `CreateSessionAsync`/`RunAsync`) is caught and reported via
+    /// `IMafObserver.OnTurnFailed` rather than propagating to the caller — no reply/approval was
+    /// sent for this turn, but the chat's own lock is still released normally (the `finally` in
+    /// `withChatLock`), so the NEXT turn on this chat is unaffected.
     member _.StartRun(chat: ChatId, prompt: string, ?owner: OwnerScope) : Task =
         let explicitOwner = owner |> Option.orElse (ValueOption.toOption defaultOwner)
 
         withChatLock chat (fun () ->
             task {
-                let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
-                let resolvedOwner = RunOwner.resolve explicitOwner None chat
-                let! response = agent.RunAsync(prompt, conversation.Session, cancellationToken = cts.Token)
-                do! processInitialResponse chat resolvedOwner response
+                try
+                    let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
+                    let resolvedOwner = RunOwner.resolve explicitOwner None chat
+                    let! response = agent.RunAsync(prompt, conversation.Session, cancellationToken = cts.Token)
+                    do! processInitialResponse chat resolvedOwner response
+                with ex ->
+                    observer.OnTurnFailed(chat, ex)
             })
         :> Task
 
@@ -285,13 +376,23 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
     /// `AgentSession` is a single-writer resource, so a text turn, a host-initiated run, and a
     /// decision resume for one chat can never touch it concurrently, regardless of which one a
     /// host or user triggers first.
+    ///
+    /// Same failure discipline as `StartRun` (see its own doc comment): the whole turn is caught
+    /// and reported via `IMafObserver.OnTurnFailed`, never left to propagate — an uncaught throw
+    /// here would otherwise only ever reach Core's OWN `IMessageObserver.OnMessageFailed`
+    /// (`UpdateProcessor.buildMessageWork`'s existing try/with around this very handler), a
+    /// DIFFERENT observability channel a host using a CUSTOM `IMafObserver` might never be
+    /// listening on at all.
     member internal _.HandleIncomingMessage(message: IncomingMessage) : Task =
         withChatLock message.Chat (fun () ->
             task {
-                let! conversation = conversations.GetOrCreate(message.Chat, (fun () -> agent.CreateSessionAsync cts.Token))
-                let resolvedOwner = RunOwner.resolve None (Some message.Sender.Id) message.Chat
-                let! response = agent.RunAsync(message.Text, conversation.Session, cancellationToken = cts.Token)
-                do! processInitialResponse message.Chat resolvedOwner response
+                try
+                    let! conversation = conversations.GetOrCreate(message.Chat, (fun () -> agent.CreateSessionAsync cts.Token))
+                    let resolvedOwner = RunOwner.resolve None (Some message.Sender.Id) message.Chat
+                    let! response = agent.RunAsync(message.Text, conversation.Session, cancellationToken = cts.Token)
+                    do! processInitialResponse message.Chat resolvedOwner response
+                with ex ->
+                    observer.OnTurnFailed(message.Chat, ex)
             })
         :> Task
 
@@ -299,25 +400,47 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
     /// `startWebhook`'s shared build path, right after construction and before either returns.
     member internal this.RegisterTools(tools: ToolRegistry) : unit =
         tools.Register(
-            DecisionTools.ApproveName,
+            ReservedToolNames.Approve,
             (fun ctx -> this.HandleDecision true ctx),
             description = "Approve the agent's pending tool call."
         )
         |> ignore
 
         tools.Register(
-            DecisionTools.RejectName,
+            ReservedToolNames.Reject,
             (fun ctx -> this.HandleDecision false ctx),
             description = "Reject the agent's pending tool call."
         )
         |> ignore
 
     interface IAsyncDisposable with
+        /// Cancels (but does NOT dispose) `cts` — a queued `withChatLock` turn that has not yet
+        /// reached the point of reading `cts.Token` (e.g. a `StartRun`/`HandleIncomingMessage`
+        /// call still waiting on another in-flight turn's SAME chat gate) must still be able to
+        /// read a valid (if already-cancelled) token when it finally runs, rather than hit
+        /// `ObjectDisposedException` off this method's own observer-less path. A cancelled,
+        /// undisposed `CancellationTokenSource` is a small, well-understood, accepted leak — the
+        /// alternative (disposing it here) risks handing a token read to a task this disposal
+        /// itself cannot see or wait for.
+        ///
+        /// Only IDLE per-chat semaphores (`CurrentCount = 1` — nobody currently holds them) are
+        /// disposed: a gate an in-flight `withChatLock` body is STILL RUNNING under has
+        /// `CurrentCount = 0` and is deliberately left alone here, because `withChatLock`'s own
+        /// `finally gate.Release()` (Bridge.fs, right above) would otherwise throw
+        /// `ObjectDisposedException` the instant that in-flight turn finishes — turning a graceful
+        /// disposal into a crash for a turn this disposal has no way to wait for. This is a
+        /// best-effort cleanup, not a guarantee every semaphore is ever disposed (a chat whose
+        /// gate is BUSY at the moment of disposal simply keeps its semaphore, the same accepted
+        /// class of leak as the `cts` above); it still reclaims the common case (every chat with
+        /// no turn in flight right now).
         member _.DisposeAsync() : ValueTask =
             task {
                 cts.Cancel()
-                cts.Dispose()
                 do! (bot :> IAsyncDisposable).DisposeAsync()
+
+                for gate in chatLocks.Values do
+                    if gate.CurrentCount = 1 then
+                        gate.Dispose()
             }
             |> ValueTask
 
@@ -354,7 +477,7 @@ module private BridgeBuild =
                  decision taps — without one, every tap would silently no-op forever, since no \
                  ToolDispatch could ever resolve its binding."
         | Some tools ->
-            match ToolName.create DecisionTools.ApproveName, ToolName.create DecisionTools.RejectName with
+            match ToolName.create ReservedToolNames.Approve, ToolName.create ReservedToolNames.Reject with
             | Error e, _
             | _, Error e -> invalidOp $"unreachable: a literal MAF decision tool name failed validation (%A{e})"
             | Ok approveName, Ok rejectName ->
@@ -391,6 +514,22 @@ module Maf =
     /// registration already accepts for `maf-approve`/`maf-reject` (both land well before the pump
     /// loop could plausibly have a real update to hand off). A message that somehow arrived in
     /// that window is a no-op (`Task.CompletedTask`), never a crash.
+    /// `bot` is already RUNNING (ingesting updates in the background) by the time `BridgeBuild.build`
+    /// runs — the config-time `OnMessage` wiring above needs the bot to exist before the bridge can,
+    /// and `TgBot.startPolling`/`startWebhook` starts ingestion as part of that same call, so there
+    /// is no earlier point to build the bridge at. If `build` then throws (no `.WithTools`, or a
+    /// double-attach onto a bot that already has a bridge), `bot` would otherwise be leaked —
+    /// long-polling (or listening for a webhook) forever with nothing left to stop it. Caught here
+    /// and disposed before the exception is re-raised, so a failed build never outlives its own call.
+    let private buildOrDispose (bot: TgBot) (agent: AIAgent) (options: MafBridgeOptions) : Task<MafBridge> =
+        task {
+            try
+                return BridgeBuild.build bot agent options
+            with ex ->
+                do! (bot :> IAsyncDisposable).DisposeAsync()
+                return raise ex
+        }
+
     let startPollingWith (options: MafBridgeOptions) (config: TgBotConfig) (agent: AIAgent) : Task<MafBridge> =
         task {
             let mutable bridgeCell: MafBridge option = None
@@ -402,7 +541,7 @@ module Maf =
                     | None -> Task.CompletedTask
 
             let! bot = TgBot.startPolling (config.WithOnMessage handler)
-            let bridge = BridgeBuild.build bot agent options
+            let! bridge = buildOrDispose bot agent options
             bridgeCell <- Some bridge
             return bridge
         }
@@ -424,7 +563,7 @@ module Maf =
                     | None -> Task.CompletedTask
 
             let! bot = TgBot.startWebhook (config.WithOnMessage handler)
-            let bridge = BridgeBuild.build bot agent options
+            let! bridge = buildOrDispose bot agent options
             bridgeCell <- Some bridge
             return bridge
         }

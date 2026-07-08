@@ -116,4 +116,45 @@ let mafProjectionInvokeTests =
                 }
                 |> Async.AwaitTask
         }
+
+        testCaseAsync "a MALFORMED tap argument (not valid JSON, or not a JSON object) is REFUSED — the function is never invoked, and a refusal is replied instead of silently degrading to an empty argument set"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 8003L
+
+                    let mutable invokeCount = 0
+
+                    let countedEcho =
+                        System.Func<string, string>(fun s ->
+                            invokeCount <- invokeCount + 1
+                            s)
+
+                    let echoFn: AIFunction = AIFunctionFactory.Create(countedEcho, "echo", "Echoes its argument", null)
+
+                    let tools = ToolRegistry.create ()
+                    MafTools.project tools [ echoFn ] |> ignore
+
+                    let config = (TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
+                    use! bot = TgBot.startPolling config
+
+                    match Plan.rows [ [ Plan.toolWithArg "Echo" "echo" "{not valid json at all" ] ] with
+                    | Error e -> failtestf "plan should be valid: %A" e
+                    | Ok plan ->
+                        let! _ = bot.SendKeyboardPlan(UMX.tag<chatId> chat, MessageText.unsafe "Run the tool?", plan)
+                        let sent = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                        let token = callbackDataAt 0 0 sent
+
+                        do! deliverTap server 1 "q-malformed-1" token chat 1 chat
+                        do! pollUntil 5000 (fun () -> (server.RequestsFor "sendMessage") |> List.length >= 2)
+
+                        Expect.equal invokeCount 0 "the malformed tap NEVER invoked the function"
+
+                        let reply = (server.RequestsFor "sendMessage") |> List.item 1
+                        let replyText = reply.Body |> Option.get |> field "text" |> asString
+                        Expect.stringContains replyText "not run" "the reply explains the tool was skipped, not silently degraded to an empty argument set"
+                }
+                |> Async.AwaitTask
+        }
     ]

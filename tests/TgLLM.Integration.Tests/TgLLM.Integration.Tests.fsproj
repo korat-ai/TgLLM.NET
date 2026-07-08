@@ -52,6 +52,11 @@
     <Compile Include="MafTextTurnTests.fs" />
     <Compile Include="MafObservabilityTests.fs" />
     <Compile Include="MafAckTimingTests.fs" />
+    <Compile Include="MafConversationRecoveryTests.fs" />
+    <Compile Include="MafCSharpSurfaceObservabilityTests.fs" />
+    <Compile Include="MafStartupFailureTests.fs" />
+    <Compile Include="MafBridgeDisposeTests.fs" />
+    <Compile Include="MafWebhookBridgeTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

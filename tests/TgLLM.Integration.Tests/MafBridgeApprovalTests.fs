@@ -201,6 +201,109 @@ let mafBridgeApprovalTests =
                 |> Async.AwaitTask
         }
 
+        testCaseAsync "a RESUME that raises MULTIPLE approvals chains the first onto the SAME message and sends the rest as their own fresh messages — none is dropped"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 7006L
+
+                    let agent =
+                        ScriptedAgent [
+                            PausesFor("req-1", "send_email", [])
+                            PausesForMany [ ("req-2", "send_sms", []); ("req-3", "post_slack", []) ]
+                            RepliesWith "All done."
+                        ]
+
+                    use! bridge = startBridge server agent
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Notify everyone.")
+
+                    let firstSend = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken1 = callbackDataAt 0 0 firstSend
+
+                    do! deliverTap server 1 "q-multi-resume" approveToken1 chat 1 chat
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "sendMessage" |> List.length >= 2)
+
+                    // req-2 (the FIRST of the two) chains onto the SAME (original) message; req-3
+                    // gets its OWN fresh message — neither is silently dropped.
+                    Expect.equal (List.length (server.RequestsFor "sendMessage")) 2 "req-3 was sent as its OWN fresh message"
+                    let chainedEdit = (server.RequestsFor "editMessageText").Head.Body |> Option.get
+                    Expect.equal (chainedEdit |> field "message_id" |> asInt64) 1L "req-2 was chained onto the SAME message as req-1"
+                    Expect.stringContains (chainedEdit |> field "text" |> asString) "send_sms" "the chained edit shows req-2's own prompt"
+
+                    let freshSend = (server.RequestsFor "sendMessage") |> List.item 1 |> fun r -> r.Body |> Option.get
+                    Expect.stringContains (freshSend |> field "text" |> asString) "post_slack" "req-3's fresh message shows its OWN prompt"
+
+                    // Both req-2 and req-3 are genuinely live/decidable — tap each and confirm each
+                    // concludes on its OWN message.
+                    let approveToken2 = callbackDataAt 0 0 chainedEdit
+                    let approveToken3 = callbackDataAt 0 0 freshSend
+
+                    do! deliverTap server 2 "q-multi-resume-2" approveToken2 chat 1 chat
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "editMessageText" |> List.length >= 2)
+
+                    do! deliverTap server 3 "q-multi-resume-3" approveToken3 chat 2 chat
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "editMessageText" |> List.length >= 3)
+
+                    let outcomes = server.RequestsFor "editMessageText" |> List.map (fun r -> r.Body |> Option.get |> field "text" |> asString)
+
+                    Expect.isTrue
+                        (outcomes |> List.exists (fun t -> t.Contains "send_sms" && t.Contains "approved"))
+                        "req-2's own decision concluded on ITS message"
+
+                    Expect.isTrue
+                        (outcomes |> List.exists (fun t -> t.Contains "post_slack" && t.Contains "approved"))
+                        "req-3's own decision concluded on ITS message — it was never dropped"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "a chained approval onto a message that vanished (edit-not-found) sends a fresh owner-scoped message instead of hanging invisibly"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 7007L
+
+                    let agent =
+                        ScriptedAgent [
+                            PausesFor("req-1", "send_email", [])
+                            PausesFor("req-2", "send_sms", [])
+                            RepliesWith "All done."
+                        ]
+
+                    use! bridge = startBridge server agent
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Notify the team.")
+
+                    let firstSend = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken1 = callbackDataAt 0 0 firstSend
+
+                    // The original message vanished (deleted by the user) between req-1's decision
+                    // and req-2's chained render — `EditKeyboardPlan` classifies this as
+                    // `EditNotFound` rather than throwing.
+                    server.EnqueueError("editMessageText", 400, "Bad Request: message to edit not found")
+
+                    do! deliverTap server 1 "q-vanished-chain" approveToken1 chat 1 chat
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "sendMessage" |> List.length >= 2)
+
+                    Expect.equal (List.length (server.RequestsFor "sendMessage")) 2 "the chained request is re-sent as a FRESH message since the original vanished"
+                    let freshSend = (server.RequestsFor "sendMessage") |> List.item 1 |> fun r -> r.Body |> Option.get
+                    Expect.stringContains (freshSend |> field "text" |> asString) "send_sms" "the fresh message carries the NEXT request's own prompt"
+
+                    let freshApproveToken = callbackDataAt 0 0 freshSend
+                    do! deliverTap server 2 "q-vanished-chain-2" freshApproveToken chat 2 chat
+                    // The FAILED chained-edit attempt (against the vanished message) already put
+                    // ONE entry in `editMessageText` before this tap was ever delivered — wait for
+                    // a SECOND one (this tap's own outcome edit), not merely a non-empty list.
+                    do! pollUntil 5000 (fun () -> server.RequestsFor "editMessageText" |> List.length >= 2)
+
+                    let finalEdit = (server.RequestsFor "editMessageText") |> List.last |> fun r -> r.Body |> Option.get
+                    Expect.equal (finalEdit |> field "message_id" |> asInt64) 2L "the second decision resolves against the FRESH message, not the vanished one"
+                    Expect.stringContains (finalEdit |> field "text" |> asString) "All done." "the turn concludes normally despite the vanished intermediate message"
+                }
+                |> Async.AwaitTask
+        }
+
         testCaseAsync "a host formatter overrides the body/labels; the zero-config default is used when none is set"
         <| async {
             do!

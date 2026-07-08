@@ -49,16 +49,21 @@ let private deliverTap (server: FakeBotApiServer) (updateId: int) (queryId: stri
 
 type private RecordingObserver() =
     let resumeFailures = ResizeArray<ApprovalDescriptor * exn>()
+    let staleDecisions = ResizeArray<ApprovalDescriptor>()
+    let invalidOutput = ResizeArray<ChatId * MafError>()
 
     member _.ResumeFailures: (ApprovalDescriptor * exn) list = List.ofSeq resumeFailures
+    member _.StaleDecisions: ApprovalDescriptor list = List.ofSeq staleDecisions
+    member _.InvalidOutput: (ChatId * MafError) list = List.ofSeq invalidOutput
 
     interface IMafObserver with
-        member _.OnStaleDecision(_descriptor) = ()
+        member _.OnStaleDecision(descriptor) = staleDecisions.Add descriptor
         member _.OnMalformedDecision(_raw) = ()
         member _.OnResumeFailed(descriptor, error) = resumeFailures.Add(descriptor, error)
         member _.OnEmptyTurn(_chat) = ()
-        member _.OnInvalidOutput(_chat, _error) = ()
+        member _.OnInvalidOutput(chat, error) = invalidOutput.Add(chat, error)
         member _.OnProjectionProblem(_problem) = ()
+        member _.OnTurnFailed(_chat, _error) = ()
 
 [<Tests>]
 let mafBridgeFailureTests =
@@ -113,6 +118,99 @@ let mafBridgeFailureTests =
 
                     Expect.equal agent.RunCount 2 "exactly the initial turn plus the one failed resume attempt — the sibling tap never runs a third turn"
                     Expect.equal (List.length (server.RequestsFor "editMessageText")) 1 "the sibling tap produces no further edit"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "a Telegram delivery failure AFTER a successful resume (no further approval) is surfaced via OnInvalidOutput, NOT OnResumeFailed — the conversation survives"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 7202L
+
+                    let agent = ScriptedAgent [ PausesFor("req-1", "send_email", []); RepliesWith "sent" ]
+                    let observer = RecordingObserver()
+
+                    let options: MafBridgeOptions =
+                        { MafBridgeOptions.defaults with
+                            Observer = ValueSome(observer :> IMafObserver) }
+
+                    let tools = ToolRegistry.create ()
+                    let config = (TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
+                    use! bridge = Maf.startPollingWith options config agent
+
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Email alice.")
+
+                    let sent = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken = callbackDataAt 0 0 sent
+
+                    // A transient Bot API error on the edit-in-place call — NOT one of the
+                    // "message to edit not found"/"message is not modified" outcomes
+                    // `EditErrorClassification` downgrades to an `EditOutcome` — still propagates
+                    // as a raw exception out of the edit, AFTER the resume itself already
+                    // succeeded.
+                    server.EnqueueError("editMessageText", 500, "Internal Server Error")
+
+                    do! deliverTap server 1 "q-delivery-fail" approveToken chat 1 chat
+                    do! pollUntil 5000 (fun () -> not (List.isEmpty observer.InvalidOutput))
+
+                    Expect.isEmpty observer.ResumeFailures "a post-resume delivery failure is NOT a resume failure — the agent's own turn succeeded"
+
+                    match observer.InvalidOutput with
+                    | [ (_, DeliveryFailed _) ] -> ()
+                    | other -> failtestf "expected exactly one DeliveryFailed InvalidOutput, got %A" other
+
+                    // The conversation survives: a SECOND turn on the SAME chat still runs the
+                    // agent normally — proving `conversations.Drop` was never called for this chat.
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Anything else?")
+                    do! pollUntil 5000 (fun () -> agent.RunCount >= 3)
+                    Expect.equal agent.RunCount 3 "the SECOND turn on this chat still ran the agent — the conversation was not dropped"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "a resume failure abandons and surfaces EACH remaining sibling pending approval for the chat — none is silently dropped"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 7205L
+                    let failure = InvalidOperationException "backend unreachable"
+
+                    let agent =
+                        ScriptedAgent [
+                            PausesForMany [ ("req-1", "send_email", []); ("req-2", "send_sms", []) ]
+                            Throws failure
+                        ]
+
+                    let observer = RecordingObserver()
+
+                    let options: MafBridgeOptions =
+                        { MafBridgeOptions.defaults with
+                            Observer = ValueSome(observer :> IMafObserver) }
+
+                    let tools = ToolRegistry.create ()
+                    let config = (TgBotConfig.create "123456789:TEST-fake-token").WithBaseUrl(server.BaseUrl).WithTools(tools)
+                    use! bridge = Maf.startPollingWith options config agent
+
+                    do! bridge.StartRun(UMX.tag<chatId> chat, "Notify the team.")
+                    Expect.equal (List.length (server.RequestsFor "sendMessage")) 2 "both approvals from the initial turn each get their own message"
+
+                    let firstSend = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken1 = callbackDataAt 0 0 firstSend
+
+                    do! deliverTap server 1 "q-fail-multi" approveToken1 chat 1 chat
+                    do! pollUntil 5000 (fun () -> observer.ResumeFailures |> List.isEmpty |> not)
+
+                    Expect.equal observer.ResumeFailures.Length 1 "the resume failure itself was surfaced exactly once"
+
+                    do! pollUntil 5000 (fun () -> observer.StaleDecisions |> List.isEmpty |> not)
+
+                    Expect.equal
+                        (observer.StaleDecisions |> List.map (fun d -> d.RequestId))
+                        [ "req-2" ]
+                        "the SIBLING pending approval (req-2) was abandoned and surfaced, not silently dropped"
                 }
                 |> Async.AwaitTask
         }

@@ -37,6 +37,16 @@ type PendingApprovals() =
     /// Records a new pending approval — called once, right after its message reaches the wire.
     member _.Add(entry: PendingApproval) : unit = table[(entry.Chat, entry.Request.RequestId)] <- entry
 
+    /// Looks up the entry for `(chat, requestId)` WITHOUT removing it — `ValueNone` on a miss,
+    /// exactly like `TryConsume`. Used to check a presser against `PendingApproval.Owner` BEFORE
+    /// deciding whether to consume: `Bridge.fs`'s `HandleDecision` runs under this chat's own
+    /// `withChatLock`, so a `TryGet` peek here is never raced by a concurrent consume/abandon for
+    /// the SAME key — nothing else touching this table for this chat can run concurrently.
+    member _.TryGet(chat: ChatId, requestId: string) : PendingApproval voption =
+        match table.TryGetValue((chat, requestId)) with
+        | true, entry -> ValueSome entry
+        | false, _ -> ValueNone
+
     /// Removes and returns the entry for `(chat, requestId)` if it is still pending — `ValueNone`
     /// on a miss (already consumed, never existed, or belongs to a different chat).
     /// `ConcurrentDictionary.TryRemove` is itself atomic, so two concurrent callers for the SAME
