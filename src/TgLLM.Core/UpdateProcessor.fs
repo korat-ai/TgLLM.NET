@@ -94,12 +94,19 @@ type UpdateProcessor
         observer: IHookObserver,
         ?toolDispatch: ToolDispatch,
         ?watchdogBudget: TimeSpan,
-        ?clock: Clock
+        ?clock: Clock,
+        ?onMessage: MessageHandler,
+        ?messageObserver: IMessageObserver
     ) =
 
     /// Default ~2s: safely under Telegram's unpublished answer-callback deadline, long enough for
     /// ordinary tool work. Tests override it to keep the watchdog path fast.
     let watchdogBudget = defaultArg watchdogBudget (TimeSpan.FromSeconds 2.0)
+
+    /// Defaults to the dependency-free noop, same convention as `observer`'s own resolution one
+    /// layer up (`TgBot.wireBot`) — every pre-`?onMessage` caller never even looks at this, since
+    /// `MessageReceived` is a no-op when `onMessage` itself is `None` (see `RunAsync` below).
+    let messageObserver = defaultArg messageObserver (NoopMessageObserver() :> IMessageObserver)
 
     /// "Now", injected rather than read ambiently — defaults to real wall-clock
     /// time; tests override it to drive `Expiry.isLive`'s decision deterministically. Feeds BOTH
@@ -322,6 +329,19 @@ type UpdateProcessor
                 ()
         }
 
+    /// The work handed to `IPressDispatcher.Enqueue` for one `MessageReceived` event — mirrors
+    /// `buildWork`'s own shape for a button press: runs the host's `handler`, catching and
+    /// reporting any exception via `messageObserver.OnMessageFailed` so the chat's dispatcher lane
+    /// (which has no `IncomingMessage` to attribute a failure to) never has to.
+    let buildMessageWork (handler: MessageHandler) (message: IncomingMessage) : CancellationToken -> Task =
+        fun workCt ->
+            task {
+                try
+                    do! handler message workCt
+                with ex ->
+                    messageObserver.OnMessageFailed(message, ex)
+            }
+
     /// The owner check for an owner-scoped tool button, run AFTER resolution but BEFORE the
     /// tool is ever enqueued: refuses a press whose user doesn't match `binding.Owner`
     /// (`OwnerScope.isAllowed`) with a notice — the binding's own `DeniedNotice` override if the
@@ -467,6 +487,19 @@ type UpdateProcessor
                             // `processPress` itself.
                             observer.OnHookFailed(press, ex)
                     | AckOnly queryId -> do! processAcknowledgeOnly ct queryId
+                    | MessageReceived message ->
+                        // No `?onMessage` wired: a no-op, byte-identical to every pre-slice-005
+                        // build where this case didn't exist at all. `dispatcher.Enqueue` itself
+                        // is guarded the same way `processPress` is guarded above — a failure to
+                        // ENQUEUE (as opposed to a failure INSIDE the handler, already caught by
+                        // `buildMessageWork`) still can't take down the whole run loop.
+                        match onMessage with
+                        | None -> ()
+                        | Some handler ->
+                            try
+                                do! dispatcher.Enqueue(message.Chat, buildMessageWork handler message)
+                            with ex ->
+                                messageObserver.OnMessageFailed(message, ex)
                 else
                     moving <- false
         }

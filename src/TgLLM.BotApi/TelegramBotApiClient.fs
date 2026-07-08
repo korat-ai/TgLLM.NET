@@ -103,17 +103,19 @@ module Mapping =
         | None -> placeholderLabel
 
     /// One Telegram.Bot `Update` -> `AgentEvent voption` (total; never throws). `ValueNone` only
-    /// when there is no `CallbackQuery` at all (a different update kind entirely — nothing to ack,
-    /// nothing to route). A `CallbackQuery` this library CAN'T map to a `ButtonPress` — no `Data`
-    /// (e.g. a `Game` callback), `Data` that doesn't parse to a canonical `CallbackToken`, or no
-    /// `Message` (the callback query originated from an inline-mode message, or the original
-    /// message is too old for Telegram to attach; `ButtonPress` requires `Chat`/`MessageId`, which
-    /// only the message carries) — still yields `AckOnly query.Id` (review #8) rather than being
-    /// silently dropped: every callback query Telegram sent gets exactly one ack somewhere
-    /// downstream, even when this library has nothing sensible to route it to.
+    /// when the update is neither a `CallbackQuery` nor a plain user text `Message` (e.g. an
+    /// edited message, a channel post, a media message with no text) — a different update kind
+    /// entirely, nothing to ack, nothing to route; media/captions/edits/channel posts keep being
+    /// SKIPPED, not guessed at (slice 005's own additive scope: user TEXT messages only). A
+    /// `CallbackQuery` this library CAN'T map to a `ButtonPress` — no `Data` (e.g. a `Game`
+    /// callback), `Data` that doesn't parse to a canonical `CallbackToken`, or no `Message` (the
+    /// callback query originated from an inline-mode message, or the original message is too old
+    /// for Telegram to attach; `ButtonPress` requires `Chat`/`MessageId`, which only the message
+    /// carries) — still yields `AckOnly query.Id` (review #8) rather than being silently dropped:
+    /// every callback query Telegram sent gets exactly one ack somewhere downstream, even when
+    /// this library has nothing sensible to route it to.
     let toAgentEvent (update: Update) : AgentEvent voption =
         match update.CallbackQuery |> Option.ofObj with
-        | None -> ValueNone
         | Some query ->
             match query.Message |> Option.ofObj, CallbackToken.tryParse query.Data with
             | Some message, ValueSome token ->
@@ -133,6 +135,29 @@ module Mapping =
 
                 ValueSome(ButtonPressed press)
             | _ -> ValueSome(AckOnly(UMX.tag<callbackQueryId> query.Id))
+        | None ->
+            // A plain user text message — the message-side sibling of the callback-query branch
+            // above. `From` is absent on a channel post (which arrives as `update.ChannelPost`,
+            // never `update.Message`, so is already excluded here) but the Bot API schema still
+            // leaves it nullable on an ordinary `Message`; without an identifiable sender there is
+            // no `EndUser` to build, so that update is skipped like any other unmappable one —
+            // never guessed at.
+            match update.Message |> Option.ofObj with
+            | None -> ValueNone
+            | Some message ->
+                match message.Text |> Option.ofObj, message.From |> Option.ofObj with
+                | Some text, Some sender when text.Length > 0 ->
+                    let incoming: IncomingMessage =
+                        { Chat = UMX.tag<chatId> message.Chat.Id
+                          Sender =
+                            { Id = UMX.tag<userId> sender.Id
+                              FirstName = sender.FirstName
+                              Username = sender.Username }
+                          MessageId = UMX.tag<messageId> (int64 message.MessageId)
+                          Text = text }
+
+                    ValueSome(MessageReceived incoming)
+                | _ -> ValueNone
 
 /// Classifies Telegram's two well-known, non-fatal `editMessageText`/`editMessageReplyMarkup`
 /// errors into an `EditOutcome` instead of letting them propagate as an exception.

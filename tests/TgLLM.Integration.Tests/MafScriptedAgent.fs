@@ -25,6 +25,10 @@ type ScriptedStep =
     | EndsEmpty
     /// The agent throws while producing this turn (or resuming into it).
     | Throws of error: exn
+    /// Delays this long BEFORE producing `step` — simulates a slow model/tool-backend turn (e.g.
+    /// a resume that takes longer than the deferred-ack watchdog budget), so a test can assert the
+    /// tap is still acked promptly while the continuation is still running.
+    | Delayed of delay: TimeSpan * step: ScriptedStep
 
 /// `AgentSession` has only a protected constructor — a trivial subclass with no state of its own
 /// is the whole seam; the script itself (not the session) drives what a turn returns.
@@ -49,6 +53,25 @@ type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit) =
     let onResume = defaultArg onResume (fun _ -> ())
     let runCount = ref 0
 
+    /// Produces one `AgentResponse` for `step`, recursing through `Delayed`'s wrapped step after
+    /// awaiting its delay — kept separate from `RunCoreAsync` itself so `Delayed` can wrap ANY
+    /// other step (including, in principle, another `Delayed`) without duplicating the match.
+    let rec runStep (step: ScriptedStep) : Task<AgentResponse> =
+        task {
+            match step with
+            | RepliesWith text -> return AgentResponse(ChatMessage(ChatRole.Assistant, text))
+            | EndsEmpty -> return AgentResponse(ChatMessage(ChatRole.Assistant, ""))
+            | Throws error -> return raise error
+            | PausesFor(requestId, toolName, args) ->
+                let call = FunctionCallContent("call-1", toolName, toArguments args)
+                let request = ToolApprovalRequestContent(requestId, call)
+                let contents = ResizeArray<AIContent>[ request :> AIContent ]
+                return AgentResponse(ChatMessage(ChatRole.Assistant, contents))
+            | Delayed(delay, inner) ->
+                do! Task.Delay delay
+                return! runStep inner
+        }
+
     /// How many turns (`RunCoreAsync` calls) this agent has actually processed — lets a test assert
     /// no extra resume happened beyond what it expected.
     member _.RunCount: int = runCount.Value
@@ -72,15 +95,7 @@ type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit) =
             if queue.Count = 0 then
                 return AgentResponse(ChatMessage(ChatRole.Assistant, ""))
             else
-                match queue.Dequeue() with
-                | RepliesWith text -> return AgentResponse(ChatMessage(ChatRole.Assistant, text))
-                | EndsEmpty -> return AgentResponse(ChatMessage(ChatRole.Assistant, ""))
-                | Throws error -> return raise error
-                | PausesFor(requestId, toolName, args) ->
-                    let call = FunctionCallContent("call-1", toolName, toArguments args)
-                    let request = ToolApprovalRequestContent(requestId, call)
-                    let contents = ResizeArray<AIContent>[ request :> AIContent ]
-                    return AgentResponse(ChatMessage(ChatRole.Assistant, contents))
+                return! runStep (queue.Dequeue())
         }
 
     override _.CreateSessionCoreAsync(_ct: CancellationToken) : ValueTask<AgentSession> =

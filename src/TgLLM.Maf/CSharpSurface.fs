@@ -11,6 +11,7 @@ open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 open Microsoft.Agents.AI
+open Microsoft.Extensions.AI
 open FSharp.UMX
 open TgLLM.Core
 open TgLLM.FSharp

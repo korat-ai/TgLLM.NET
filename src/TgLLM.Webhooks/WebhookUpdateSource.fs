@@ -50,14 +50,15 @@ type WebhookUpdateSource() =
     let channel =
         Channel.CreateUnbounded<AgentEvent>(UnboundedChannelOptions(SingleReader = true, SingleWriter = false))
 
-    /// Map one pushed `Update` to a domain event and buffer it. An update with no `CallbackQuery` at
-    /// all (`ValueNone`) is dropped, matching the long-polling source. A `CallbackQuery` this
-    /// library can't route to a `ButtonPress` (review #8: non-canonical `Data`, or no originating
-    /// `Message`) is NOT dropped — `Mapping.toAgentEvent` now yields `AckOnly queryId` for
-    /// it, which flows through this same channel like any other `AgentEvent` and reaches
-    /// `UpdateProcessor`'s ack-only path — this transport needs no code change of its own for that
-    /// fix; it falls out of sharing `Mapping.toAgentEvent` with `LongPollingUpdateSource`. Returns
-    /// quickly so the HTTP handler can 200.
+    /// Map one pushed `Update` to a domain event and buffer it. An update mappable to neither a
+    /// `CallbackQuery` outcome nor a plain user text `Message` (`ValueNone`) is dropped, matching
+    /// the long-polling source. A `CallbackQuery` this library can't route to a `ButtonPress`
+    /// (review #8: non-canonical `Data`, or no originating `Message`) is NOT dropped —
+    /// `Mapping.toAgentEvent` yields `AckOnly queryId` for it; a user text message is NOT dropped
+    /// either — it yields `MessageReceived` — both flow through this same channel like any other
+    /// `AgentEvent` and reach `UpdateProcessor`'s own handling — this transport needs no code
+    /// change of its own for either, since both fall out of sharing `Mapping.toAgentEvent` with
+    /// `LongPollingUpdateSource`. Returns quickly so the HTTP handler can 200.
     member _.Ingest(update: Update, ct: CancellationToken) : ValueTask =
         match Mapping.toAgentEvent update with
         | ValueSome event -> channel.Writer.WriteAsync(event, ct)

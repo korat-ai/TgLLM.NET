@@ -39,6 +39,17 @@ type LoggingHookObserver(logger: ILogger) =
         member _.OnRunLoopFailed(error: exn) =
             logger.LogError(error, "The update-ingestion run loop stopped unexpectedly; this bot is no longer processing updates")
 
+/// Bridges the Core message-seam observability to an `ILogger` — the message-side counterpart to
+/// `LoggingHookObserver`.
+type LoggingMessageObserver(logger: ILogger) =
+    interface IMessageObserver with
+        member _.OnMessageFailed(message: IncomingMessage, error: exn) =
+            logger.LogError(
+                error,
+                "OnMessage handler for chat {Chat}, message {MessageId} failed",
+                [| UMX.untag message.Chat :> obj; UMX.untag message.MessageId :> obj |]
+            )
+
 /// A button being described by the agent: a raw (unvalidated) label plus the handler to run when it
 /// is tapped. Labels are validated by `Keyboard.create`, so an invalid label surfaces as an
 /// `Error`, never an exception (the F# idiom; the C# façade throws instead — Principle II).
@@ -94,7 +105,13 @@ type CommonConfig =
       /// `IdleChatEviction`, `None` here does NOT mean "off" — `IBindingStore.EvictExpired` has no
       /// other production caller, so the sweep itself always runs; `None` (the default) just uses
       /// `BindingEvictionSweeper`'s own built-in interval. Only the INTERVAL is configurable.
-      BindingEvictionInterval: TimeSpan option }
+      BindingEvictionInterval: TimeSpan option
+      /// The host's reaction to an incoming user text message (the Core seam's `MessageHandler`).
+      /// `None` (the default) keeps every pre-slice-005 bot's behavior byte-identical — a
+      /// `MessageReceived` event reaching `UpdateProcessor` with no handler wired is a no-op.
+      /// Config-time only (see `WithOnMessage`'s own doc comment for why): a bot already ingesting
+      /// updates cannot late-bind this.
+      OnMessage: MessageHandler option }
 
 module CommonConfig =
     let create (botToken: string) : CommonConfig =
@@ -105,7 +122,8 @@ module CommonConfig =
           BindingStore = None
           IdleChatEviction = None
           Clock = None
-          BindingEvictionInterval = None }
+          BindingEvictionInterval = None
+          OnMessage = None }
 
     let withBaseUrl (url: string) (c: CommonConfig) = { c with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger.
@@ -124,6 +142,9 @@ module CommonConfig =
     /// `BindingEvictionSweeper`'s own built-in interval. The sweep itself runs regardless of
     /// whether this is ever set.
     let withBindingEvictionInterval (interval: TimeSpan) (c: CommonConfig) = { c with BindingEvictionInterval = Some interval }
+    /// Answer an incoming user text message with `handler`, run on that message's chat's
+    /// dispatcher lane (serialized with that chat's own button presses, in arrival order).
+    let withOnMessage (handler: MessageHandler) (c: CommonConfig) = { c with OnMessage = Some handler }
 
 /// Long-polling bot configuration. `WithBaseUrl` overrides the Bot API endpoint — for a local Bot
 /// API server, Telegram's test environment, or pointing tests at a fake server.
@@ -147,6 +168,8 @@ type TgBotConfig =
 
     member this.WithBindingEvictionInterval(interval: TimeSpan) =
         { this with Common = this.Common |> CommonConfig.withBindingEvictionInterval interval }
+
+    member this.WithOnMessage(handler: MessageHandler) = { this with Common = this.Common |> CommonConfig.withOnMessage handler }
 
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
@@ -176,6 +199,8 @@ type TgWebhookConfig =
 
     member this.WithBindingEvictionInterval(interval: TimeSpan) =
         { this with Common = this.Common |> CommonConfig.withBindingEvictionInterval interval }
+
+    member this.WithOnMessage(handler: MessageHandler) = { this with Common = this.Common |> CommonConfig.withOnMessage handler }
 
 /// Internal signal ONLY: `TgBot.EditKeyboardPlan`'s own `send` closure to `ToolKeyboardOps.deliver`
 /// raises this when the edit classifies as `EditNotFound`, so it reaches `deliver`'s EXISTING
@@ -510,6 +535,14 @@ type TgBot
             | Some logger -> LoggingHookObserver logger :> IHookObserver
             | None -> NoopHookObserver() :> IHookObserver
 
+        // Same "bridge to the configured logger, else noop" resolution as `observer` above, for
+        // the message-side seam. Built regardless of whether `common.OnMessage` is set — `Some`'s
+        // own cost is nothing until a `MessageReceived` event actually reaches `UpdateProcessor`.
+        let messageObserver =
+            match common.Logger with
+            | Some logger -> LoggingMessageObserver logger :> IMessageObserver
+            | None -> NoopMessageObserver() :> IMessageObserver
+
         let toolDispatch = common.Tools |> Option.map (fun tools -> ToolDispatch(tools.Registry, bindingStore, tracker))
         // Resolved once here (not read ambiently from `DateTimeOffset.UtcNow`) so `SendKeyboardPlan`
         // stamps `expiresIn` against the SAME "now" `UpdateProcessor` uses to decide whether a press
@@ -525,7 +558,17 @@ type TgBot
         let evictionSweeper = new BindingEvictionSweeper(bindingStore, clock, ?interval = common.BindingEvictionInterval)
 
         let processor =
-            UpdateProcessor(source, store, api, dispatcher, observer, ?toolDispatch = toolDispatch, clock = clock)
+            UpdateProcessor(
+                source,
+                store,
+                api,
+                dispatcher,
+                observer,
+                ?toolDispatch = toolDispatch,
+                clock = clock,
+                ?onMessage = common.OnMessage,
+                messageObserver = messageObserver
+            )
         let cts = new CancellationTokenSource()
 
         // A faulted run loop must be surfaced via `observer`, not silently swallowed at `Dispose` —

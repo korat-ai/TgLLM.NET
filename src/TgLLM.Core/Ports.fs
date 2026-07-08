@@ -151,3 +151,24 @@ type IHookObserver =
     /// `RunAsync` so it can never reach here). MUST be surfaced here instead of silently swallowed
     /// at shutdown/dispose.
     abstract OnRunLoopFailed: error: exn -> unit
+
+/// The host-supplied reaction to an incoming text message (additive, message-side sibling of
+/// `Hook`). Runs on the message's chat's dispatcher lane (`IPressDispatcher.Enqueue`) — serialized
+/// with that chat's button presses, in arrival order.
+type MessageHandler = IncomingMessage -> CancellationToken -> Task
+
+/// Message-side observability seam. A NEW, small interface rather than new members on
+/// `IHookObserver`: that interface is public and host-implementable, so adding a member to it
+/// would break every existing implementor — an additive capability needs its own interface.
+/// Default: `NoopMessageObserver`. Façades bridge this to `ILogger`, exactly like `IHookObserver`.
+type IMessageObserver =
+    /// The host's `MessageHandler` threw while handling this message. Caught by the enqueued work
+    /// thunk (`UpdateProcessor`), same containment contract as `IHookObserver.OnHookFailed` for a
+    /// button press: the chat's dispatcher lane keeps running afterward.
+    abstract OnMessageFailed: message: IncomingMessage * error: exn -> unit
+
+/// Default `IMessageObserver`: silently drops everything — mirrors `NoopHookObserver`. Ships in
+/// Core so a consumer never has to supply one just to wire a `MessageHandler`.
+type NoopMessageObserver() =
+    interface IMessageObserver with
+        member _.OnMessageFailed(_message: IncomingMessage, _error: exn) = ()

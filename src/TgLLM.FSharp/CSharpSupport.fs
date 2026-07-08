@@ -7,6 +7,7 @@ open System
 open System.Collections.Generic
 open System.Text.Json
 open System.Text.Json.Nodes
+open System.Threading
 open System.Threading.Tasks
 open TgLLM.Core
 open TgLLM.A2UI
@@ -128,6 +129,18 @@ type ToolRegistrations =
 
             registry.Register(toolName, (fun ctx -> handler.Invoke ctx), ?metadata = metadata)
         | Error e -> invalidArg (nameof name) $"invalid tool name ({e})"
+
+/// C#-facing bridge for the message seam: converts a plain BCL
+/// `Func<IncomingMessage, CancellationToken, Task>` into the F# curried `MessageHandler`
+/// (`IncomingMessage -> CancellationToken -> Task`), so the C# façade never has to build an
+/// `FSharpFunc` — let alone the curried, doubly-nested shape `MessageHandler` itself is — by hand.
+/// Takes the raw Core `IncomingMessage` (not a C#-only DTO — `TgLLM.FSharp` has no dependency on
+/// `TgLLM.CSharp`): the façade's own `TelegramAgent.cs` wraps its public
+/// `Func<IncomingMessageInfo, CancellationToken, Task>` around a call to this, translating
+/// `IncomingMessage` to its own `IncomingMessageInfo` DTO on ITS side of the boundary.
+type MessageHandlers =
+    static member Wrap(handler: Func<IncomingMessage, CancellationToken, Task>) : MessageHandler =
+        fun message ct -> handler.Invoke(message, ct)
 
 /// C#-facing bridge for building a neutral Tool Router plan: the C# façade's
 /// `PlanRowBuilder.Tool`/`.Url` call `Plan.tool`/`Plan.toolWithArg`/`Plan.url` directly (plain

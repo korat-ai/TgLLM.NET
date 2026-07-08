@@ -15,10 +15,18 @@
     compile next, in either relative order. PendingApprovals.fs is the first file to reference a real
     MAF type (ToolApprovalRequestContent), so it compiles after the pure layer. Conversations.fs
     (per-chat AgentSession) and ApprovalDetection.fs (response -> pending prompts) are independent of
-    PendingApprovals.fs but both need MAF types, so they follow it. Bridge.fs composes every prior
-    file (registers the tools, renders, resumes, wires start functions) and so compiles last among
-    the F# surface; CSharpSurface.fs wraps Bridge.fs's public members behind a C#-idiomatic surface
-    and therefore compiles last of all.
+    PendingApprovals.fs but both need MAF types, so they follow it. Projection.fs (AIFunction ->
+    ToolRegistry) only needs Types.fs's ProjectionProblem/ProjectionReport/IMafObserver and
+    TgLLM.FSharp's ToolRegistry — independent of the approval pipeline — so it compiles here,
+    alongside the other MAF-typed-but-approval-independent files. Projection.fs ALSO holds its own
+    C#-facing MafTools/ToolProjectionResult types (rather than CSharpSurface.fs, where every other
+    C#-facing type lives): the F# compiler rejects a module and a type of the same simple name
+    declared in two DIFFERENT files of one assembly (FS0250), even though it accepts them declared
+    together in one file — MafTools needs to be both an F# module (`project`) and a C#-facing
+    static class (`Project`), so the two must stay co-located. Bridge.fs composes every prior file
+    (registers the tools, renders, resumes, wires start functions) and so compiles last among the
+    F# surface; CSharpSurface.fs wraps Bridge.fs's public members behind a C#-idiomatic surface and
+    therefore compiles last of all.
   -->
   <ItemGroup>
     <Compile Include="ApprovalDescriptor.fs" />
@@ -28,6 +36,7 @@
     <Compile Include="PendingApprovals.fs" />
     <Compile Include="Conversations.fs" />
     <Compile Include="ApprovalDetection.fs" />
+    <Compile Include="Projection.fs" />
     <Compile Include="Bridge.fs" />
     <Compile Include="CSharpSurface.fs" />
   </ItemGroup>

@@ -275,6 +275,26 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
             })
         :> Task
 
+    /// The bridge's text-turn handler — wired as the Core seam's `MessageHandler` by
+    /// `Maf.startPolling`/`startWebhook`'s shared build path (`config.WithOnMessage`, config-time,
+    /// before the bot starts consuming updates). An incoming user text message is a
+    /// MESSAGE-INITIATED turn: `RunOwner.resolve` defaults any approval it raises to
+    /// `User message.Sender.Id`, the message's own sender — never the bridge's configured
+    /// `defaultOwner` (that default is for HOST-initiated runs only, `StartRun`'s own fallback).
+    /// Serialized on the SAME per-chat lock as `StartRun`/`HandleDecision` — this bridge's
+    /// `AgentSession` is a single-writer resource, so a text turn, a host-initiated run, and a
+    /// decision resume for one chat can never touch it concurrently, regardless of which one a
+    /// host or user triggers first.
+    member internal _.HandleIncomingMessage(message: IncomingMessage) : Task =
+        withChatLock message.Chat (fun () ->
+            task {
+                let! conversation = conversations.GetOrCreate(message.Chat, (fun () -> agent.CreateSessionAsync cts.Token))
+                let resolvedOwner = RunOwner.resolve None (Some message.Sender.Id) message.Chat
+                let! response = agent.RunAsync(message.Text, conversation.Session, cancellationToken = cts.Token)
+                do! processInitialResponse message.Chat resolvedOwner response
+            })
+        :> Task
+
     /// Registers the decision tools into `bot`'s Tool Router — called once, by `Maf.startPolling`/
     /// `startWebhook`'s shared build path, right after construction and before either returns.
     member internal this.RegisterTools(tools: ToolRegistry) : unit =
@@ -358,20 +378,55 @@ module Maf =
 
     /// Builds `bot` from `config` (requires `.WithTools`), registers `maf-approve`/`maf-reject`
     /// into its Tool Router, and returns the live bridge.
+    ///
+    /// The Core seam's `OnMessage` is config-time (`CommonConfig.OnMessage`'s own doc comment: a
+    /// bot starts consuming updates the instant it starts, so a late-bound handler would race the
+    /// first message) — but the handler needs to call INTO the `MafBridge` this very function is
+    /// still building, which doesn't exist until AFTER the bot does (`MafBridge`'s constructor
+    /// takes `bot: TgBot`). Resolved with a mutable local the closure below captures by reference:
+    /// the handler is wired into `config` (and therefore live from the bot's very first ingested
+    /// update) before `TgBot.startPolling` is ever called, while the cell it reads is only
+    /// populated once the bridge itself exists, a few synchronous calls later — the same "narrow,
+    /// practically-instant, not literally atomic" window `BridgeBuild.build`'s own tool
+    /// registration already accepts for `maf-approve`/`maf-reject` (both land well before the pump
+    /// loop could plausibly have a real update to hand off). A message that somehow arrived in
+    /// that window is a no-op (`Task.CompletedTask`), never a crash.
     let startPollingWith (options: MafBridgeOptions) (config: TgBotConfig) (agent: AIAgent) : Task<MafBridge> =
         task {
-            let! bot = TgBot.startPolling config
-            return BridgeBuild.build bot agent options
+            let mutable bridgeCell: MafBridge option = None
+
+            let handler: MessageHandler =
+                fun message _ct ->
+                    match bridgeCell with
+                    | Some bridge -> bridge.HandleIncomingMessage message
+                    | None -> Task.CompletedTask
+
+            let! bot = TgBot.startPolling (config.WithOnMessage handler)
+            let bridge = BridgeBuild.build bot agent options
+            bridgeCell <- Some bridge
+            return bridge
         }
 
     /// Zero-config variant of `startPollingWith`.
     let startPolling (config: TgBotConfig) (agent: AIAgent) : Task<MafBridge> =
         startPollingWith MafBridgeOptions.defaults config agent
 
+    /// The webhook-transport counterpart to `startPollingWith` — same config-time `OnMessage`
+    /// wiring, same reasoning (see that function's own doc comment).
     let startWebhookWith (options: MafBridgeOptions) (config: TgWebhookConfig) (agent: AIAgent) : Task<MafBridge> =
         task {
-            let! bot = TgBot.startWebhook config
-            return BridgeBuild.build bot agent options
+            let mutable bridgeCell: MafBridge option = None
+
+            let handler: MessageHandler =
+                fun message _ct ->
+                    match bridgeCell with
+                    | Some bridge -> bridge.HandleIncomingMessage message
+                    | None -> Task.CompletedTask
+
+            let! bot = TgBot.startWebhook (config.WithOnMessage handler)
+            let bridge = BridgeBuild.build bot agent options
+            bridgeCell <- Some bridge
+            return bridge
         }
 
     /// Zero-config variant of `startWebhookWith`.

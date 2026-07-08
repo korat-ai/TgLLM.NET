@@ -217,6 +217,25 @@ module TelegramJson =
         }
         """
 
+    /// One plain user TEXT `message` update with the minimum fields Bot API requires on
+    /// `Update`/`Message`/`Chat`/`User` for a text message to round-trip through
+    /// `Mapping.toAgentEvent` as `MessageReceived`. `text` must not itself need JSON escaping
+    /// (callers keep it to plain ASCII with no quotes/backslashes) — this is a test builder, not a
+    /// general-purpose JSON writer.
+    let textMessageUpdate (updateId: int) (chatId: int64) (messageId: int) (userId: int64) (firstName: string) (text: string) : string =
+        $$"""
+        {
+          "update_id": {{updateId}},
+          "message": {
+            "message_id": {{messageId}},
+            "date": 0,
+            "chat": { "id": {{chatId}}, "type": "private" },
+            "from": { "id": {{userId}}, "is_bot": false, "first_name": "{{firstName}}" },
+            "text": "{{text}}"
+          }
+        }
+        """
+
     /// Wraps a list of already-built update JSON objects into a `getUpdates`-shaped `Update[]`
     /// `result` array.
     let batch (updates: string list) : string = "[" + String.concat "," updates + "]"

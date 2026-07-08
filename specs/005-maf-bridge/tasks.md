@@ -95,14 +95,14 @@ with matching name/description/schema; an invalid/duplicate declaration is surfa
 
 ### Tests for User Story 2 (write first, MUST FAIL) ⚠️
 
-- [ ] T025 [P] [US2] Property + example tests for the projection field mapping in `tests/TgLLM.Maf.Tests/ProjectionTests.fs` — `Name`→`ToolName`, `Description`→`ToolMetadata.Description` (empty→`None`), `JsonSchema.GetRawText()`→`ArgSchema` verbatim; manifest parity; invalid name / duplicate-within-set → `ProjectionProblem`, siblings still register; mirrored to `IMafObserver.OnProjectionProblem`. MUST FAIL.
-- [ ] T026 [P] [US2] Integration test that a projected tool is actually invokable via the registry handler (`AIFunctionArguments` from the structured arg → `InvokeAsync` → JSON reply) in `tests/TgLLM.Integration.Tests/MafProjectionInvokeTests.fs`. MUST FAIL.
+- [X] T025 [P] [US2] Property + example tests for the projection field mapping in `tests/TgLLM.Maf.Tests/ProjectionTests.fs` — `Name`→`ToolName`, `Description`→`ToolMetadata.Description` (empty→`None`), `JsonSchema.GetRawText()`→`ArgSchema` verbatim; manifest parity; invalid name / duplicate-within-set → `ProjectionProblem`, siblings still register; mirrored to `IMafObserver.OnProjectionProblem`. MUST FAIL.
+- [X] T026 [P] [US2] Integration test that a projected tool is actually invokable via the registry handler (`AIFunctionArguments` from the structured arg → `InvokeAsync` → JSON reply) in `tests/TgLLM.Integration.Tests/MafProjectionInvokeTests.fs`. MUST FAIL.
 
 ### Implementation for User Story 2
 
-- [ ] T027 [US2] Implement `MafTools.project : ToolRegistry → AIFunction seq → ProjectionReport` in `src/TgLLM.Maf/Projection.fs` — per-tool `Result`, siblings register, problems collected + mirrored to the observer; the registered handler parses the arg into `AIFunctionArguments` and calls `InvokeAsync`.
-- [ ] T028 [US2] Confirm T025–T026 green; manifest parity verified; existing suite green.
-- [ ] T028a [P] [US2] Add the C#-idiomatic `MafTools.Project(ToolRegistry, IEnumerable<AIFunction>) : ToolProjectionResult` static over the F# `MafTools.project` in `src/TgLLM.Maf/CSharpSurface.fs` — C#-clean result type, no F# idioms; a C# projection test in `tests/TgLLM.CSharp.Tests/MafToolsTests.cs`.
+- [X] T027 [US2] Implement `MafTools.project : ToolRegistry → AIFunction seq → ProjectionReport` in `src/TgLLM.Maf/Projection.fs` — per-tool `Result`, siblings register, problems collected + mirrored to the observer; the registered handler parses the arg into `AIFunctionArguments` and calls `InvokeAsync`.
+- [X] T028 [US2] Confirm T025–T026 green; manifest parity verified; existing suite green.
+- [X] T028a [P] [US2] Add the C#-idiomatic `MafTools.Project(ToolRegistry, IEnumerable<AIFunction>) : ToolProjectionResult` static over the F# `MafTools.project` in `src/TgLLM.Maf/CSharpSurface.fs` — C#-clean result type, no F# idioms; a C# projection test in `tests/TgLLM.CSharp.Tests/MafToolsTests.cs`.
 
 **Checkpoint**: US1 + US2 both work independently.
 
@@ -118,19 +118,19 @@ answered in arrival order; a `MessageReceived` with no `OnMessage` wired is a no
 
 ### Tests for User Story 3 (write first, MUST FAIL) ⚠️
 
-- [ ] T029 [P] [US3] Core-seam tests in `tests/TgLLM.Integration.Tests/MessageSeamTests.fs` — a user text `Update` maps to `AgentEvent.MessageReceived` (both transports, shared mapping); with no `?onMessage`, it is a no-op and every slice-1/2/3/4 behavior is byte-identical; a handler throw → `IMessageObserver.OnMessageFailed`, contained. MUST FAIL.
-- [ ] T030 [P] [US3] Integration test for the text turn in `tests/TgLLM.Integration.Tests/MafTextTurnTests.fs` — incoming text → `RunAsync` → reply sent in the same chat; two messages in one chat processed in arrival order on the same lane; a turn that instead raises an approval hands off to the US1 flow. MUST FAIL.
-- [ ] T031 [P] [US3] C# idiom-canary + text-turn smoke in `tests/TgLLM.CSharp.Tests/MafBridgeTests.cs` — the leaf's C# surface and the `TelegramAgentOptions.OnMessage` delta expose no `FSharpFunc`/`FSharpOption`/`FSharpValueOption`; a basic C# text turn works. MUST FAIL.
+- [X] T029 [P] [US3] Core-seam tests in `tests/TgLLM.Integration.Tests/MessageSeamTests.fs` — a user text `Update` maps to `AgentEvent.MessageReceived` (both transports, shared mapping); with no `?onMessage`, it is a no-op and every slice-1/2/3/4 behavior is byte-identical; a handler throw → `IMessageObserver.OnMessageFailed`, contained. MUST FAIL.
+- [X] T030 [P] [US3] Integration test for the text turn in `tests/TgLLM.Integration.Tests/MafTextTurnTests.fs` — incoming text → `RunAsync` → reply sent in the same chat; two messages in one chat processed in arrival order on the same lane; a turn that instead raises an approval hands off to the US1 flow. MUST FAIL.
+- [X] T031 [P] [US3] C# idiom-canary + text-turn smoke in `tests/TgLLM.CSharp.Tests/MafBridgeTests.cs` — the leaf's C# surface and the `TelegramAgentOptions.OnMessage` delta expose no `FSharpFunc`/`FSharpOption`/`FSharpValueOption`; a basic C# text turn works. MUST FAIL.
 
 ### Implementation for User Story 3
 
-- [ ] T032 [US3] Add the Core seam (MAF-agnostic, additive) in `src/TgLLM.Core/Domain.fs` — `IncomingMessage` record + `AgentEvent.MessageReceived` case (existing cases untouched).
-- [ ] T033 [US3] Add `MessageHandler` + `IMessageObserver` (Noop default) in `src/TgLLM.Core/Ports.fs` (new small interface — do NOT grow `IHookObserver`).
-- [ ] T034 [US3] Extend `Mapping.toAgentEvent` in `src/TgLLM.Core/UpdateProcessor.fs` to map a user-text `Message` `Update` → `MessageReceived` (all other kinds still skipped); add `?onMessage`/`?messageObserver` optional params to `UpdateProcessor`, enqueuing `MessageReceived` on the SAME per-chat lane (`src/TgLLM.Core/Dispatcher.fs`) as taps, exceptions → `OnMessageFailed`.
-- [ ] T035 [US3] Add the façade delta in `src/TgLLM.FSharp/TgBot.fs` — `CommonConfig.OnMessage: MessageHandler option` + `WithOnMessage` on BOTH `TgBotConfig` and `TgWebhookConfig` (lockstep).
-- [ ] T036 [US3] Add the C# façade delta in `src/TgLLM.CSharp/TelegramAgent.cs` — `IncomingMessageInfo` DTO (long ids, no UMX leak) + `TelegramAgentOptions.OnMessage : Func<IncomingMessageInfo, CancellationToken, Task>?` (BCL delegate).
-- [ ] T037 [US3] Wire the bridge's text-turn handler into the start functions in `src/TgLLM.Maf/Bridge.fs` — `config.WithOnMessage(bridge handler)` at startup (config-time wiring, since a running bot cannot late-bind); incoming text → `Conversations.GetOrCreate` → `RunAsync` → reply / hand off to the approval flow.
-- [ ] T038 [US3] Confirm T029–T031 green; the full suite green with the Core seam additive (slices 1–4 byte-identical).
+- [X] T032 [US3] Add the Core seam (MAF-agnostic, additive) in `src/TgLLM.Core/Domain.fs` — `IncomingMessage` record + `AgentEvent.MessageReceived` case (existing cases untouched).
+- [X] T033 [US3] Add `MessageHandler` + `IMessageObserver` (Noop default) in `src/TgLLM.Core/Ports.fs` (new small interface — do NOT grow `IHookObserver`).
+- [X] T034 [US3] Extend `Mapping.toAgentEvent` in `src/TgLLM.Core/UpdateProcessor.fs` to map a user-text `Message` `Update` → `MessageReceived` (all other kinds still skipped); add `?onMessage`/`?messageObserver` optional params to `UpdateProcessor`, enqueuing `MessageReceived` on the SAME per-chat lane (`src/TgLLM.Core/Dispatcher.fs`) as taps, exceptions → `OnMessageFailed`.
+- [X] T035 [US3] Add the façade delta in `src/TgLLM.FSharp/TgBot.fs` — `CommonConfig.OnMessage: MessageHandler option` + `WithOnMessage` on BOTH `TgBotConfig` and `TgWebhookConfig` (lockstep).
+- [X] T036 [US3] Add the C# façade delta in `src/TgLLM.CSharp/TelegramAgent.cs` — `IncomingMessageInfo` DTO (long ids, no UMX leak) + `TelegramAgentOptions.OnMessage : Func<IncomingMessageInfo, CancellationToken, Task>?` (BCL delegate).
+- [X] T037 [US3] Wire the bridge's text-turn handler into the start functions in `src/TgLLM.Maf/Bridge.fs` — `config.WithOnMessage(bridge handler)` at startup (config-time wiring, since a running bot cannot late-bind); incoming text → `Conversations.GetOrCreate` → `RunAsync` → reply / hand off to the approval flow.
+- [X] T038 [US3] Confirm T029–T031 green; the full suite green with the Core seam additive (slices 1–4 byte-identical).
 
 **Checkpoint**: US1 + US2 + US3 independently functional.
 
@@ -144,13 +144,13 @@ answered in arrival order; a `MessageReceived` with no `OnMessage` wired is a no
 
 ### Tests for User Story 4 (write first, MUST FAIL) ⚠️
 
-- [ ] T039 [P] [US4] Observability tests in `tests/TgLLM.Integration.Tests/MafObservabilityTests.fs` — post-restart / unknown decision → `OnStaleDecision` (descriptor still readable), acked, no resume; malformed decision arg → `OnMalformedDecision`; empty turn (no text, no approval) → `OnEmptyTurn`, no empty message sent; reply over the Bot API length limit → `OnInvalidOutput`, turn not crashed. MUST FAIL.
-- [ ] T040 [P] [US4] Test the immediate-ack timing + approval expiry in `tests/TgLLM.Integration.Tests/MafAckTimingTests.fs` — a slow (multi-second) resume is acked within the spinner budget (deferred-ack); an expired decision keyboard tap lands in the stale path. MUST FAIL.
+- [X] T039 [P] [US4] Observability tests in `tests/TgLLM.Integration.Tests/MafObservabilityTests.fs` — post-restart / unknown decision → `OnStaleDecision` (descriptor still readable), acked, no resume; malformed decision arg → `OnMalformedDecision`; empty turn (no text, no approval) → `OnEmptyTurn`, no empty message sent; reply over the Bot API length limit → `OnInvalidOutput`, turn not crashed. MUST FAIL.
+- [X] T040 [P] [US4] Test the immediate-ack timing + approval expiry in `tests/TgLLM.Integration.Tests/MafAckTimingTests.fs` — a slow (multi-second) resume is acked within the spinner budget (deferred-ack); an expired decision keyboard tap lands in the stale path. MUST FAIL.
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Complete the surfacing in `src/TgLLM.Maf/Bridge.fs` — `OnStaleDecision` on a `TryConsume` miss, `OnMalformedDecision` on descriptor parse failure, `OnEmptyTurn` + suppress an empty send, `OnInvalidOutput` on send-side validation (`ApprovalRendering.validate` / over-long reply); honor `MafBridgeOptions.ApprovalExpiry`.
-- [ ] T042 [US4] Completeness sweep: assert (in code review + a coverage test) that EVERY `IMafObserver` member has a triggering path and no failure path throws out of the run loop; confirm T039–T040 + full suite green.
+- [X] T041 [US4] Complete the surfacing in `src/TgLLM.Maf/Bridge.fs` — `OnStaleDecision` on a `TryConsume` miss, `OnMalformedDecision` on descriptor parse failure, `OnEmptyTurn` + suppress an empty send, `OnInvalidOutput` on send-side validation (`ApprovalRendering.validate` / over-long reply); honor `MafBridgeOptions.ApprovalExpiry`.
+- [X] T042 [US4] Completeness sweep: assert (in code review + a coverage test) that EVERY `IMafObserver` member has a triggering path and no failure path throws out of the run loop; confirm T039–T040 + full suite green.
 
 **Checkpoint**: the loop is hardened and fully observable.
 

@@ -45,6 +45,50 @@ public sealed class TelegramAgentOptions
     /// deterministic tests of a host's own expiry logic, not something a production bot normally
     /// needs. Mirrors the F# façade's <c>CommonConfig.Clock</c>/<c>WithClock</c>.</summary>
     public Func<DateTimeOffset>? Clock { get; init; }
+
+    /// <summary>React to an incoming user text message, run on that message's chat's dispatcher
+    /// lane (serialized with that chat's own button presses, in arrival order). <c>null</c> (the
+    /// default) means this bot does not answer text messages at all — every pre-slice-005 bot's
+    /// behavior stays byte-identical. Config-time only: a bot already ingesting updates cannot
+    /// late-bind a handler, so this must be set before <see cref="TelegramAgent.StartPollingAsync"/>/
+    /// <see cref="TelegramAgent.StartWebhookAsync"/> is called. Mirrors the F# façade's
+    /// <c>CommonConfig.OnMessage</c>/<c>WithOnMessage</c>.</summary>
+    public Func<IncomingMessageInfo, CancellationToken, Task>? OnMessage { get; init; }
+}
+
+/// <summary>An incoming user text message, as seen by <see cref="TelegramAgentOptions.OnMessage"/>
+/// — the message-side sibling of <see cref="PressContext"/>. Plain BCL shapes only (<c>long</c>
+/// ids, no UMX-tagged/F#-idiomatic type), mirroring how <see cref="PressContext"/> itself exposes
+/// <c>Chat</c>/<c>MessageId</c> as plain <c>long</c>.</summary>
+public sealed class IncomingMessageInfo
+{
+    /// <summary>The chat the message was sent in.</summary>
+    public long ChatId { get; }
+
+    /// <summary>The sender's user id.</summary>
+    public long SenderId { get; }
+
+    /// <summary>The sender's first name.</summary>
+    public string SenderFirstName { get; }
+
+    /// <summary>The sender's @username, if they have one.</summary>
+    public string? SenderUsername { get; }
+
+    /// <summary>The message's own id (for e.g. a reply that quotes it).</summary>
+    public long MessageId { get; }
+
+    /// <summary>The message's text.</summary>
+    public string Text { get; }
+
+    internal IncomingMessageInfo(long chatId, long senderId, string senderFirstName, string? senderUsername, long messageId, string text)
+    {
+        ChatId = chatId;
+        SenderId = senderId;
+        SenderFirstName = senderFirstName;
+        SenderUsername = senderUsername;
+        MessageId = messageId;
+        Text = text;
+    }
 }
 
 /// <summary>
@@ -111,6 +155,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithClock(ToFSharpClock(clock));
         }
 
+        if (options.OnMessage is { } onMessage)
+        {
+            config = config.WithOnMessage(ToFSharpMessageHandler(onMessage));
+        }
+
         var bot = await TgBot.startPolling(config);
         return new TelegramAgent(bot);
     }
@@ -160,6 +209,11 @@ public sealed class TelegramAgent : IAsyncDisposable
             config = config.WithClock(ToFSharpClock(clock));
         }
 
+        if (options.OnMessage is { } onMessage)
+        {
+            config = config.WithOnMessage(ToFSharpMessageHandler(onMessage));
+        }
+
         var bot = await TgBot.startWebhook(config);
         return new TelegramAgent(bot);
     }
@@ -172,6 +226,23 @@ public sealed class TelegramAgent : IAsyncDisposable
     /// </summary>
     private static FSharpFunc<Unit, DateTimeOffset> ToFSharpClock(Func<DateTimeOffset> clock) =>
         FSharpFunc<Unit, DateTimeOffset>.FromConverter(new Converter<Unit, DateTimeOffset>(_ => clock()));
+
+    /// <summary>
+    /// Adapts the public <see cref="Func{IncomingMessageInfo,CancellationToken,Task}"/> to the F#
+    /// façade's curried <c>MessageHandler</c> — <c>TgLLM.FSharp.MessageHandlers.Wrap</c> does the
+    /// actual <c>Func</c> → <c>FSharpFunc</c> adaptation (the established idiom this façade already
+    /// uses for <c>Keyboards.Build</c>/<c>ToolRegistrations.Register</c>: the F# side accepts a
+    /// plain BCL delegate directly rather than the C# side hand-building an <c>FSharpFunc</c>);
+    /// this method's own job is only the <c>TgLLM.Core.IncomingMessage</c> → <see cref="IncomingMessageInfo"/>
+    /// translation, since <c>TgLLM.FSharp</c> has no dependency on this (<c>TgLLM.CSharp</c>-only) DTO.
+    /// </summary>
+    private static FSharpFunc<TgLLM.Core.IncomingMessage, FSharpFunc<CancellationToken, Task>> ToFSharpMessageHandler(
+        Func<IncomingMessageInfo, CancellationToken, Task> handler) =>
+        MessageHandlers.Wrap(new Func<TgLLM.Core.IncomingMessage, CancellationToken, Task>(
+            (message, ct) => handler(ToIncomingMessageInfo(message), ct)));
+
+    private static IncomingMessageInfo ToIncomingMessageInfo(TgLLM.Core.IncomingMessage message) =>
+        new(message.Chat, message.Sender.Id, message.Sender.FirstName, message.Sender.Username, message.MessageId, message.Text);
 
     /// <summary>The webhook ingress to hand to <c>MapTelegramWebhook</c> (webhook mode only).</summary>
     public WebhookUpdateSource WebhookSource => _bot.WebhookSource;

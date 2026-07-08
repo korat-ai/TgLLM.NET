@@ -124,6 +124,16 @@ type Hook = PressContext -> Task
 [<NoComparison; NoEquality>]
 type HookBinding = { Token: CallbackToken; Hook: Hook }
 
+/// An incoming user text message, post-parse — the message-side sibling of `ButtonPress`.
+/// Produced by the shared transport mapping (`TgLLM.BotApi.Mapping.toAgentEvent`, reused by the
+/// webhook source) from an `Update` carrying a user text `Message`. Carries bare identity + text
+/// only — no vendor/agent-framework type ever reaches this record.
+type IncomingMessage =
+    { Chat: ChatId
+      Sender: EndUser
+      MessageId: MessageId
+      Text: string }
+
 /// Transport-agnostic domain event. Future update kinds slot in here without touching
 /// transports.
 ///
@@ -140,6 +150,13 @@ type HookBinding = { Token: CallbackToken; Hook: Hook }
 /// `Routing.RouteDecision.AcknowledgeOnly` — a DIFFERENT type's case that happens to compile later
 /// and would otherwise win unqualified name resolution in `UpdateProcessor.fs`, where both types
 /// are in scope.
+///
+/// `MessageReceived` (additive on top of slice 1/2/3/4's `ButtonPressed`/`AckOnly`): a plain user
+/// text message, mapped by the SAME shared `Mapping.toAgentEvent` both transports already call, so
+/// neither transport gains code of its own for it. `UpdateProcessor` treats this as a no-op unless
+/// a host wired a `MessageHandler` in — every pre-existing consumer that never does so keeps
+/// behaving byte-identically.
 type AgentEvent =
     | ButtonPressed of ButtonPress
     | AckOnly of queryId: CallbackQueryId
+    | MessageReceived of IncomingMessage

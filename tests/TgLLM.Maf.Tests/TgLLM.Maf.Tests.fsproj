@@ -10,6 +10,7 @@
     <Compile Include="OwnerResolutionTests.fs" />
     <Compile Include="ApprovalRenderingTests.fs" />
     <Compile Include="PendingApprovalsTests.fs" />
+    <Compile Include="ProjectionTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
