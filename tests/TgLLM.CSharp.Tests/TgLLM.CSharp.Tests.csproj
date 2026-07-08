@@ -23,6 +23,8 @@
     <ProjectReference Include="..\TgLLM.Integration.Tests\TgLLM.Integration.Tests.fsproj" />
     <!-- LiteDbBindingStore.OpenAt, for the LiteDB restart-persistence acceptance test. -->
     <ProjectReference Include="..\..\src\TgLLM.Persistence.LiteDb\TgLLM.Persistence.LiteDb.fsproj" />
+    <!-- The MAF bridge's C#-idiomatic surface (MafTelegramBridge et al.), for its idiom-leak canary. -->
+    <ProjectReference Include="..\..\src\TgLLM.Maf\TgLLM.Maf.fsproj" />
   </ItemGroup>
 
 </Project>

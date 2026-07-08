@@ -43,6 +43,10 @@
     <Compile Include="A2uiLoopTests.fs" />
     <Compile Include="A2uiStreamingTests.fs" />
     <Compile Include="A2uiUnsupportedTests.fs" />
+    <Compile Include="MafScriptedAgent.fs" />
+    <Compile Include="MafBridgeApprovalTests.fs" />
+    <Compile Include="MafBridgeRefusalTests.fs" />
+    <Compile Include="MafBridgeFailureTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -56,6 +60,7 @@
     <PackageReference Include="Expecto" />
     <PackageReference Include="Expecto.FsCheck" />
     <PackageReference Include="FsCheck" />
+    <PackageReference Include="Microsoft.Agents.AI" />
   </ItemGroup>
 
   <ItemGroup>
@@ -68,6 +73,7 @@
     <ProjectReference Include="..\..\src\TgLLM.Persistence\TgLLM.Persistence.fsproj" />
     <ProjectReference Include="..\..\src\TgLLM.Persistence.LiteDb\TgLLM.Persistence.LiteDb.fsproj" />
     <ProjectReference Include="..\..\src\TgLLM.A2UI\TgLLM.A2UI.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.Maf\TgLLM.Maf.fsproj" />
   </ItemGroup>
 
 </Project>

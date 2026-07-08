@@ -19,8 +19,11 @@
          Version pinned centrally now so later phases (T023+) restore a known-good version. -->
     <PackageVersion Include="Telegram.Bot" Version="22.10.1" />
 
-    <!-- Observability bridge (TgLLM.FSharp façade): IHookObserver -> ILogger. -->
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <!-- Observability bridge (TgLLM.FSharp façade): IHookObserver -> ILogger.
+         Bumped 10.0.0 -> 10.0.9 (patch-compatible) for TgLLM.Maf: Microsoft.Agents.AI 1.13.0's own
+         transitive floor is Microsoft.Extensions.Logging.Abstractions >= 10.0.9, and central package
+         management resolves ONE version solution-wide. -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
 
     <!-- Embedded durable binding store (TgLLM.Persistence.LiteDb leaf only — file-store users must
          not inherit it). Pure-managed, single-file, no external server and no native dependency
@@ -53,6 +56,17 @@
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
     <PackageVersion Include="FsCheck.Xunit.v3" Version="3.3.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+
+    <!-- Microsoft Agent Framework (TgLLM.Maf leaf only — Core and both façades stay MAF-agnostic).
+         Pinned to an EXACT version (no floating range): MAF is public preview and renames types
+         between releases (the approval-content rename below is live proof), so an upgrade must be a
+         deliberate, test-gated change, never a silent transitive bump. Probe-confirmed transitive
+         closure at this pin: Microsoft.Agents.AI.Abstractions 1.13.0, Microsoft.Extensions.AI 10.6.0,
+         Microsoft.Extensions.AI.Abstractions 10.6.0 — the approval content types
+         (ToolApprovalRequestContent/ToolApprovalResponseContent) live in the last of these; neither
+         Microsoft.Extensions.AI package is ever referenced directly, only pulled in transitively by
+         Microsoft.Agents.AI so the two stay mutually compatible. -->
+    <PackageVersion Include="Microsoft.Agents.AI" Version="1.13.0" />
   </ItemGroup>
 
 </Project>

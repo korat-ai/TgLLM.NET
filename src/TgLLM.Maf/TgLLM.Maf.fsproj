@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Microsoft Agent Framework (MAF) bridge for TgLLM.NET: turns an agent's human-in-the-loop tool approval into an owner-scoped, single-use Telegram button, reusing the Tool Router, edit-in-place, and durable bindings from the earlier slices. MAF is confined to this leaf (pinned to an exact version) so TgLLM.Core and both façades stay agent-framework-agnostic.</Description>
+  </PropertyGroup>
+
+  <!--
+    Compiles top-to-bottom, no forward references (same discipline as every other project in this
+    solution). ApprovalDescriptor.fs compiles FIRST, ahead of Types.fs: IMafObserver (Types.fs)'s
+    OnStaleDecision/OnResumeFailed members report an ApprovalDescriptor, so that type must already
+    exist by the time Types.fs compiles. Types.fs then holds the rest of the leaf's MAF-agnostic
+    vocabulary (errors, rendering types, the observer interface, bridge options) — no MAF type
+    appears in either file.
+    OwnerResolution.fs/ApprovalRendering.fs are pure decisions over Types.fs's records, so they
+    compile next, in either relative order. PendingApprovals.fs is the first file to reference a real
+    MAF type (ToolApprovalRequestContent), so it compiles after the pure layer. Conversations.fs
+    (per-chat AgentSession) and ApprovalDetection.fs (response -> pending prompts) are independent of
+    PendingApprovals.fs but both need MAF types, so they follow it. Bridge.fs composes every prior
+    file (registers the tools, renders, resumes, wires start functions) and so compiles last among
+    the F# surface; CSharpSurface.fs wraps Bridge.fs's public members behind a C#-idiomatic surface
+    and therefore compiles last of all.
+  -->
+  <ItemGroup>
+    <Compile Include="ApprovalDescriptor.fs" />
+    <Compile Include="Types.fs" />
+    <Compile Include="OwnerResolution.fs" />
+    <Compile Include="ApprovalRendering.fs" />
+    <Compile Include="PendingApprovals.fs" />
+    <Compile Include="Conversations.fs" />
+    <Compile Include="ApprovalDetection.fs" />
+    <Compile Include="Bridge.fs" />
+    <Compile Include="CSharpSurface.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.AI" />
+    <PackageReference Include="FSharp.SystemTextJson" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TgLLM.FSharp\TgLLM.FSharp.fsproj" />
+  </ItemGroup>
+
+</Project>
