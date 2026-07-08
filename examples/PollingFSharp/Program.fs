@@ -1,4 +1,4 @@
-/// Example (Principle VIII): an F# agent that proactively pushes an interactive keyboard every 30s
+/// Example: an F# agent that proactively pushes an interactive keyboard every 30s
 /// (an external stimulus, not a reply) over long polling, and reacts to taps. Set BOT_TOKEN and
 /// CHAT_ID environment variables, then `dotnet run`.
 module PollingFSharp.Program

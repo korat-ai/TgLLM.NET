@@ -52,7 +52,7 @@ type LoggingMessageObserver(logger: ILogger) =
 
 /// A button being described by the agent: a raw (unvalidated) label plus the handler to run when it
 /// is tapped. Labels are validated by `Keyboard.create`, so an invalid label surfaces as an
-/// `Error`, never an exception (the F# idiom; the C# façade throws instead — Principle II).
+/// `Error`, never an exception (the F# idiom; the C# façade throws instead).
 [<NoComparison; NoEquality>]
 type ButtonSpec = internal { RawLabel: string; RawHook: Hook }
 
@@ -77,7 +77,7 @@ module Keyboard =
 /// Configuration shared by both transports: the bot token, Bot API endpoint override, hook/tool
 /// observability, and Tool Router wiring. Embedded (as `Common`) in both `TgBotConfig` and
 /// `TgWebhookConfig`, and mutated only through the `CommonConfig` module's `with*` functions, so
-/// the two configs' fields and fluent methods can't drift out of lockstep (Principle IV: hook/tool
+/// the two configs' fields and fluent methods can't drift out of lockstep (hook/tool
 /// code and wiring stay identical regardless of transport).
 [<NoComparison; NoEquality>]
 type CommonConfig =
@@ -514,7 +514,7 @@ type TgBot
     /// `UpdateProcessor`, and starts its run loop. `startPolling`/`startWebhook` differ only in
     /// which `IUpdateSource` they hand in and whether a `WebhookUpdateSource` exists for
     /// `TgBot.WebhookSource` — every other collaborator (and its wiring) is identical regardless
-    /// of transport (Principle IV).
+    /// of transport.
     static member private wireBot
         (common: CommonConfig)
         (client: ITelegramBotClient)

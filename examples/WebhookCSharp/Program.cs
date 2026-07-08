@@ -1,4 +1,4 @@
-// Example (Principle VIII): a C# webhook bot. Registers a webhook, sends an initial keyboard, and
+// Example: a C# webhook bot. Registers a webhook, sends an initial keyboard, and
 // hosts the receiving endpoint with MapTelegramWebhook. The SAME hook code as the polling example.
 // Set BOT_TOKEN, PUBLIC_URL (https, reachable by Telegram), WEBHOOK_SECRET and CHAT_ID,
 // then `dotnet run`.

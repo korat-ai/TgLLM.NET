@@ -6,7 +6,7 @@ namespace TgLLM.CSharp;
 
 /// <summary>
 /// A validated Tool Router plan, ready to send. Same type as the F# façade's <c>ToolKeyboard</c>
-/// — <c>KeyboardPlan</c> is the idiomatic C# name (mirrors slice-1's
+/// — <c>KeyboardPlan</c> is the idiomatic C# name (mirrors the existing
 /// <c>KeyboardSpec</c>/<see cref="Keyboard"/> naming split), not a drift.
 /// </summary>
 public sealed class KeyboardPlan

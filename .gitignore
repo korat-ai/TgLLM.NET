@@ -53,3 +53,6 @@ launchSettings.json
 
 # NuGet pack output
 artifacts/
+
+# Spec Kit working artifacts — not part of the shipped product (Principle VII)
+specs/

@@ -36,7 +36,7 @@ module Webhook =
             )
 
     /// Deserialize a webhook request body into a Telegram.Bot `Update` using Telegram.Bot's own
-    /// serializer options (its wire types need its custom converters — Principle V).
+    /// serializer options (its wire types need its custom converters).
     let parseUpdate (json: string) : Update =
         match JsonSerializer.Deserialize<Update>(json, Telegram.Bot.JsonBotAPI.Options) |> Option.ofObj with
         | Some update -> update

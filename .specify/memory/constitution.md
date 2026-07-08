@@ -1,6 +1,22 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Amendment 1.0.0 → 1.1.0 (2026-07-08, MINOR — expanded Principle VII):
+  - Tightened the documentation/comment-reference rule: code comments and shipped docs may
+    reference ONLY the code, the project's own docs under `docs/`, and official vendor / Bot
+    API documentation. Explicitly forbids citing this constitution or its principles (no
+    "Principle N"), in addition to the already-forbidden Spec Kit specs and conversation
+    context.
+  - Made enforceable the rule that Spec Kit working artifacts (`specs/`) MUST NOT be
+    committed: `specs/` is git-ignored; only code and `docs/` ship. (Previously stated only
+    as a rationale aside in Principle VII, and had drifted — the `specs/` tree had been
+    committed.)
+  - Remediation applied in the same change: `specs/` removed from version control and
+    git-ignored; a repo-wide sweep removed every `Principle N` citation from code comments
+    (vendor facts preserved).
+  - Templates reviewed: no plan/spec/tasks template change required (their "Constitution
+    Check" resolves principles from this file at run time).
+
 Version change: (unversioned template) → 1.0.0
 Bump rationale: Initial ratification. The file was a bare template with placeholder
 tokens and no prior version number; this is the first concrete adoption, so it starts
@@ -150,16 +166,28 @@ Documentation is a first-class, continuously maintained deliverable.
 - All documentation and all code comments MUST be written in English.
 - User-facing documentation MUST be updated in the same change that alters observable
   behavior. Documentation never lags the code it describes.
-- Documentation MUST reference only source code and official vendor / Bot API
-  documentation. It MUST NOT reference conversation context or Spec Kit specifications —
-  specs are working artifacts that are NOT shipped in the repository; only documentation is.
+- Code comments and shipped documentation MUST reference ONLY: (a) the code itself,
+  (b) the project's own user documentation under `docs/`, and (c) official vendor / Bot API
+  documentation (the external factual basis a client library grounds its behavior in, per
+  Principle V — the vendor fact stays, e.g. `core.telegram.org` or a pinned dependency
+  version). They MUST NOT reference anything else: NOT this constitution or its principles
+  (no "Principle N" citations), NOT Spec Kit working artifacts (feature specs, plans, tasks,
+  research, checklists; no FR-/SC-/US-/task-ID/research-D#/spec-file/branch-slug citations),
+  and NOT conversation or working context. A comment stands on the code, our `docs/`, and the
+  vendor's documentation — nothing transient or internal-process.
+- Spec Kit working artifacts MUST NOT be committed to the repository. Feature specs, plans,
+  tasks, research, and checklists (the `specs/` tree) are working artifacts, not part of the
+  shipped product; `specs/` is git-ignored. Only the shipped product — the code and the user
+  documentation under `docs/` — lives in the repository.
 - Code comments are used with judgment: they explain intent and non-obvious "why", not
   restate the "what". They are neither omitted where clarity requires them nor overused.
 
 Rationale: For an open-source library, the docs are the product's first impression and its
 primary support channel. English maximizes reach; same-change updates keep docs
-trustworthy; grounding docs only in code and vendor sources keeps them durable and
-reproducible for anyone reading the repository in isolation.
+trustworthy; grounding comments and docs only in the code, our `docs/`, and vendor sources —
+never in this constitution, specs, or conversation — keeps them durable and reproducible for
+anyone reading the repository in isolation, and keeping the specs out of the repository keeps
+the shipped product to just the code and its `docs/`.
 
 ### VIII. Open-Source Excellence
 
@@ -233,4 +261,4 @@ generated artifact conflicts with this document, this document wins.
 - **Runtime development guidance**: `CLAUDE.md` and the current feature plan provide the
   operational, day-to-day guidance that implements these principles.
 
-**Version**: 1.0.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-04
+**Version**: 1.1.0 | **Ratified**: 2026-07-04 | **Last Amended**: 2026-07-08

@@ -90,7 +90,7 @@ type ToolRegistry private (registry: IToolRegistry) =
 
     /// Registers (or replaces) a tool under `name`. The handler may return any `Task<'a>`; its
     /// result is ignored by the runtime (it reacts through the `PressContext` it is given), same
-    /// convention as the slice-1 `Button.on` hook. `description`/`argSchema` are advisory: they
+    /// convention as the `Button.on` hook. `description`/`argSchema` are advisory: they
     /// only affect what `Manifest`/`ManifestJson` report for this name, never routing itself — a
     /// tool registered without either still registers and routes identically. An invalid
     /// (empty-after-trim) `name` is a programmer error by the host (Always-Rule 6) — it fails fast
@@ -133,7 +133,7 @@ type ToolRegistry private (registry: IToolRegistry) =
 /// use directly), so this module is a small naming convenience, not a wrapper type.
 module Owner =
 
-    /// Any presser in the chat may tap the keyboard's tool buttons — slice-2 behavior, unchanged.
+    /// Any presser in the chat may tap the keyboard's tool buttons — the default behavior, unchanged.
     let anyone: OwnerScope = Anyone
 
     /// Only this Telegram user may tap the keyboard's tool buttons; every other (or unidentifiable)
@@ -173,7 +173,7 @@ module Plan =
     let copyText (label: string) (text: string) : PlanButton = CopyTextButton(label, text)
 
     /// Builds the neutral plan from rows of buttons, validating shape (>=1 row, each >=1 button)
-    /// AND every button (label, tool name, url) immediately — mirrors slice-1's `Keyboard.create`,
+    /// AND every button (label, tool name, url) immediately — mirrors `Keyboard.create`,
     /// which also catches a bad label at build time rather than deferring to send time. Delegates to
     /// `TgLLM.Core.ToolPlan.validate` (the single source of truth `ToolPlan.plan` itself re-checks
     /// at send time) so the two never drift apart.

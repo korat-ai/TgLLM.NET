@@ -3,7 +3,7 @@ namespace TgLLM.Core
 open System
 
 /// Validation outcomes shared by the value objects below and by `Keyboard.create`. Row/column
-/// limits driven by Bot API vendor verification (Principle V) are deferred to a later phase;
+/// limits driven by Bot API vendor verification are deferred to a later phase;
 /// only the checks currently enforced are represented here.
 type KeyboardError =
     /// A keyboard with zero rows.
@@ -25,7 +25,7 @@ type ButtonLabel = private ButtonLabel of string
 
 module ButtonLabel =
 
-    /// Bot API vendor verification for inline button text length is deferred (Principle V) —
+    /// Bot API vendor verification for inline button text length is deferred —
     /// core.telegram.org does not document a character limit for inline keyboard button text the
     /// way it documents `callback_data`'s 1–64 BYTE limit. This bound is a conservative
     /// placeholder that gives the smart constructor a concrete, testable invariant now; revisit
@@ -91,6 +91,6 @@ type PlanButton =
 
 /// The neutral, unvalidated plan: >=1 row, each >=1 button by convention; `ToolPlan.plan` and the
 /// façade's `Plan.rows` are where that shape is actually
-/// enforced (see their doc comments) — this record itself is a plain data holder, like slice-1's
+/// enforced (see their doc comments) — this record itself is a plain data holder, like the existing
 /// `ButtonSpec list list` before `Keyboard.create` validates it.
 type ToolKeyboard = { Rows: PlanButton list list }

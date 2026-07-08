@@ -229,8 +229,8 @@ module A2ui =
     /// one, a rendered surface's own tool buttons would reach the wire, get tapped, and silently
     /// no-op forever, exactly the condition `TgBot.SendKeyboardPlan` itself already fails fast on for
     /// any other tool plan. Also requires `a2ui-action` not already be registered on `bot`'s Tool
-    /// Router: `IToolRegistry.Register` is add-or-replace by design (mirrors slice-1's own
-    /// `IHookStore.Register` semantics for re-sends), which is exactly right for a HOST re-registering
+    /// Router: `IToolRegistry.Register` is add-or-replace by design (mirrors `IHookStore.Register`'s
+    /// own semantics for re-sends), which is exactly right for a HOST re-registering
     /// its OWN tool, but wrong for a SECOND `A2ui.renderer`/`A2ui.rendererWithObserver` call on the
     /// SAME bot — that would silently replace the first renderer's `a2ui-action` closure (which
     /// captured the FIRST renderer's own `SurfaceRegistry`) with the second's, orphaning every surface

@@ -19,9 +19,9 @@ open System.Threading.Tasks
 /// `PressContext.EditKeyboardAsync` (Domain.fs) needs `ToolKeyboard`, and Domain.fs compiles
 /// before this file — see Values.fs's own comment on those two types.
 
-/// Validation outcomes for the Tool Router surface. `InvalidKeyboard` wraps slice-1's
+/// Validation outcomes for the Tool Router surface. `InvalidKeyboard` wraps the existing
 /// `KeyboardError` (deviation, disclosed: an original three-case sketch grew a fourth case
-/// because `ToolPlan.plan`/`Plan.rows` reuse `ButtonLabel.create` and slice-1's row/keyboard-shape
+/// because `ToolPlan.plan`/`Plan.rows` reuse `ButtonLabel.create` and the existing row/keyboard-shape
 /// checks, both of which already report `KeyboardError`, not a fresh error type).
 type ToolError =
     | EmptyToolName
@@ -50,7 +50,7 @@ module ToolName =
     let value (ToolName s) : string = s
 
 /// Who may press a tool (callback) button. `Anyone` (the default, unset) keeps
-/// slice-1/2 behavior: any presser resolves the button. `User uid` restricts tool presses to that
+/// the existing behavior: any presser resolves the button. `User uid` restricts tool presses to that
 /// exact user — enforced ONLY on tool buttons (client-side `UrlButton`/`WebAppButton`/
 /// `CopyTextButton` carry no scope at all). `[<Struct>]` like `ButtonLabel`/`ToolName`:
 /// a small, frequently-compared value.
@@ -97,18 +97,18 @@ module Expiry =
         | None -> true
         | Some exp -> now < exp
 
-/// The agent-supplied reaction to a tool button press. Unlike slice-1's `Hook`, a `Tool` is looked
+/// The agent-supplied reaction to a tool button press. Unlike the earlier `Hook`, a `Tool` is looked
 /// up by `ToolName` (via `IToolRegistry`), not bound at keyboard-build time — the same registered
 /// tool can be targeted by many different keyboards/bindings.
 type Tool = PressContext -> Task
 
-/// One button→tool association, as stored by `IBindingStore`. Unlike slice-1's `HookBinding`
+/// One button→tool association, as stored by `IBindingStore`. Unlike the earlier `HookBinding`
 /// (`Token -> live Hook` closure, non-serializable), every field here is plain data, so a
 /// `ToolBinding` can be serialized and persisted — hence it derives structural
 /// equality/comparison (useful for tests and durable-store round-trip checks), unlike
 /// `HookBinding`/`RouteDecision`, which hold function values and can't.
 /// Evolved additively: `Owner`/`ExpiresAt`/`SingleUse`
-/// are NEW fields, on top of slice-2's exact `{ Token; ToolName; Arg }` shape. `Arg` stays `string
+/// are NEW fields, on top of the original exact `{ Token; ToolName; Arg }` shape. `Arg` stays `string
 /// option` — an opaque, possibly-JSON payload — Core never depends on
 /// System.Text.Json. `DeniedNotice` is a further additive field (not part of that original
 /// three-field evolution): the per-keyboard override of the notice a non-owner sees on refusal —
@@ -135,10 +135,10 @@ type ToolBinding =
 
 module ToolBinding =
 
-    /// The slice-2-shaped constructor: `token`/`toolName`/`arg` are the only fields a caller not
+    /// The three-field constructor: `token`/`toolName`/`arg` are the only fields a caller not
     /// yet using owner-scoping/expiry/single-use/notice needs to supply — every new field is
     /// filled with its default (`Anyone`/`None`/`false`/`None`), so a binding built this way is
-    /// indistinguishable from a slice-2 binding that never had those fields at all.
+    /// indistinguishable from one that never had those fields at all.
     let create (token: CallbackToken) (toolName: ToolName) (arg: string option) : ToolBinding =
         { Token = token
           ToolName = toolName
@@ -148,7 +148,7 @@ module ToolBinding =
           SingleUse = false
           DeniedNotice = None }
 
-/// The pure kernel of the Tool Router (an FsCheck property-test target). Mirrors slice-1's
+/// The pure kernel of the Tool Router (an FsCheck property-test target). Mirrors the existing
 /// `Keyboard.create` -> `KeyboardPlan.assign` split, but combined into one function: unlike
 /// `KeyboardSpec` (already validated before token assignment), a `ToolKeyboard` is unvalidated raw
 /// data, so `plan` validates every button (label, tool name, url) THEN assigns tokens to tool
@@ -167,7 +167,7 @@ module ToolPlan =
         /// 1..256 characters.
         | ValidCopyText of label: ButtonLabel * text: string
 
-    /// Bot API vendor fact (core.telegram.org, Principle V): `web_app` (`WebAppInfo`) launches a
+    /// Bot API vendor fact (core.telegram.org): `web_app` (`WebAppInfo`) launches a
     /// Mini App; its `url` MUST be https. A plain scheme-prefix check (rather than
     /// `Uri.TryCreate`) is deliberate: the Bot API's own requirement is exactly "scheme is https",
     /// not RFC-perfect URI validity, and it sidesteps `Uri.TryCreate`'s nullable `out` parameter
@@ -175,7 +175,7 @@ module ToolPlan =
     let private isHttps (url: string) : bool =
         not (String.IsNullOrEmpty url) && url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
 
-    /// Bot API vendor fact (core.telegram.org, Principle V): `copy_text` (`CopyTextButton`)'s
+    /// Bot API vendor fact (core.telegram.org): `copy_text` (`CopyTextButton`)'s
     /// `text` is 1..256 characters. Null-safe via `String.IsNullOrEmpty` (which itself accepts a
     /// possibly-null string): a missing/empty text is simply out of range, reported as
     /// `InvalidCopyText` like any other invalid length.
@@ -210,7 +210,7 @@ module ToolPlan =
             | Error e -> Error(InvalidKeyboard e)
             | Ok validLabel -> if isValidCopyTextLength text then Ok(ValidCopyText(validLabel, text)) else Error(InvalidCopyText text)
 
-    /// Same short-circuiting fold shape as slice-1's `Keyboard.create` (Keyboard.fs).
+    /// Same short-circuiting fold shape as `Keyboard.create` (Keyboard.fs).
     let private sequenceResults (items: Result<'a, ToolError> list) : Result<'a list, ToolError> =
         items
         |> List.fold
@@ -222,7 +222,7 @@ module ToolPlan =
             (Ok [])
         |> Result.map List.rev
 
-    /// A row with zero buttons is rejected (mirrors slice-1 `Keyboard.create`'s `EmptyRow`); a
+    /// A row with zero buttons is rejected (mirrors `Keyboard.create`'s `EmptyRow`); a
     /// non-empty row delegates to `validateButton` per button.
     let private validateRow (rowIndex: int) (row: PlanButton list) : Result<ValidatedButton list, ToolError> =
         if List.isEmpty row then
@@ -230,7 +230,7 @@ module ToolPlan =
         else
             row |> List.map validateButton |> sequenceResults
 
-    /// A keyboard with zero rows is rejected (mirrors slice-1 `Keyboard.create`'s `EmptyKeyboard`).
+    /// A keyboard with zero rows is rejected (mirrors `Keyboard.create`'s `EmptyKeyboard`).
     let private validateRows (rows: PlanButton list list) : Result<ValidatedButton list list, ToolError> =
         if List.isEmpty rows then
             Error(InvalidKeyboard EmptyKeyboard)
@@ -239,7 +239,7 @@ module ToolPlan =
 
     /// Validates a plan's shape (>=1 row, each >=1 button) and every button (label, tool name, url)
     /// WITHOUT assigning tokens — the façade's `Plan.rows` smart constructor uses this so build-time
-    /// errors surface immediately (mirrors slice-1's `Keyboard.create`). `plan` (below) reuses the
+    /// errors surface immediately (mirrors `Keyboard.create`). `plan` (below) reuses the
     /// same validation as a defense-in-depth re-check at send time: `ToolKeyboard` is a plain public
     /// record, not opaque, so nothing stops a caller from constructing one directly and skipping
     /// `Plan.rows`.
@@ -251,7 +251,7 @@ module ToolPlan =
     /// sent without a Tool Router wired in: such
     /// buttons would otherwise reach the wire, get tapped, and silently no-op forever — no
     /// `ToolDispatch` exists to ever resolve their bindings, so every press falls through to the
-    /// slice-1 `IHookStore` path and is reported only as an unknown/stale token (or nothing at all,
+    /// `IHookStore` path and is reported only as an unknown/stale token (or nothing at all,
     /// with the default `NoopHookObserver`). A URL-only plan never needs a Tool Router, so it's
     /// never flagged regardless of wiring.
     let hasToolButtons (keyboard: ToolKeyboard) : bool =
@@ -316,8 +316,8 @@ type ToolManifestEntry =
 /// expects.
 type ToolManifest = { Tools: ToolManifestEntry list }
 
-/// Registers named tools and resolves them by name. Add-or-replace by design (mirrors slice-1's
-/// `IHookStore.Register` semantics for re-sends). `metadata` is advisory: omitting it (or leaving
+/// Registers named tools and resolves them by name. Add-or-replace by design (mirrors
+/// `IHookStore.Register`'s semantics for re-sends). `metadata` is advisory: omitting it (or leaving
 /// its fields `None`) still registers and routes the tool identically — it only affects what
 /// `Manifest` reports for that name.
 type IToolRegistry =
@@ -370,7 +370,7 @@ type InMemoryToolRegistry() =
 
 /// Serializable button->tool bindings. In-memory default here; a durable (file-based)
 /// implementation lives in the separate `TgLLM.Persistence` leaf project (Core stays
-/// IO-agnostic, Principle III).
+/// IO-agnostic).
 type IBindingStore =
     abstract Save: bindings: IReadOnlyList<ToolBinding> * ct: CancellationToken -> ValueTask
     abstract TryGet: token: CallbackToken * ct: CancellationToken -> ValueTask<ToolBinding voption>
@@ -598,7 +598,7 @@ type ProcessedQueryTracker(clock: Clock, ?capacity: int, ?ttl: TimeSpan) =
 
 /// The deferred-ack tool path's resolver: token -> binding (via `IBindingStore`) -> tool (via
 /// `IToolRegistry`). `ValueNone` on EITHER miss (unknown token, or a binding whose tool is no
-/// longer registered) so `UpdateProcessor` can uniformly fall back to the slice-1 `IHookStore`
+/// longer registered) so `UpdateProcessor` can uniformly fall back to the `IHookStore`
 /// ack-first path, which will itself report the unknown/stale press — no separate "known binding,
 /// unknown tool" branch is needed.
 ///
@@ -638,7 +638,7 @@ type ToolDispatch(registry: IToolRegistry, store: IBindingStore, ?tracker: Messa
 /// both `TgBot.SendKeyboardPlan` (a fresh send) and `UpdateProcessor`'s edit-in-place wiring
 /// (`PressContext.EditKeyboardAsync`). Mirrors `AgentOps.sendKeyboard`'s (UpdateProcessor.fs)
 /// save-before-wire ordering guarantee, but for the Tool Router's serializable `ToolBinding`s
-/// instead of slice-1's live `HookBinding` closures.
+/// instead of the earlier live `HookBinding` closures.
 module ToolKeyboardOps =
 
     /// Validates+plans `plan`, saves its bindings BEFORE `send` puts the keyboard on the wire, then

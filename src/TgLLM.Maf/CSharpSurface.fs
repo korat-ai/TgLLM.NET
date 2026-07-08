@@ -1,6 +1,6 @@
 /// The leaf's C#-idiomatic surface: a sealed class with static async factories, BCL delegates
 /// (`Func`/`Action`), plain DTOs, and nullable value types — no `FSharpFunc`/`FSharpOption`/
-/// `FSharpValueOption` anywhere on this surface (the Principle II idiom-leak canary applies to the
+/// `FSharpValueOption` anywhere on this surface (the same idiom-leak canary applies to the
 /// leaf exactly as it does to `TgLLM.CSharp`). Method overloading stands in for C#'s optional-
 /// parameter defaults throughout, rather than `[<Optional; DefaultParameterValue>]` attributes —
 /// simpler to keep correct, and just as clean a call site.

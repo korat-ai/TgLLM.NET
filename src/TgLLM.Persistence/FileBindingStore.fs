@@ -1,4 +1,4 @@
-/// A durable, JSON-on-disk `IBindingStore`. Core stays IO-agnostic (Principle III) — this leaf
+/// A durable, JSON-on-disk `IBindingStore`. Core stays IO-agnostic — this leaf
 /// project is where the actual file IO lives. Loads existing bindings when opened (`openAt`), so
 /// a restart pointing at the same file restores every binding a keyboard was sent with; every
 /// mutation (`Save`/`Remove`) rewrites the whole file under a single in-process writer lock
@@ -79,7 +79,7 @@ module BindingDto =
         | _ -> None
 
 /// Durable, JSON-on-disk `IBindingStore`. `openAt` is the only public constructor path (mirrors
-/// slice-1's smart-constructor convention) — it both creates AND loads, so there is no way to end
+/// the existing smart-constructor convention) — it both creates AND loads, so there is no way to end
 /// up with an instance that hasn't seen whatever is already on disk.
 [<Sealed>]
 type FileBindingStore

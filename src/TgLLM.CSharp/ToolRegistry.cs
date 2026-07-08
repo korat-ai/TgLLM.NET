@@ -8,7 +8,7 @@ namespace TgLLM.CSharp;
 /// A fluent, mutable tool registry. Wraps the F# façade's <see cref="TgLLM.FSharp.ToolRegistry"/>
 /// so <c>TelegramAgent</c> can wire it into <c>TgBotConfig.WithTools</c>, while registration
 /// itself goes through the C#-friendly <see cref="ToolRegistrations"/> bridge (a
-/// <see cref="Func{PressContext, Task}"/> delegate, never an F# curried function — Principle II).
+/// <see cref="Func{PressContext, Task}"/> delegate, never an F# curried function).
 /// </summary>
 public sealed class ToolRegistry
 {

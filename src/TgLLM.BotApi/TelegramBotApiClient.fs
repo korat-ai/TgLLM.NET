@@ -3,7 +3,7 @@
 /// this file) reuses.
 ///
 /// Bot API facts this file relies on, verified against core.telegram.org and Telegram.Bot's own
-/// source (Principle V):
+/// source:
 ///   - `callback_data` is 1-64 BYTES. `CallbackToken.value` always produces a 22-character
 ///     unpadded base64url string (16 bytes encoded), well under that limit.
 ///   - `answerCallbackQuery` must be called for every callback query (known or not) to clear the
@@ -43,11 +43,11 @@ module Mapping =
     ///
     /// `WithWebApp`/`WithCopyText` and the `WebAppInfo(url)` / `CopyTextButton` (settable `Text`,
     /// no string constructor) shapes below are verified against the installed Telegram.Bot 22.10.1
-    /// assembly via reflection (Principle V) — `InlineKeyboardButton.WithWebApp(string, WebAppInfo)`
+    /// assembly via reflection — `InlineKeyboardButton.WithWebApp(string, WebAppInfo)`
     /// and `InlineKeyboardButton.WithCopyText(string, CopyTextButton)` are its only two factories
     /// for these button kinds.
     /// `TgLLM.Core.ParseMode option` -> Telegram.Bot's own `ParseMode` enum (verified against the
-    /// installed Telegram.Bot 22.10.1 assembly, Principle V): `None` (no formatting requested)
+    /// installed Telegram.Bot 22.10.1 assembly): `None` (no formatting requested)
     /// maps to `Telegram.Bot.Types.Enums.ParseMode.None`, the exact value `sendMessage`'s
     /// `parseMode` parameter already defaults to when a call site omits it entirely — so routing
     /// every send through this mapping, even for the "no parse mode" case, changes nothing on the
@@ -162,7 +162,7 @@ module Mapping =
 /// Classifies Telegram's two well-known, non-fatal `editMessageText`/`editMessageReplyMarkup`
 /// errors into an `EditOutcome` instead of letting them propagate as an exception.
 ///
-/// Verified against the installed Telegram.Bot 22.10.1 assembly by decompilation (Principle V),
+/// Verified against the installed Telegram.Bot 22.10.1 assembly by decompilation,
 /// not assumed: `TelegramBotClient.SendRequest` hands an unsuccessful Bot API response to
 /// `ExceptionsParser.Parse` (`DefaultExceptionParser` by default), whose body is exactly
 /// `new ApiRequestException(apiResponse.Description, apiResponse.ErrorCode, apiResponse.Parameters)`
@@ -286,7 +286,7 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
             client.AnswerCallbackQuery(callbackQueryId = UMX.untag query, cancellationToken = ct)
 
         /// Tool Router deferred-ack overload: `text`/`showAlert` map directly onto Telegram.Bot's
-        /// `AnswerCallbackQuery` extension (verified against its own source, Principle V);
+        /// `AnswerCallbackQuery` extension (verified against its own source);
         /// `url`/`cacheTime` are left at their defaults, same as the no-arg overload above.
         member _.AnswerCallback(query: CallbackQueryId, text: string option, showAlert: bool, ct: CancellationToken) : Task =
             client.AnswerCallbackQuery(
@@ -298,7 +298,7 @@ type TelegramBotApiClient(client: ITelegramBotClient) =
 
         /// `editMessageText`'s `reply_markup` is OPTIONAL — omitting it (`None` here) leaves the
         /// message's CURRENT keyboard untouched, verified against Telegram.Bot's own
-        /// `EditMessageText` extension (Principle V); `Some` replaces it, same unconditional
+        /// `EditMessageText` extension; `Some` replaces it, same unconditional
         /// mapping `SendKeyboard` already uses. Classifies `"message to edit not found"`/`"message
         /// is not modified"` into `EditOutcome` (`EditErrorClassification.classify`) instead of
         /// letting them propagate; any OTHER exception still propagates, caught by

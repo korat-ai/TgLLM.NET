@@ -9,7 +9,7 @@ namespace TgLLM.CSharp;
 
 /// <summary>
 /// A plain-data snapshot of a tool binding for a C#-implemented store: nullable fields and no F#
-/// option/union types anywhere in its own shape (Principle II). <see cref="OwnerUserId"/> is
+/// option/union types anywhere in its own shape. <see cref="OwnerUserId"/> is
 /// <c>null</c> for an "anyone" scope and the specific user id otherwise.
 /// </summary>
 public sealed class ToolBindingDto

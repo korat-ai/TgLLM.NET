@@ -12,8 +12,7 @@ open FSharp.UMX
 // `IHookStore` in Ports.fs, and `ButtonSpec` in Keyboard.fs) must be defined long before
 // UpdateProcessor.fs compiles.
 
-/// UMX id measures — compile-time-only tagging; C# consumers see plain `long`/`string`
-/// (Principle II).
+/// UMX id measures — compile-time-only tagging; C# consumers see plain `long`/`string`.
 [<Measure>]
 type chatId
 
@@ -32,7 +31,7 @@ type MessageId = int64<messageId>
 type CallbackQueryId = string<callbackQueryId>
 
 /// An end user known to the bot. `Username` uses F#'s nullable reference-type annotation so
-/// C# sees `string?`, never `FSharpOption` (Principle II).
+/// C# sees `string?`, never `FSharpOption`.
 type EndUser =
     { Id: UserId
       FirstName: string
@@ -79,7 +78,7 @@ type PressContext
 
     /// The bound tool argument. `null` for `IHookStore`-resolved closure-style hooks and for
     /// argument-less tool buttons — annotated nullable, not `string option`, because this is a
-    /// public API boundary consumed directly by the C# façade (Principle II: no `FSharpOption` on
+    /// public API boundary consumed directly by the C# façade (no `FSharpOption` on
     /// the C# surface).
     member _.Arg: string | null = arg |> Option.toObj
 

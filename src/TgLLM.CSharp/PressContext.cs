@@ -8,8 +8,7 @@ namespace TgLLM.CSharp;
 
 /// <summary>
 /// The context of a button press handed to a C# hook. Wraps the core press context so the C#
-/// surface stays idiomatic — plain <c>string</c>/<c>long</c>, no F# single-case types
-/// (Principle II).
+/// surface stays idiomatic — plain <c>string</c>/<c>long</c>, no F# single-case types.
 /// </summary>
 public sealed class PressContext
 {
@@ -35,7 +34,7 @@ public sealed class PressContext
     public Task<long> ReplyTextAsync(string text) => _core.ReplyTextAsync(text);
 
     /// <summary>
-    /// The bound tool argument, or <c>null</c> for a slice-1 closure-style hook or an
+    /// The bound tool argument, or <c>null</c> for a closure-style hook or an
     /// argument-less tool button.
     /// </summary>
     public string? Arg => _core.Arg;
@@ -86,7 +85,7 @@ public sealed class PressContext
     /// <c>answerCallbackQuery</c> exactly once, after this tool returns — or after a ~2s watchdog
     /// fires, whichever is first. A directive set AFTER the watchdog has already fired is silently
     /// dropped (the ack was already sent with no directive; the tool itself is never cancelled and
-    /// keeps running to completion). Calling this from a slice-1 closure-style hook — that path has
+    /// keeps running to completion). Calling this from a closure-style hook — that path has
     /// already acked, ack-first, before the hook ever runs — throws
     /// <see cref="InvalidOperationException"/>: fail-fast, not a silent no-op.
     /// </summary>
@@ -94,7 +93,7 @@ public sealed class PressContext
 
     /// <summary>
     /// Edit the pressed message's text in place, leaving its current keyboard untouched.
-    /// Reachable only from a Tool Router tool's deferred-ack path. Calling this from a slice-1
+    /// Reachable only from a Tool Router tool's deferred-ack path. Calling this from a
     /// closure-style hook throws <see cref="InvalidOperationException"/> (same fail-fast convention
     /// as <see cref="Answer"/>) — a plain hook should reply/send instead.
     /// </summary>

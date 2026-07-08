@@ -5,11 +5,11 @@ open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
 
-/// Every member returns `Task`/`ValueTask` (Principle VI, no `Async<'T>`). Default
+/// Every member returns `Task`/`ValueTask` (no `Async<'T>`). Default
 /// implementations that ship in `TgLLM.Core` are noted per port; adapters (Telegram.Bot,
-/// webhooks, ASP.NET Core) live in outer layers and depend inward only (Principle III).
+/// webhooks, ASP.NET Core) live in outer layers and depend inward only.
 
-/// The transport seam (Principle IV): long polling and webhooks each implement this; the engine
+/// The transport seam: long polling and webhooks each implement this; the engine
 /// consumes ONE ordered stream regardless of transport, so hook code is identical across
 /// transports.
 type IUpdateSource =

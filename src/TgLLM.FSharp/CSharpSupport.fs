@@ -1,6 +1,6 @@
 /// C#-facing helpers used by the `TgLLM.CSharp` façade. They keep F# curried functions, F# list
 /// construction, and single-case-type unwrapping OUT of the C# call site so the C# package can stay
-/// idiomatic (Principle II). This is NOT part of the idiomatic F# public surface.
+/// idiomatic. This is NOT part of the idiomatic F# public surface.
 namespace TgLLM.FSharp
 
 open System

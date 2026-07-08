@@ -15,7 +15,7 @@ open TgLLM.Core
 /// (disclosed deviation from the usual "hide the DTO" instinct, mirroring `TgLLM.Persistence.
 /// BindingDto`'s own identical disclosed deviation): LiteDB's default `BsonMapper` only reflects
 /// over PUBLIC types — verified the hard way, by decompiling the installed 5.0.21 assembly
-/// (Principle V) and observing that marking this type `internal` made `BsonMapper` silently treat
+/// and observing that marking this type `internal` made `BsonMapper` silently treat
 /// every instance as an empty object, auto-generating an `ObjectId` primary key and persisting NONE
 /// of the actual fields, rather than erroring — `BsonMapper`'s own doc comment states the
 /// requirement plainly ("Classes must be public with a public constructor without parameters"),
@@ -39,7 +39,7 @@ open TgLLM.Core
 /// original (irrelevant) offset itself isn't preserved.
 ///
 /// Empirically-verified caveat (found via an FsCheck round-trip property over the REAL store, not
-/// assumed — reflection against the installed 5.0.21 assembly confirms the cause, Principle V):
+/// assumed — reflection against the installed 5.0.21 assembly confirms the cause):
 /// `LiteDB.BsonMapper`'s own `TrimWhitespace` AND `EmptyStringToNull` properties both default to
 /// `true`, and this store maps `BindingDocument` through `BsonMapper.Global`, which never overrides
 /// either. This means, on ANY string field (`Arg`, `DeniedNotice`; `ToolName` is unaffected in
@@ -154,7 +154,7 @@ type LiteDbBindingStore
     /// so `EvictExpired`'s delete-by-query doesn't scan the whole collection.
     ///
     /// Sets the `UTC_DATE` engine pragma (verified against the installed 5.0.21 assembly by
-    /// decompilation, Principle V — `LiteDatabase.UtcDate` itself is get-only, backed by
+    /// decompilation — `LiteDatabase.UtcDate` itself is get-only, backed by
     /// `_engine.Pragma("UTC_DATE")`, so this `Pragma` call is the actual way to set it): LiteDB's
     /// own DEFAULT silently converts a stored date to the machine's LOCAL time zone on every read
     /// (discovered empirically, not assumed — round-tripping a `DateTimeOffset.UtcNow`-derived value
