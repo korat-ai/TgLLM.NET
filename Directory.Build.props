@@ -23,7 +23,10 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <!-- Version is derived by MinVer from the nearest `v*` git tag (see MinVerTagPrefix); do NOT set
+         <Version> here. A tag `v0.1.0` produces version 0.1.0; between tags MinVer emits a
+         pre-release (e.g. 0.1.0-alpha.0.N), which is expected for local/dev packs. -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
     <Authors>korat-ai</Authors>
     <Company>korat-ai</Company>
     <Product>TgLLM.NET</Product>
@@ -38,6 +41,11 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Build-only: derives the package version from git tags. -->
+    <PackageReference Include="MinVer" PrivateAssets="all" />
+  </ItemGroup>
 
   <!-- Bundle the repository README into every produced package. A non-packable project (tests,
        examples) never runs pack, so the Pack="true" item is simply inert there. -->

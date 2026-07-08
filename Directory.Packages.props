@@ -67,6 +67,11 @@
          Microsoft.Extensions.AI package is ever referenced directly, only pulled in transitively by
          Microsoft.Agents.AI so the two stay mutually compatible. -->
     <PackageVersion Include="Microsoft.Agents.AI" Version="1.13.0" />
+
+    <!-- Tag-driven package versioning: a `v*` git tag drives the NuGet version; plain builds between
+         tags emit a pre-release (e.g. 0.1.0-alpha.0.N), which is expected for local/dev packs.
+         Build-only (referenced with PrivateAssets="all" in Directory.Build.props). -->
+    <PackageVersion Include="MinVer" Version="6.1.0" />
   </ItemGroup>
 
 </Project>

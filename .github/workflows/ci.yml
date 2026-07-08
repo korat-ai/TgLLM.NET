@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -39,3 +40,52 @@ jobs:
         with:
           name: test-results
           path: "**/*.trx"
+
+  publish:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    # Triggered only by pushing a v* tag (e.g. `git tag v0.1.0 && git push origin v0.1.0`).
+    # MinVer reads the tag to derive the package version; plain pushes to main never publish, so
+    # merging never republishes a version. Uses NuGet.org trusted publishing (OIDC) — no stored
+    # API key. Requires: a NuGet.org trusted-publisher policy for these packages bound to this
+    # repository/workflow, and a GitHub environment named "nuget".
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    environment: nuget
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # MinVer needs full git history (all tags + the commit graph) to derive the version.
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore
+        run: dotnet restore TgLLM.NET.sln
+
+      - name: Build
+        run: dotnet build TgLLM.NET.sln --no-restore --configuration Release
+
+      - name: Pack
+        run: dotnet pack TgLLM.NET.sln --no-build --configuration Release --output ./artifacts
+
+      - name: NuGet login (trusted publisher)
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: Neftedollar
+
+      - name: Push to NuGet.org
+        run: |
+          for pkg in ./artifacts/*.nupkg; do
+            echo "Publishing $pkg..."
+            dotnet nuget push "$pkg" \
+              --source https://api.nuget.org/v3/index.json \
+              --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+              --skip-duplicate
+          done
