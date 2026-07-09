@@ -56,3 +56,6 @@ artifacts/
 
 # Spec Kit working artifacts — not part of the shipped product (Principle VII)
 specs/
+
+# AI agent-context / project-instructions — process tooling, not shipped product (Principle VII)
+/CLAUDE.md
