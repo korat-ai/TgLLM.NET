@@ -125,6 +125,90 @@ public class MafSessionStoreSmokeTests
             File.Delete(path);
         }
     }
+
+    /// <summary>
+    /// A C# host that wires <see cref="MafBridgeSettings.OnSurfaced"/> plus a durable session store
+    /// but NO logger must still learn about a restore failure — the dual-façade parity gap this test
+    /// closes: before the fix, <c>CSharpMafObserverBridge</c> implemented only <c>IMafObserver</c>, so
+    /// <c>MafBridge</c>'s three-tier <c>sessionObserver</c> resolution (<c>Bridge.fs</c>) never matched
+    /// it as an <c>IMafSessionObserver</c> and fell all the way to a silent <c>NoopMafObserver</c>
+    /// for a host with no logger wired. Corrupts the chat's own durable record directly on disk —
+    /// valid JSON row, valid Base64, but the DECODED bytes are not a well-formed session payload —
+    /// the same "garbage bytes overwrite a valid record" shape
+    /// <c>MafDurableReliabilityTests.fs</c>'s own <c>overwriteRecord</c> helper drives from F#.
+    /// </summary>
+    [Fact]
+    public async Task A_C_sharp_host_wiring_OnSurfaced_with_no_logger_receives_SessionRestoreFailed_for_a_corrupt_durable_record()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await FakeServerModule.start();
+        const long chatId = 9602L;
+        var path = TempPath();
+
+        try
+        {
+            var bindingStore = new InMemoryBindingStore();
+
+            var tools1 = TgLLM.FSharp.ToolRegistry.create();
+            var config1 = TgBotConfig.create(FakeToken)
+                .WithBaseUrl(server.BaseUrl)
+                .WithTools(tools1)
+                .WithBindingStore(bindingStore)
+                .WithSessionStore(FileSessionStore.OpenAt(path));
+
+            var pauseSteps = ListModule.OfArray(new[]
+            {
+                ScriptedStep.NewPausesFor("req-1", "send_email", ListModule.OfArray(Array.Empty<Tuple<string, object?>>())),
+            });
+            var agent1 = new ScriptedAgent(pauseSteps, null, null);
+
+            var bridge1 = await MafTelegramBridge.StartPollingAsync(config1, agent1);
+            await bridge1.StartRunAsync(chatId, "Email alice that the deploy is done.");
+
+            await WaitUntilAsync(() => server.RequestsFor("sendMessage").Any(), 5000, ct);
+            var sent = server.RequestsFor("sendMessage").First().Body!.Value;
+            var approveToken = CallbackDataAt(0, 0, sent);
+
+            await ((IAsyncDisposable)bridge1).DisposeAsync();
+
+            var rows = JsonNode.Parse(File.ReadAllText(path))!.AsArray();
+            var row = rows.Single(r => r!["ChatId"]!.GetValue<long>() == chatId);
+            row!["PayloadBase64"] = Convert.ToBase64String(new byte[] { 0, 1, 2 });
+            File.WriteAllText(path, rows.ToJsonString());
+
+            var surfaced = new List<MafSurfacedEvent>();
+
+            // No `.WithLogger(...)` on this config — the exact shape that, before the fix, left
+            // `sessionObserver` resolution with nothing to fall back to but `NoopMafObserver`.
+            var tools2 = TgLLM.FSharp.ToolRegistry.create();
+            var config2 = TgBotConfig.create(FakeToken)
+                .WithBaseUrl(server.BaseUrl)
+                .WithTools(tools2)
+                .WithBindingStore(bindingStore)
+                .WithSessionStore(FileSessionStore.OpenAt(path));
+
+            var settings = new MafBridgeSettings { OnSurfaced = e => surfaced.Add(e) };
+
+            var resumeSteps = ListModule.OfArray(new[] { ScriptedStep.NewRepliesWith("unexpected") });
+            var agent2 = new ScriptedAgent(resumeSteps, null, null);
+
+            await using var bridge2 = await MafTelegramBridge.StartPollingAsync(config2, agent2, settings);
+
+            server.EnqueueResult(
+                "getUpdates",
+                TelegramJson.batch(
+                    ListModule.OfArray(new[] { TelegramJson.callbackQueryUpdate(1, "q-csharp-corrupt", approveToken, chatId, 1, chatId, "Tester") })));
+
+            await WaitUntilAsync(() => surfaced.Any(e => e.Kind == "SessionRestoreFailed"), 5000, ct);
+
+            Assert.Contains(surfaced, e => e.Kind == "SessionRestoreFailed");
+            Assert.Equal(0, agent2.RunCount);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }
 
 /// <summary>

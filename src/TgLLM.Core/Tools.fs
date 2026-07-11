@@ -545,7 +545,7 @@ type BindingEvictionSweeper(store: IBindingStore, clock: Clock, ?interval: TimeS
 /// a bot's expiry/dedup decisions use (never ambient `DateTimeOffset.UtcNow`), so a host that
 /// overrides it for deterministic tests gets a deterministic sweep too. `interval` defaults to 1
 /// hour — idle-session eviction bounds a much slower-moving cutoff (days, typically) than binding
-/// expiry, so it needs no where near `BindingEvictionSweeper`'s own 5-minute default.
+/// expiry, so it needs nowhere near `BindingEvictionSweeper`'s own 5-minute default.
 [<Sealed>]
 type SessionEvictionSweeper(store: ISessionStore, clock: Clock, idleAfter: TimeSpan, ?interval: TimeSpan) =
     let interval = defaultArg interval (TimeSpan.FromHours 1.0)

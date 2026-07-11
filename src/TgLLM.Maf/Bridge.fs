@@ -588,8 +588,11 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                                 // decision that lands stale after a restart (the persist filter prunes
                                 // it) instead RESUMES pre-restart, a correctness gap this branch closes
                                 // by refusing it here too, matching `Expiry.isLive`'s own semantics.
-                                // Consume the dead entry so a repeat tap on the same (reusable, chained)
-                                // binding stops re-reporting it, then surface this tap as stale.
+                                // Consume the dead entry so it stops lingering in `pendingApprovals`
+                                // until `AbandonAllFor`/process end — a repeat tap on the same
+                                // (reusable, chained) binding reports exactly one `OnStaleDecision`
+                                // either way, consumed here or not; this consume is in-memory table
+                                // hygiene, not what keeps the observer stream from double-reporting.
                                 pendingApprovals.TryConsume(chat, descriptor.RequestId) |> ignore
                                 observer.OnStaleDecision descriptor
                             | ValueSome peeked when not (OwnerScope.isAllowed peeked.Owner (Some ctx.User.Id)) ->

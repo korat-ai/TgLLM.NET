@@ -88,6 +88,22 @@ type internal CSharpMafObserverBridge(onSurfaced: Action<MafSurfacedEvent> | nul
         member _.OnTurnFailed(chat: ChatId, error: exn) =
             reportWithError "TurnFailed" $"a turn in chat {UMX.untag chat} failed: {error.Message}" error
 
+    /// A SIBLING block, not an extension of the `IMafObserver` one above — mirrors `Types.fs`'s own
+    /// `IMafSessionObserver` doc comment. Without this, `MafBridge`'s three-tier `sessionObserver`
+    /// resolution (`Bridge.fs`: `observer` itself when it also implements `IMafSessionObserver`, else
+    /// the bot's own logger, else noop) can never pick THIS bridge up as the durable-session channel —
+    /// an F# host can put both interfaces on one object, but a C# host wiring `MafBridgeSettings.
+    /// OnSurfaced` plus a session store and no logger had no equivalent, so its restore/persist
+    /// failures fell all the way to `NoopMafObserver`, silently. Reports through the SAME
+    /// `Action<MafSurfacedEvent>` as the block above, so a C# host observes both channels through one
+    /// callback.
+    interface IMafSessionObserver with
+        member _.OnSessionRestoreFailed(chat: ChatId, failure: SessionFailure) =
+            report "SessionRestoreFailed" $"restoring the durable session for chat {UMX.untag chat} failed: %A{failure}"
+
+        member _.OnSessionPersistFailed(chat: ChatId, error: exn) =
+            reportWithError "SessionPersistFailed" $"persisting the durable session for chat {UMX.untag chat} failed: {error.Message}" error
+
 /// Settings for `MafTelegramBridge.StartPollingAsync`/`StartWebhookAsync` — every member is a
 /// plain, mutable, C#-safe property; omitting all of them (`MafBridgeSettings()`) is the
 /// zero-config path.

@@ -561,7 +561,11 @@ an empty turn, or over-long/invalid output.
 **Durable sessions — survive a process restart** (optional). By default the agent's conversation
 session (`AgentSession`) lives in memory: a process restart loses any in-flight approval, though the
 tap itself is still acknowledged and owner-checked, then surfaced as **stale** (`IMafObserver.
-OnStaleDecision`) rather than silently dropped or wrongly resumed. Opt into durability with
+OnStaleDecision`) rather than silently dropped or wrongly resumed. A restore/persist failure on the
+durable path itself reaches a C# host the same way: `MafBridgeSettings.OnSurfaced` receives
+`SessionRestoreFailed`/`SessionPersistFailed` kinds (`MafSurfacedEvent.Kind`), not just F#'s own
+`IMafSessionObserver` — "nothing is silently dropped" above holds for the durable-session channel too,
+on either façade. Opt into durability with
 `TgBotConfig.WithSessionStore`/`TgWebhookConfig.WithSessionStore`, choosing one of three
 interchangeable `TgLLM.Core.ISessionStore` implementations:
 
