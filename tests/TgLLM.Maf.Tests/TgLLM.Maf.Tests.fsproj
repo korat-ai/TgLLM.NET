@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <Compile Include="ApprovalDescriptorTests.fs" />
+    <Compile Include="SessionEnvelopeTests.fs" />
     <Compile Include="OwnerResolutionTests.fs" />
     <Compile Include="ApprovalRenderingTests.fs" />
     <Compile Include="PendingApprovalsTests.fs" />

@@ -5,6 +5,8 @@
 module TgLLM.Core.Tests.BindingEvictionSweeperTests
 
 open System
+open System.Collections.Generic
+open System.IO
 open System.Threading
 open System.Threading.Tasks
 open Expecto
@@ -29,6 +31,29 @@ let private pollUntil (ms: int) (predicate: unit -> bool) : Task =
         if not (predicate ()) then
             failtest "timed out waiting for the expected condition"
     }
+
+/// Wraps an `IBindingStore` so its `EvictExpired` throws once — an `IOException`, the shape a real
+/// `FileBindingStore.EvictExpired` failure takes on a file lock or a full disk mid-rewrite — then
+/// delegates to `inner` on every later call. Reproduces a transient eviction IO failure for the
+/// sole purpose of proving the background loop survives it instead of dying silently — the
+/// `IBindingStore` counterpart to `SessionEvictionSweeperTests.ThrowOnceThenDelegateSessionStore`.
+type private ThrowOnceThenDelegateBindingStore(inner: IBindingStore) =
+    let mutable evictExpiredCalls = 0
+
+    member _.EvictExpiredCallCount = evictExpiredCalls
+
+    interface IBindingStore with
+        member _.Save(bindings: IReadOnlyList<ToolBinding>, ct: CancellationToken) : ValueTask = inner.Save(bindings, ct)
+        member _.TryGet(token: CallbackToken, ct: CancellationToken) : ValueTask<ToolBinding voption> = inner.TryGet(token, ct)
+        member _.Remove(tokens: IReadOnlyList<CallbackToken>, ct: CancellationToken) : ValueTask = inner.Remove(tokens, ct)
+
+        member _.EvictExpired(now: DateTimeOffset) : ValueTask<int> =
+            evictExpiredCalls <- evictExpiredCalls + 1
+
+            if evictExpiredCalls = 1 then
+                raise (IOException "simulated transient eviction IO failure")
+            else
+                inner.EvictExpired(now)
 
 [<Tests>]
 let bindingEvictionSweeperTests =
@@ -103,6 +128,24 @@ let bindingEvictionSweeperTests =
                 let sweeper = new BindingEvictionSweeper(store, (fun () -> DateTimeOffset.UnixEpoch), interval = TimeSpan.FromMilliseconds 20.0)
                 do! Task.Delay 50 // let the loop tick at least once
                 do! (sweeper :> IAsyncDisposable).DisposeAsync().AsTask()
+            }
+            |> fun t -> t.GetAwaiter().GetResult()
+
+        testCase "the background loop survives a transient EvictExpired failure and keeps sweeping on later ticks" <| fun _ ->
+            task {
+                let inner = InMemoryBindingStore() :> IBindingStore
+                let store = ThrowOnceThenDelegateBindingStore(inner)
+                let now = DateTimeOffset.UnixEpoch.AddDays 1.0
+
+                use sweeper =
+                    new BindingEvictionSweeper(store :> IBindingStore, (fun () -> now), interval = TimeSpan.FromMilliseconds 20.0)
+
+                // A generous timeout: the first tick's EvictExpired throws, the loop must still be
+                // alive to make a second call on the NEXT tick — before the fix this never happens
+                // (the throw faults `loopTask`, so the count sticks at 1 forever) and this times out.
+                do! pollUntil 10000 (fun () -> store.EvictExpiredCallCount > 1)
+
+                Expect.isGreaterThan store.EvictExpiredCallCount 1 "the loop kept sweeping after its first EvictExpired call threw"
             }
             |> fun t -> t.GetAwaiter().GetResult()
     ]

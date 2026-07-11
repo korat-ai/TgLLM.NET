@@ -21,7 +21,10 @@
          suite, so this project's owner-authorization acceptance test doesn't reimplement an
          equivalent Kestrel-hosted fake from scratch. -->
     <ProjectReference Include="..\TgLLM.Integration.Tests\TgLLM.Integration.Tests.fsproj" />
-    <!-- LiteDbBindingStore.OpenAt, for the LiteDB restart-persistence acceptance test. -->
+    <!-- FileSessionStore.OpenAt, for the durable-session restart-resume acceptance test. -->
+    <ProjectReference Include="..\..\src\TgLLM.Persistence\TgLLM.Persistence.fsproj" />
+    <!-- LiteDbBindingStore.OpenAt / LiteDbSessionStore.OpenAt, for the LiteDB restart-persistence
+         acceptance tests. -->
     <ProjectReference Include="..\..\src\TgLLM.Persistence.LiteDb\TgLLM.Persistence.LiteDb.fsproj" />
     <!-- The MAF bridge's C#-idiomatic surface (MafTelegramBridge et al.), for its idiom-leak canary. -->
     <ProjectReference Include="..\..\src\TgLLM.Maf\TgLLM.Maf.fsproj" />

@@ -2,8 +2,11 @@ namespace TgLLM.Maf
 
 open System
 open System.Collections.Concurrent
+open System.Collections.Generic
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
+open FSharp.UMX
 open Microsoft.Extensions.Logging
 open Microsoft.Agents.AI
 open Microsoft.Extensions.AI
@@ -42,6 +45,16 @@ type LoggingMafObserver(logger: ILogger) =
 
         member _.OnTurnFailed(chat: ChatId, error: exn) =
             logger.LogError(error, "MAF: a turn in chat {Chat} failed before it produced a reply or a pending approval", [| chat :> obj |])
+
+    interface IMafSessionObserver with
+        member _.OnSessionRestoreFailed(chat: ChatId, failure: SessionFailure) =
+            logger.LogWarning(
+                "MAF: restoring the durable session for chat {Chat} failed: {Failure}",
+                [| chat :> obj; $"%A{failure}" :> obj |]
+            )
+
+        member _.OnSessionPersistFailed(chat: ChatId, error: exn) =
+            logger.LogError(error, "MAF: persisting the durable session for chat {Chat} failed", [| chat :> obj |])
 
 /// The bridge's internal turn-processing helpers — pure with respect to MAF (no `agent.RunAsync`
 /// call lives here), composing `ApprovalDetection`/`ApprovalRendering`/`ApprovalDescriptor` into
@@ -120,6 +133,234 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                 gate.Release() |> ignore
         }
 
+    /// Three-tier resolution, mirroring `BridgeBuild.resolveObserver`'s own primary-observer
+    /// fallback chain: `observer` itself when it also implements `IMafSessionObserver` (true of
+    /// `LoggingMafObserver`/`NoopMafObserver`, which implement both); else the bot's own logger,
+    /// wrapped the same way the zero-config path wraps it for `IMafObserver`, so a host-supplied
+    /// CUSTOM `IMafObserver` that does NOT also implement the durable-session channel still gets
+    /// its restore/persist failures logged whenever a logger is wired, rather than every such host
+    /// silently losing this channel; else a noop, same as before.
+    let sessionObserver: IMafSessionObserver =
+        match box observer with
+        | :? IMafSessionObserver as so -> so
+        | _ ->
+            match bot.Logger with
+            | Some logger -> LoggingMafObserver logger :> IMafSessionObserver
+            | None -> NoopMafObserver() :> IMafSessionObserver
+
+    /// Rebuilds ONE pending approval from its persisted descriptor, with NO live in-memory state —
+    /// the read counterpart to `toPersistedDto`. `ArgumentsJson` round-trips through `JsonElement`
+    /// values (the same boxed-element shape a real `DeserializeSessionAsync` leaves
+    /// `FunctionCallContent.Arguments` holding), never re-typed to the original CLR values — nothing
+    /// this leaf does with a rehydrated request's arguments needs them typed any further than that.
+    let rehydrate (chat: ChatId) (dto: PersistedApprovalDto) : PendingApproval =
+        let argsDict =
+            match dto.ArgumentsJson with
+            | null -> Dictionary<string, obj | null>() :> IDictionary<string, obj | null>
+            | json ->
+                let d = Dictionary<string, obj | null>()
+
+                match JsonSerializer.Deserialize<Dictionary<string, JsonElement>> json |> Option.ofObj with
+                | Some parsed ->
+                    for kv in parsed do
+                        d[kv.Key] <- box kv.Value
+                | None -> ()
+
+                d :> IDictionary<string, obj | null>
+
+        let call = FunctionCallContent(dto.CallId, dto.Tool, argsDict)
+        let request = ToolApprovalRequestContent(dto.RequestId, call)
+        let owner = if dto.OwnerUserId.HasValue then User(UMX.tag<userId> dto.OwnerUserId.Value) else Anyone
+
+        { Chat = chat
+          Request = request
+          Owner = owner
+          MessageId = UMX.tag<messageId> dto.MessageId
+          ExpiresAt = dto.ExpiresAt |> Option.ofNullable }
+
+    /// The session factory `conversations.GetOrCreate` runs (at most once per chat, per
+    /// `Conversations`' own `Lazy` caching). With no store configured this is today's behavior,
+    /// byte-identical — a fresh `CreateSessionAsync`, nothing more. With a store configured, the
+    /// durable record is tried FIRST: a decode/validate failure, or a throw deserializing the session
+    /// itself, both report via `IMafSessionObserver.OnSessionRestoreFailed` and fall back to a fresh
+    /// session (the rejected/corrupt record is also removed from the store, so it is not retried
+    /// forever on every later turn); a genuinely absent record is silently a fresh session, not a
+    /// failure. A throw READING the store itself (`store.TryGet`) is DIFFERENT: it reports the SAME
+    /// `OnSessionRestoreFailed(StoreUnavailable _)`, but then RE-RAISES rather than falling back to a
+    /// fresh session — a `Lazy<Task<AgentSession>>`-cached fresh session would otherwise sit in
+    /// `Conversations` for the rest of the process's life, and the NEXT end-of-turn persist would
+    /// overwrite (destroy) the chat's still-intact durable record over what may have been a purely
+    /// transient read blip. Re-raising instead faults the `Lazy` — `Conversations.GetOrCreate` evicts
+    /// it on a fault (its own doc comment) — so the very NEXT call retries the read against the
+    /// record, which is still there. `Approvals` is rehydrated into `pendingApprovals` ONLY once the
+    /// session itself deserialized successfully — a session and its approvals are never
+    /// half-restored: either both come back, or neither does.
+    let restoreOrCreate (chat: ChatId) : unit -> ValueTask<AgentSession> =
+        fun () ->
+            match bot.SessionStore with
+            | None -> agent.CreateSessionAsync cts.Token
+            | Some store ->
+                ValueTask<AgentSession>(
+                    task {
+                        let! attempt =
+                            task {
+                                try
+                                    let! record = store.TryGet(chat, cts.Token)
+                                    return Ok record
+                                with ex ->
+                                    return Error ex
+                            }
+
+                        match attempt with
+                        | Error ex ->
+                            sessionObserver.OnSessionRestoreFailed(chat, StoreUnavailable ex.Message)
+
+                            // Re-raise rather than falling back to a fresh session — see this
+                            // function's own doc comment. A fresh session here would be cached by
+                            // `Conversations`' `Lazy<Task<AgentSession>>` for the rest of the
+                            // process's life, and the NEXT end-of-turn persist would overwrite the
+                            // chat's still-intact durable record over what may be a purely transient
+                            // read blip. Re-raising instead faults the `Lazy`, which
+                            // `Conversations.GetOrCreate` evicts on a fault (its own doc comment), so
+                            // the NEXT call retries the read against the record, which is still there.
+                            return raise ex
+                        | Ok ValueNone -> return! agent.CreateSessionAsync cts.Token
+                        | Ok(ValueSome record) ->
+                            match SessionEnvelope.decodeAndValidate SessionEnvelope.currentMafVersion record.Payload with
+                            | Error failure ->
+                                sessionObserver.OnSessionRestoreFailed(chat, failure)
+
+                                // Guarded: a read-only backing store (`FileSessionStore.Remove`
+                                // rewrites the whole file) can throw here — left unguarded, that
+                                // throw would fault this factory the SAME way a genuine backend
+                                // failure does, misclassifying the whole turn as `OnTurnFailed` with
+                                // no reply ever sent, and (since the invalid record is never actually
+                                // removed) every LATER turn on this chat re-faulting the identical
+                                // way. The fresh session below is still created regardless — an
+                                // un-removable invalid record is a problem for the NEXT restore
+                                // attempt to rediscover, not a reason to fail THIS turn too.
+                                try
+                                    do! store.Remove(chat, cts.Token)
+                                with removeEx ->
+                                    sessionObserver.OnSessionPersistFailed(chat, removeEx)
+
+                                return! agent.CreateSessionAsync cts.Token
+                            | Ok env ->
+                                // The approval rehydration runs INSIDE this SAME try, alongside
+                                // `DeserializeSessionAsync` — `SessionEnvelope.validate` (above)
+                                // already refuses a null `Approvals` array or an approval missing a
+                                // usable `RequestId`/`CallId`/`Tool`, but it cannot cheaply detect
+                                // every shape that still throws once `rehydrate` actually runs (a
+                                // syntactically valid but non-object `ArgumentsJson`, e.g. `"[1,2,3]"`,
+                                // fails `JsonSerializer.Deserialize<Dictionary<string,JsonElement>>`).
+                                // `Array.map` is eager: if ANY entry throws, `rehydrated` is never
+                                // bound and NOTHING below it runs, so a residual throw here is caught
+                                // by the SAME `with ex ->` as a corrupt `SessionJson` — reported via
+                                // `OnSessionRestoreFailed(CorruptRecord)`, the record removed, a fresh
+                                // session used — rather than throwing PAST both of this function's own
+                                // remove-on-failure gates and bricking the chat for good. Either both
+                                // the session AND every approval come back, or neither does.
+                                let! restored =
+                                    task {
+                                        try
+                                            let element =
+                                                use doc = JsonDocument.Parse env.SessionJson
+                                                doc.RootElement.Clone()
+
+                                            let! session = agent.DeserializeSessionAsync(element, cancellationToken = cts.Token)
+                                            let rehydrated = env.Approvals |> Array.map (rehydrate chat) |> Array.toList
+
+                                            for approval in rehydrated do
+                                                pendingApprovals.Add approval
+
+                                            return Ok session
+                                        with ex ->
+                                            return Error ex
+                                    }
+
+                                match restored with
+                                | Ok session -> return session
+                                | Error ex ->
+                                    sessionObserver.OnSessionRestoreFailed(chat, CorruptRecord ex.Message)
+
+                                    // Guarded the same way, and for the same reason, as the
+                                    // validate-failure branch's own `store.Remove` above.
+                                    try
+                                        do! store.Remove(chat, cts.Token)
+                                    with removeEx ->
+                                        sessionObserver.OnSessionPersistFailed(chat, removeEx)
+
+                                    return! agent.CreateSessionAsync cts.Token
+                    }
+                )
+
+    /// The persisted counterpart to a live `PendingApproval` — the write side of `rehydrate`.
+    /// `None` when `p.Request.ToolCall` is not a `FunctionCallContent` — `ToolApprovalRequestContent
+    /// .ToolCall` is statically `ToolCallContent`, and the resolved 10.6.0 binaries ship several OTHER
+    /// concrete subtypes (`McpServerToolCallContent`, `CodeInterpreterToolCallContent`, etc.) that
+    /// `ApprovalDetection` already renders a usable prompt for via its own fallback branch — so a
+    /// pending approval over one of those is perfectly live in-memory, but this leaf only knows how
+    /// to PERSIST the `FunctionCallContent` shape (`CallId`/`Name`/`Arguments`) `rehydrate` expects
+    /// back. Skipping it here (rather than hard-casting and throwing) is what lets `persistConversation`
+    /// write the session and every OTHER, function-shaped sibling even with one of these pending —
+    /// the skipped entry simply degrades to stale on the next restart, which is a far better outcome
+    /// than losing the WHOLE record (session included) to one un-persistable approval.
+    let toPersistedDto (p: PendingApproval) : PersistedApprovalDto option =
+        match p.Request.ToolCall with
+        | :? FunctionCallContent as call ->
+            let argsJson: string | null =
+                match call.Arguments |> Option.ofObj with
+                | Some a -> JsonSerializer.Serialize a
+                | None -> null
+
+            Some
+                { RequestId = p.Request.RequestId
+                  CallId = call.CallId
+                  Tool = call.Name
+                  ArgumentsJson = argsJson
+                  OwnerUserId =
+                    match p.Owner with
+                    | Anyone -> Nullable()
+                    | User uid -> Nullable(UMX.untag uid)
+                  MessageId = UMX.untag p.MessageId
+                  ExpiresAt = p.ExpiresAt |> Option.toNullable }
+        | _ -> None
+
+    /// End-of-turn persist: writes this chat's WHOLE durable record — the framework's own serialized
+    /// session, plus every still-pending, not-yet-expired approval snapshotted from
+    /// `pendingApprovals` (an already-decided or expired entry is never written, so a restored table
+    /// never resurrects a decision that can no longer be honored anyway). Never throws — a write
+    /// failure self-reports via `IMafSessionObserver.OnSessionPersistFailed` instead, since the
+    /// turn it is persisting the OUTCOME of already succeeded on the MAF side by the time this runs;
+    /// only the DURABLE copy is at risk. A no-op when no store is configured.
+    let persistConversation (chat: ChatId) (session: AgentSession) : Task =
+        task {
+            match bot.SessionStore with
+            | None -> ()
+            | Some store ->
+                try
+                    let! element = agent.SerializeSessionAsync(session, cancellationToken = cts.Token)
+                    let now = bot.Clock()
+
+                    let approvals =
+                        pendingApprovals.SnapshotFor chat
+                        |> List.filter (fun p -> Expiry.isLive now p.ExpiresAt)
+                        |> List.choose toPersistedDto
+                        |> List.toArray
+
+                    let envelope: ConversationEnvelopeDto =
+                        { Format = SessionEnvelope.CurrentFormat
+                          MafVersion = SessionEnvelope.currentMafVersion
+                          MeaiVersion = SessionEnvelope.currentMeaiVersion
+                          SessionJson = element.GetRawText()
+                          Approvals = approvals }
+
+                    do! store.Save(chat, { Payload = SessionEnvelope.encode envelope; LastActivityAt = now }, cts.Token)
+                with ex ->
+                    sessionObserver.OnSessionPersistFailed(chat, ex)
+        }
+        :> Task
+
     /// Sends a brand-new approval message (the turn's OWN first send, or a further request from a
     /// turn that has no earlier approval message to edit) via `TgBot.SendKeyboardPlan` —
     /// owner-scoped, single-use, and optionally expiring, exactly like any other host-initiated
@@ -135,7 +376,8 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                     { Chat = chat
                       Request = detected.Request
                       Owner = owner
-                      MessageId = messageId }
+                      MessageId = messageId
+                      ExpiresAt = expiry |> ValueOption.map (fun span -> bot.Clock() + span) |> ValueOption.toOption }
         }
         :> Task
 
@@ -233,7 +475,8 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                             { Chat = chat
                               Request = detected.Request
                               Owner = owner
-                              MessageId = messageId }
+                              MessageId = messageId
+                              ExpiresAt = expiry |> ValueOption.map (fun span -> bot.Clock() + span) |> ValueOption.toOption }
                     | EditNotFound ->
                         observer.OnInvalidOutput(
                             chat,
@@ -295,8 +538,52 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                 do!
                     withChatLock chat (fun () ->
                         task {
+                            // With a store configured, restore this chat's durable record (session +
+                            // still-pending approvals) BEFORE the peek below — a post-restart tap is
+                            // the FIRST thing to touch this chat since the process came back up, so
+                            // without this, `pendingApprovals` is still the fresh, empty, in-memory
+                            // table `MafBridge`'s constructor left it in and every restart tap would
+                            // land stale regardless of what was persisted. `conversations.GetOrCreate`
+                            // is `Lazy`-cached (`Conversations.fs`), so the resume branch's OWN
+                            // `GetOrCreate` call below reuses this SAME restored session rather than
+                            // restoring twice. No store configured ⇒ this is skipped entirely — the
+                            // no-store path never eagerly creates a session for what may be a stale
+                            // tap, byte-identical to before this feature existed.
+                            if bot.SessionStore.IsSome then
+                                try
+                                    let! _ = conversations.GetOrCreate(chat, restoreOrCreate chat)
+                                    ()
+                                with _ ->
+                                    // Swallowed, deliberately: `restoreOrCreate` itself already
+                                    // reports the specific `SessionFailure` via
+                                    // `OnSessionRestoreFailed` before EVER re-raising (both its
+                                    // decode/validate-failure branch, which removes the bad record
+                                    // first, and its store-read-failure branch, which re-raises
+                                    // WITHOUT falling back to a fresh session so a transient blip can
+                                    // never silently overwrite an intact record — see its own doc
+                                    // comment). Reporting AGAIN here would double-report the identical
+                                    // failure for the SAME tap. Whatever threw, nothing was rehydrated
+                                    // into `pendingApprovals` for this chat, so the peek below finds no
+                                    // entry and reports the tap stale on its own — exactly the right
+                                    // outcome for a tap that arrived while this chat's restore was
+                                    // failing.
+                                    ()
+
                             match pendingApprovals.TryGet(chat, descriptor.RequestId) with
                             | ValueNone -> observer.OnStaleDecision descriptor
+                            | ValueSome peeked when not (Expiry.isLive (bot.Clock()) peeked.ExpiresAt) ->
+                                // Checked BEFORE the owner scope, and separately from
+                                // `pendingApprovals.TryConsume` below: a CHAINED approval's own
+                                // replacement binding (`sendChainedApproval`'s `EditKeyboardPlan`) has
+                                // no expiry of its own — the Tool Router's binding-level expiry check
+                                // (which refuses an expired FRESH send's tap before it ever reaches
+                                // here) never applies to it, so `PendingApproval.ExpiresAt` is the
+                                // ONLY signal this leaf has left. Without this branch, an expired
+                                // chained approval's tap falls through to a normal resume — the SAME
+                                // decision that lands stale after a restart (the persist filter prunes
+                                // it) instead RESUMES pre-restart, a correctness gap this branch closes
+                                // by refusing it here too, matching `Expiry.isLive`'s own semantics.
+                                observer.OnStaleDecision descriptor
                             | ValueSome peeked when not (OwnerScope.isAllowed peeked.Owner (Some ctx.User.Id)) ->
                                 ctx.Answer(OwnerScope.DefaultDeniedNotice)
                             | ValueSome _ ->
@@ -315,12 +602,12 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                                     let! resumed =
                                         task {
                                             try
-                                                let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
+                                                let! conversation = conversations.GetOrCreate(chat, restoreOrCreate chat)
                                                 let responseContent = pending.Request.CreateResponse approved
                                                 let contents = ResizeArray<AIContent> [ responseContent :> AIContent ]
                                                 let resumeMessage = ChatMessage(ChatRole.User, contents)
                                                 let! response = agent.RunAsync(resumeMessage, conversation.Session, cancellationToken = cts.Token)
-                                                return Ok response
+                                                return Ok(response, conversation.Session)
                                             with ex ->
                                                 return Error ex
                                         }
@@ -339,7 +626,19 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
 
                                         reportAbandoned chat
                                         conversations.Drop chat
-                                    | Ok response ->
+
+                                        // The conversation is presumably dead — its durable record
+                                        // (if any) is stale from this point on, so it is removed
+                                        // alongside the in-memory drop above rather than left to
+                                        // resurrect a dead continuation on the NEXT restart.
+                                        match bot.SessionStore with
+                                        | None -> ()
+                                        | Some store ->
+                                            try
+                                                do! store.Remove(chat, cts.Token)
+                                            with removeEx ->
+                                                sessionObserver.OnSessionPersistFailed(chat, removeEx)
+                                    | Ok(response, session) ->
                                         // The resume itself already succeeded by this point — a
                                         // failure delivering ITS outcome (the edit-in-place, or a
                                         // chained/further approval's own send) is a Telegram-side
@@ -361,6 +660,11 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                                                 chat,
                                                 DeliveryFailed $"failed to deliver the resumed turn's outcome: %s{deliveryEx.Message}"
                                             )
+
+                                        // Persisted AFTER the outcome/chained-approval sends above, so a
+                                        // chained approval this very resume raised is itself captured in
+                                        // the record this write produces — surviving a SECOND restart.
+                                        do! persistConversation chat session
                         })
         }
 
@@ -385,10 +689,11 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
         withChatLock chat (fun () ->
             task {
                 try
-                    let! conversation = conversations.GetOrCreate(chat, (fun () -> agent.CreateSessionAsync cts.Token))
+                    let! conversation = conversations.GetOrCreate(chat, restoreOrCreate chat)
                     let resolvedOwner = RunOwner.resolve explicitOwner None chat
                     let! response = agent.RunAsync(prompt, conversation.Session, cancellationToken = cts.Token)
                     do! processInitialResponse chat resolvedOwner response
+                    do! persistConversation chat conversation.Session
                 with ex ->
                     observer.OnTurnFailed(chat, ex)
             })
@@ -415,10 +720,11 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
         withChatLock message.Chat (fun () ->
             task {
                 try
-                    let! conversation = conversations.GetOrCreate(message.Chat, (fun () -> agent.CreateSessionAsync cts.Token))
+                    let! conversation = conversations.GetOrCreate(message.Chat, restoreOrCreate message.Chat)
                     let resolvedOwner = RunOwner.resolve None (Some message.Sender.Id) message.Chat
                     let! response = agent.RunAsync(message.Text, conversation.Session, cancellationToken = cts.Token)
                     do! processInitialResponse message.Chat resolvedOwner response
+                    do! persistConversation message.Chat conversation.Session
                 with ex ->
                     observer.OnTurnFailed(message.Chat, ex)
             })

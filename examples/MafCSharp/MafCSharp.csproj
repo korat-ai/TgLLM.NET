@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\TgLLM.CSharp\TgLLM.CSharp.csproj" />
     <ProjectReference Include="..\..\src\TgLLM.Maf\TgLLM.Maf.fsproj" />
+    <ProjectReference Include="..\..\src\TgLLM.Persistence\TgLLM.Persistence.fsproj" />
   </ItemGroup>
 
 </Project>

@@ -7,6 +7,7 @@
   <!-- The durable `FileBindingStore : IBindingStore` (System.Text.Json on disk). -->
   <ItemGroup>
     <Compile Include="FileBindingStore.fs" />
+    <Compile Include="FileSessionStore.fs" />
   </ItemGroup>
 
   <ItemGroup>

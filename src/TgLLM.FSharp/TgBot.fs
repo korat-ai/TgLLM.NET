@@ -92,6 +92,19 @@ type CommonConfig =
       /// in-process `InMemoryBindingStore`; `Some` (e.g. a `TgLLM.Persistence.FileBindingStore`, or
       /// `TgLLM.Persistence.LiteDb.LiteDbBindingStore`) makes bindings survive a restart.
       BindingStore: IBindingStore option
+      /// Backs the durable MAF agent session for a chat (serialized/deserialized session bytes,
+      /// keyed by `ChatId` — see `TgLLM.Core.ISessionStore`/`SessionRecord`). `None` (the default)
+      /// means the durable-session feature is OFF: unlike `BindingStore`, there is no in-memory
+      /// default here, because a bot with no session store keeps today's purely in-memory per-chat
+      /// conversation/approval behavior, byte-identical.
+      SessionStore: ISessionStore option
+      /// The idle window this bot's background `SessionEvictionSweeper` (`TgLLM.Core.Tools`) uses
+      /// to call `ISessionStore.EvictIdle` on the configured session store. `None` (the default)
+      /// means the bot's own wiring falls back to 30 days when a store IS configured — unlike
+      /// `BindingEvictionInterval`, this field's `None` is meaningful beyond "use the built-in
+      /// default": with no session store at all, there is nothing for a sweeper to sweep, so none is
+      /// ever started, exactly mirroring `SessionStore` itself having no in-memory default.
+      SessionIdleEviction: TimeSpan option
       /// Reclaims a per-chat dispatcher channel/worker once idle this long with nothing buffered.
       /// `None` (the default) keeps the baseline behavior — a chat's resources live for
       /// the whole run, exactly `PerChatChannelDispatcher`'s own no-`idleTimeout` default.
@@ -120,6 +133,8 @@ module CommonConfig =
           Logger = None
           Tools = None
           BindingStore = None
+          SessionStore = None
+          SessionIdleEviction = None
           IdleChatEviction = None
           Clock = None
           BindingEvictionInterval = None
@@ -134,6 +149,13 @@ module CommonConfig =
     /// `TgLLM.Persistence.FileBindingStore.openAt "bindings.json"` or
     /// `TgLLM.Persistence.LiteDb.LiteDbBindingStore.OpenAt "bindings.db"`.
     let withBindingStore (store: IBindingStore) (c: CommonConfig) = { c with BindingStore = Some store }
+    /// Back the durable MAF agent session with a store instead of today's purely in-memory
+    /// conversation/approval behavior — e.g. a `TgLLM.Persistence`/`TgLLM.Persistence.LiteDb`
+    /// `ISessionStore` implementation.
+    let withSessionStore (store: ISessionStore) (c: CommonConfig) = { c with SessionStore = Some store }
+    /// Override the idle window this bot's background session-eviction sweep uses — defaults to 30
+    /// days when a session store IS configured. Has no effect on a bot with no session store.
+    let withSessionIdleEviction (span: TimeSpan) (c: CommonConfig) = { c with SessionIdleEviction = Some span }
     /// Reclaim an idle chat's dispatcher resources after `timeout` with nothing buffered.
     let withIdleChatEviction (timeout: TimeSpan) (c: CommonConfig) = { c with IdleChatEviction = Some timeout }
     /// Override the clock expiry/redelivery-dedup decisions read "now" from — defaults to real time.
@@ -160,6 +182,16 @@ type TgBotConfig =
 
     member this.WithBindingStore(store: IBindingStore) =
         { this with Common = this.Common |> CommonConfig.withBindingStore store }
+
+    member this.WithSessionStore(store: ISessionStore) =
+        { this with Common = this.Common |> CommonConfig.withSessionStore store }
+
+    /// Also sets the idle window this bot's background session-eviction sweep uses (defaults to 30
+    /// days when omitted, but only ever a durable-session default — not the 1-arg overload's
+    /// "no store at all" state).
+    member this.WithSessionStore(store: ISessionStore, idleAfter: TimeSpan) =
+        { this with
+            Common = this.Common |> CommonConfig.withSessionStore store |> CommonConfig.withSessionIdleEviction idleAfter }
 
     member this.WithIdleChatEviction(timeout: TimeSpan) =
         { this with Common = this.Common |> CommonConfig.withIdleChatEviction timeout }
@@ -191,6 +223,16 @@ type TgWebhookConfig =
 
     member this.WithBindingStore(store: IBindingStore) =
         { this with Common = this.Common |> CommonConfig.withBindingStore store }
+
+    member this.WithSessionStore(store: ISessionStore) =
+        { this with Common = this.Common |> CommonConfig.withSessionStore store }
+
+    /// Also sets the idle window this bot's background session-eviction sweep uses (defaults to 30
+    /// days when omitted, but only ever a durable-session default — not the 1-arg overload's
+    /// "no store at all" state).
+    member this.WithSessionStore(store: ISessionStore, idleAfter: TimeSpan) =
+        { this with
+            Common = this.Common |> CommonConfig.withSessionStore store |> CommonConfig.withSessionIdleEviction idleAfter }
 
     member this.WithIdleChatEviction(timeout: TimeSpan) =
         { this with Common = this.Common |> CommonConfig.withIdleChatEviction timeout }
@@ -227,9 +269,11 @@ type TgBot
         tools: ToolRegistry option,
         clock: Clock,
         logger: ILogger option,
+        sessionStore: ISessionStore option,
         cts: CancellationTokenSource,
         runTask: Task,
         evictionSweeper: BindingEvictionSweeper,
+        sessionEvictionSweeper: SessionEvictionSweeper option,
         webhookSource: WebhookUpdateSource option
     ) =
 
@@ -267,6 +311,13 @@ type TgBot
     /// default should bridge to the SAME logger this bot itself reports through, rather than needing
     /// its own separate logger-wiring seam.
     member _.Logger: ILogger option = logger
+
+    /// This bot's own session store (`TgBotConfig.WithSessionStore`/`TgWebhookConfig.WithSessionStore`),
+    /// if one was wired in — `None` means the durable-session feature is off, exactly the condition
+    /// `wireBot` itself leaves unresolved (no in-memory default, unlike `BindingStore`). Exposed for
+    /// the same reason as `Tools`/`Clock`/`Logger`: a collaborator built AFTER this bot (e.g. the MAF
+    /// bridge) can read the configured session store rather than needing its own separate wiring seam.
+    member _.SessionStore: ISessionStore option = sessionStore
 
     /// Send a keyboard built from a neutral Tool Router plan; presses route to the tools
     /// registered via `TgBotConfig.WithTools`. Delegates to the shared `ToolKeyboardOps.deliver`
@@ -497,6 +548,11 @@ type TgBot
 
                 do! dispatcher.DisposeAsync()
                 do! (evictionSweeper :> IAsyncDisposable).DisposeAsync()
+
+                match sessionEvictionSweeper with
+                | Some s -> do! (s :> IAsyncDisposable).DisposeAsync()
+                | None -> ()
+
                 cts.Dispose()
             }
             |> ValueTask
@@ -524,6 +580,9 @@ type TgBot
         let api = TelegramBotApiClient(client) :> IBotApiClient
         let store = InMemoryHookStore() :> IHookStore
         let bindingStore = common.BindingStore |> Option.defaultWith (fun () -> InMemoryBindingStore() :> IBindingStore)
+        // NO in-memory default here (unlike `bindingStore` above) — `None` means the durable-session
+        // feature stays off, keeping every bot's in-memory conversation/approval behavior unchanged.
+        let sessionStore = common.SessionStore
         // Shared with `ToolDispatch` below (via `UpdateProcessor`) so `SendKeyboardPlan`'s
         // send-time record and `EditKeyboardAsync`'s edit-time remove agree on one message's
         // history of bindings.
@@ -556,6 +615,16 @@ type TgBot
         // bot's OWN `clock`, so a host that overrides it for deterministic tests gets a
         // deterministic sweep too.
         let evictionSweeper = new BindingEvictionSweeper(bindingStore, clock, ?interval = common.BindingEvictionInterval)
+
+        // Started ONLY when a session store is configured — unlike `evictionSweeper` above, a bot
+        // with no durable session has nothing for this sweeper to sweep, so none is ever built
+        // (mirrors `sessionStore` itself having no in-memory default). `SessionIdleEviction`'s own
+        // `None` here means "use this bot's own 30-day default", NOT "off" — that distinction is
+        // `SessionStore option` itself, not this field.
+        let sessionEvictionSweeper =
+            match sessionStore with
+            | Some store -> Some(new SessionEvictionSweeper(store, clock, defaultArg common.SessionIdleEviction (TimeSpan.FromDays 30.0)))
+            | None -> None
 
         let processor =
             UpdateProcessor(
@@ -595,9 +664,11 @@ type TgBot
             common.Tools,
             clock,
             common.Logger,
+            sessionStore,
             cts,
             runTask,
             evictionSweeper,
+            sessionEvictionSweeper,
             webhookSource
         )
 
