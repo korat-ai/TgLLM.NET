@@ -565,7 +565,11 @@ OnStaleDecision`) rather than silently dropped or wrongly resumed. Opt into dura
 `TgBotConfig.WithSessionStore`/`TgWebhookConfig.WithSessionStore`, choosing one of three
 interchangeable `TgLLM.Core.ISessionStore` implementations:
 
-- `TgLLM.Core.InMemorySessionStore()` — the default when no store is configured; NOT durable.
+- `TgLLM.Core.InMemorySessionStore()` — an in-memory implementation (handy for tests); NOT durable.
+  Note this is NOT the same as configuring no store at all: with no store, the durable-session
+  machinery stays off entirely (no per-turn serialization, no sweeper — the in-memory default
+  described above); wiring this store turns that machinery on but keeps the state in memory, so it
+  still does not survive a restart.
 - `TgLLM.Persistence.FileSessionStore.OpenAt("sessions.json")` — durable, JSON-on-disk.
 - `TgLLM.Persistence.LiteDb.LiteDbSessionStore.OpenAt("sessions.db")` — durable, embedded LiteDB;
   implements `IDisposable`.
@@ -610,6 +614,12 @@ even for chats nobody ever returns to.
 - **Persist timing.** A conversation's durable record is written AFTER each completed turn — a crash
   in the narrow window between a turn finishing and its save degrades that one tap to the ordinary
   "no longer pending" stale path above; it is never a wrong resume.
+- **A custom store's read failure at decision time.** With a custom `ISessionStore` whose `TryGet`
+  can throw (a network or database backend — the built-in in-memory/file/LiteDB stores do not), a
+  read error at the exact moment a decision is tapped is surfaced (`OnSessionRestoreFailed` with a
+  `StoreUnavailable` reason) and the intact durable record is preserved for a retry on the next turn.
+  That one tap degrades to the stale path — and because the approval button is single-use, the tap
+  consumes it, so the approval is re-driven fresh (or cleared by idle eviction) rather than re-tapped.
 - **Single-process restart survival, not scale-out.** This durability model covers one process
   restarting and picking its own state back up — not horizontal scale-out or concurrent access to
   the SAME conversation from multiple processes at once.

@@ -56,8 +56,11 @@ module SessionDocument =
 /// `LiteDbBindingStore.OpenAt`'s convention): its own collection (`"sessions"`), keyed by chat via
 /// each document's `Id`, in a datafile SEPARATE from any `LiteDbBindingStore` — the two backends
 /// share no file or collection. Implements `IDisposable` (same reason as `LiteDbBindingStore`): a
-/// `LiteDatabase` keeps the datafile open for the connection's lifetime — a caller MUST dispose an
-/// instance before another can open the SAME file (e.g. a simulated restart).
+/// `LiteDatabase` keeps the datafile open for the connection's lifetime, so dispose an instance
+/// before opening another over the SAME file (e.g. a simulated restart). Use a SEPARATE datafile per
+/// store: sharing one file between this and a `LiteDbBindingStore` (or a second session store) is
+/// unsupported — some platforms silently permit two engines over one file rather than rejecting it,
+/// which risks corruption, so the separation is the caller's responsibility, not an enforced lock.
 [<Sealed>]
 type LiteDbSessionStore
     private
