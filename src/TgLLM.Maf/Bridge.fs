@@ -6,6 +6,7 @@ open System.Collections.Generic
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
+open System.Runtime.ExceptionServices
 open FSharp.UMX
 open Microsoft.Extensions.Logging
 open Microsoft.Agents.AI
@@ -223,7 +224,11 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                             // read blip. Re-raising instead faults the `Lazy`, which
                             // `Conversations.GetOrCreate` evicts on a fault (its own doc comment), so
                             // the NEXT call retries the read against the record, which is still there.
-                            return raise ex
+                            // `ExceptionDispatchInfo` rethrows preserving the original throw site's
+                            // stack, so a host debugging a custom store sees where the read actually
+                            // failed rather than this line.
+                            ExceptionDispatchInfo.Capture(ex).Throw()
+                            return failwith "unreachable: ExceptionDispatchInfo.Throw always rethrows"
                         | Ok ValueNone -> return! agent.CreateSessionAsync cts.Token
                         | Ok(ValueSome record) ->
                             match SessionEnvelope.decodeAndValidate SessionEnvelope.currentMafVersion record.Payload with
@@ -583,6 +588,9 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                                 // decision that lands stale after a restart (the persist filter prunes
                                 // it) instead RESUMES pre-restart, a correctness gap this branch closes
                                 // by refusing it here too, matching `Expiry.isLive`'s own semantics.
+                                // Consume the dead entry so a repeat tap on the same (reusable, chained)
+                                // binding stops re-reporting it, then surface this tap as stale.
+                                pendingApprovals.TryConsume(chat, descriptor.RequestId) |> ignore
                                 observer.OnStaleDecision descriptor
                             | ValueSome peeked when not (OwnerScope.isAllowed peeked.Owner (Some ctx.User.Id)) ->
                                 ctx.Answer(OwnerScope.DefaultDeniedNotice)
