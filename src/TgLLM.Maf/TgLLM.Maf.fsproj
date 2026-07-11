@@ -8,9 +8,11 @@
     Compiles top-to-bottom, no forward references (same discipline as every other project in this
     solution). ApprovalDescriptor.fs compiles FIRST, ahead of Types.fs: IMafObserver (Types.fs)'s
     OnStaleDecision/OnResumeFailed members report an ApprovalDescriptor, so that type must already
-    exist by the time Types.fs compiles. Types.fs then holds the rest of the leaf's MAF-agnostic
-    vocabulary (errors, rendering types, the observer interface, bridge options) — no MAF type
-    appears in either file.
+    exist by the time Types.fs compiles. SessionEnvelope.fs compiles next, still ahead of Types.fs:
+    IMafSessionObserver (Types.fs)'s OnSessionRestoreFailed member reports a SessionFailure, defined
+    there, so that type must already exist by the time Types.fs compiles too. Types.fs then holds the
+    rest of the leaf's MAF-agnostic vocabulary (errors, rendering types, the observer interfaces,
+    bridge options) — no MAF type appears in any of the three files.
     OwnerResolution.fs/ApprovalRendering.fs are pure decisions over Types.fs's records, so they
     compile next, in either relative order. PendingApprovals.fs is the first file to reference a real
     MAF type (ToolApprovalRequestContent), so it compiles after the pure layer. Conversations.fs
@@ -30,6 +32,7 @@
   -->
   <ItemGroup>
     <Compile Include="ApprovalDescriptor.fs" />
+    <Compile Include="SessionEnvelope.fs" />
     <Compile Include="Types.fs" />
     <Compile Include="OwnerResolution.fs" />
     <Compile Include="ApprovalRendering.fs" />

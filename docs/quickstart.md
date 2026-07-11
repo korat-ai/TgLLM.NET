@@ -558,12 +558,88 @@ event (C#) reports a condition the bridge could not honor rather than swallowing
 decision, a malformed decision payload, a resume failure (the message is left with no live buttons),
 an empty turn, or over-long/invalid output.
 
-**Honest limits.**
+**Durable sessions — survive a process restart** (optional). By default the agent's conversation
+session (`AgentSession`) lives in memory: a process restart loses any in-flight approval, though the
+tap itself is still acknowledged and owner-checked, then surfaced as **stale** (`IMafObserver.
+OnStaleDecision`) rather than silently dropped or wrongly resumed. A restore/persist failure on the
+durable path itself reaches a C# host the same way: `MafBridgeSettings.OnSurfaced` receives
+`SessionRestoreFailed`/`SessionPersistFailed` kinds (`MafSurfacedEvent.Kind`), not just F#'s own
+`IMafSessionObserver` — "nothing is silently dropped" above holds for the durable-session channel too,
+on either façade. Opt into durability with
+`TgBotConfig.WithSessionStore`/`TgWebhookConfig.WithSessionStore`, choosing one of three
+interchangeable `TgLLM.Core.ISessionStore` implementations:
 
-- The agent's conversation (`AgentSession`) is held **in memory** for this release. Decision buttons
-  ride the durable binding store, so a tap on a pre-restart approval message still routes, is
-  acknowledged, and is owner-checked — it is then surfaced as **stale** rather than silently dropped
-  or wrongly resumed, since the run it belonged to no longer exists after a restart.
+- `TgLLM.Core.InMemorySessionStore()` — an in-memory implementation (handy for tests); NOT durable.
+  Note this is NOT the same as configuring no store at all: with no store, the durable-session
+  machinery stays off entirely (no per-turn serialization, no sweeper — the in-memory default
+  described above); wiring this store turns that machinery on but keeps the state in memory, so it
+  still does not survive a restart.
+- `TgLLM.Persistence.FileSessionStore.OpenAt("sessions.json")` — durable, JSON-on-disk.
+- `TgLLM.Persistence.LiteDb.LiteDbSessionStore.OpenAt("sessions.db")` — durable, embedded LiteDB;
+  implements `IDisposable`.
+
+A durable session store alone is not enough: the approval message's own `[Approve][Reject]` buttons
+route through the bot's *binding* store, so a durable *binding* store — `TgLLM.Persistence.
+FileBindingStore.openAt`/`TgLLM.Persistence.LiteDb.LiteDbBindingStore.OpenAt`, wired via
+`WithBindingStore` (see "Durable bindings" above) — must be configured alongside it. With both
+durable, an approval message shown BEFORE a restart is still honored AFTER one: the tap resumes the
+agent and edits that same message in place, exactly as if the process had never gone down.
+
+```fsharp
+open TgLLM.Persistence
+
+let config =
+    (TgBotConfig.create "<BOT_TOKEN>")
+        .WithTools(tools)
+        .WithBindingStore(FileBindingStore.openAt "bindings.json")
+        .WithSessionStore(FileSessionStore.OpenAt "sessions.json")   // add `, idleAfter` to override the 30-day default
+
+task {
+    let! bridge = Maf.startPolling config agent
+    // ...
+}
+```
+
+```csharp
+var config = TgBotConfig.create("<BOT_TOKEN>")
+    .WithTools(tools)
+    .WithBindingStore(TgLLM.Persistence.FileBindingStore.openAt("bindings.json"))
+    .WithSessionStore(TgLLM.Persistence.FileSessionStore.OpenAt("sessions.json"));
+
+await using var bridge = await MafTelegramBridge.StartPollingAsync(config, agent);
+```
+
+Idle sessions are swept and evicted after a configurable window — 30 days by default, overridden via
+the `WithSessionStore(store, idleAfter)` overload — so a long-lived bot's session store stays bounded
+even for chats nobody ever returns to.
+
+**Honest limits, disclosed:**
+
+- **Persist timing.** A conversation's durable record is written AFTER each completed turn — a crash
+  in the narrow window between a turn finishing and its save degrades that one tap to the ordinary
+  "no longer pending" stale path above; it is never a wrong resume.
+- **A custom store's read failure at decision time.** With a custom `ISessionStore` whose `TryGet`
+  can throw (a network or database backend — the built-in in-memory/file/LiteDB stores do not), a
+  read error at the exact moment a decision is tapped is surfaced (`OnSessionRestoreFailed` with a
+  `StoreUnavailable` reason) and the intact durable record is preserved for a retry on the next turn.
+  That one tap degrades to the stale path — and because the approval button is single-use, the tap
+  consumes it, so the approval is re-driven fresh (or cleared by idle eviction) rather than re-tapped.
+- **Single-process restart survival, not scale-out.** This durability model covers one process
+  restarting and picking its own state back up — not horizontal scale-out or concurrent access to
+  the SAME conversation from multiple processes at once.
+- **The host must reconstruct the same agent.** On restart, the persisted record references tool
+  calls that the recreated `AIAgent`/tool registration must still expose; a tool that no longer
+  exists degrades in-band (surfaced, not a crash) the next time it would have been needed.
+- **At-rest protection is the store's/host's responsibility.** A persisted record can contain
+  sensitive conversation content — messages, tool call arguments, anything the agent said or was
+  asked. `TgLLM.Maf` introduces no cryptography of its own; use an encrypted disk, a database with
+  transparent encryption, or plug a host-supplied encrypting `ISessionStore` decorator in front of
+  `FileSessionStore`/`LiteDbSessionStore` — the same seam
+  [`examples/MafFSharp`](../examples/MafFSharp)'s `ObfuscatingSessionStore` demonstrates (that
+  example's own byte transform is deliberately NOT encryption — see its doc comment).
+- **No silent cross-version migration.** An incompatible persisted format or a `Microsoft.Agents.AI`
+  version drift is detected on restore (`IMafSessionObserver.OnSessionRestoreFailed`) and falls back
+  to a fresh session rather than mis-restoring one — there is no automatic migration between formats.
 - The reply path is non-streaming: one turn, one reply message.
 - `Microsoft.Agents.AI` is a preview package, pinned to an exact version — it has renamed types
   across releases, so an upgrade is a deliberate, verified change, not a routine bump.

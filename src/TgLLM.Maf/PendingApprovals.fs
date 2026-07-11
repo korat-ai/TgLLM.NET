@@ -1,5 +1,6 @@
 namespace TgLLM.Maf
 
+open System
 open System.Collections.Concurrent
 open Microsoft.Extensions.AI
 open TgLLM.Core
@@ -24,7 +25,13 @@ type PendingApproval =
       /// Resolved once, at render time (`RunOwner.resolve`).
       Owner: OwnerScope
       /// The approval message — the edit-in-place target once this entry is consumed.
-      MessageId: MessageId }
+      MessageId: MessageId
+      /// The instant this still-undecided entry stops being resumable — mirrors the decision
+      /// keyboard's own binding expiry (`TgBot.SendKeyboardPlan`'s `expiresIn`, stamped against the
+      /// SAME clock). `None` never expires. Read by the durable persist path (`Bridge.fs`) to prune
+      /// an already-expired entry out of what gets written, so a persisted record never keeps
+      /// resurrecting a decision the engine would refuse as expired anyway.
+      ExpiresAt: DateTimeOffset option }
 
 /// Keyed by `(chat, requestId)`. `TryConsume` is the at-most-once gate: it removes the entry
 /// ATOMICALLY and returns it to exactly one caller — a racing sibling tap (or a redelivered/
@@ -67,3 +74,11 @@ type PendingApprovals() =
             match table.TryRemove key with
             | true, entry -> Some entry
             | false, _ -> None)
+
+    /// A READ-ONLY enumeration of `chat`'s still-live entries — unlike `AbandonAllFor`, nothing is
+    /// removed. Used by the durable end-of-turn persist (`Bridge.fs`) to snapshot exactly what is
+    /// genuinely still pending for this chat into the record it writes, without disturbing the
+    /// in-memory table a concurrent decision tap (on this same chat's own lock) might still resolve
+    /// against.
+    member _.SnapshotFor(chat: ChatId) : PendingApproval list =
+        table.Values |> Seq.filter (fun entry -> entry.Chat = chat) |> Seq.toList

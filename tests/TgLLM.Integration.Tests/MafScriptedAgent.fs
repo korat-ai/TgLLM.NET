@@ -27,6 +27,15 @@ type ScriptedStep =
     /// (i.e. separate turns/resumes), while this is ALL of them raised by a SINGLE call, exactly
     /// the shape a resume (or an initial turn) that raises multiple pending requests at once needs.
     | PausesForMany of requests: (string * string * (string * (obj | null)) list) list
+    /// The agent pauses, asking for approval of one tool call whose `ToolCall` is NOT a
+    /// `FunctionCallContent` — the resolved 10.6.0 binaries' `ToolCallContent` has other concrete
+    /// subtypes (`CodeInterpreterToolCallContent`, `McpServerToolCallContent`, etc.); this uses
+    /// `CodeInterpreterToolCallContent` (a single-string `callId` constructor) as a stand-in for any
+    /// of them. Exercises `ApprovalDetection`'s own fallback branch (an unexpected `ToolCall`
+    /// subtype still yields a usable prompt, via `other.CallId`) and, downstream, `Bridge.fs`'s
+    /// `toPersistedDto` — which must SKIP such a pending approval at persist time rather than crash
+    /// the whole record on a hard `:?> FunctionCallContent` cast.
+    | PausesForNonFunctionCall of requestId: string * callId: string
     /// The agent's turn ends with no text and no approval — an empty turn.
     | EndsEmpty
     /// The agent throws while producing this turn (or resuming into it).
@@ -36,10 +45,15 @@ type ScriptedStep =
     /// tap is still acked promptly while the continuation is still running.
     | Delayed of delay: TimeSpan * step: ScriptedStep
 
-/// `AgentSession` has only a protected constructor — a trivial subclass with no state of its own
-/// is the whole seam; the script itself (not the session) drives what a turn returns.
-type private ScriptedSession() =
+/// `AgentSession` has only a protected constructor — the script itself (not the session) drives
+/// what a turn returns, so the only state this subclass carries is an identifying `Nonce`: a fresh
+/// one per `CreateSessionCoreAsync` call, or a caller-supplied one when restoring from a serialized
+/// element (`DeserializeSessionCoreAsync`) — round-tripping it is how a test tells a restored
+/// session apart from a freshly created one.
+type ScriptedSession(?nonce: string) =
     inherit AgentSession()
+    let nonce = defaultArg nonce (Guid.NewGuid().ToString())
+    member _.Nonce: string = nonce
 
 let private toArguments (args: (string * (obj | null)) list) : IDictionary<string, obj | null> =
     let dict = Dictionary<string, obj | null>()
@@ -79,6 +93,11 @@ type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit, ?
                 let request = ToolApprovalRequestContent(requestId, call)
                 let contents = ResizeArray<AIContent>[ request :> AIContent ]
                 return AgentResponse(ChatMessage(ChatRole.Assistant, contents))
+            | PausesForNonFunctionCall(requestId, callId) ->
+                let call = CodeInterpreterToolCallContent(callId)
+                let request = ToolApprovalRequestContent(requestId, call)
+                let contents = ResizeArray<AIContent>[ request :> AIContent ]
+                return AgentResponse(ChatMessage(ChatRole.Assistant, contents))
             | PausesForMany requests ->
                 let contents =
                     ResizeArray<AIContent>
@@ -96,15 +115,25 @@ type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit, ?
     /// no extra resume happened beyond what it expected.
     member _.RunCount: int = runCount.Value
 
-    override _.RunCoreAsync
+    /// The `Nonce` of every `ScriptedSession` this agent's `RunCoreAsync` has actually been called
+    /// with, in call order — lets a test prove WHICH live session backed a given turn, e.g. that a
+    /// resume ran on the SAME session object a prior turn started on, rather than a fresh,
+    /// same-shaped stand-in.
+    member val SeenSessionNonces = ResizeArray<string>() with get
+
+    override this.RunCoreAsync
         (
             messages: ChatMessage seq,
-            _session: AgentSession,
+            session: AgentSession,
             _options: AgentRunOptions,
             _ct: CancellationToken
         ) : Task<AgentResponse> =
         task {
             runCount.Value <- runCount.Value + 1
+
+            match box session with
+            | :? ScriptedSession as s -> this.SeenSessionNonces.Add s.Nonce
+            | _ -> ()
 
             for message in messages do
                 for content in message.Contents do
@@ -127,14 +156,27 @@ type ScriptedAgent(steps: ScriptedStep list, ?onResume: string * bool -> unit, ?
             ValueTask<AgentSession>(ScriptedSession() :> AgentSession)
 
     override _.SerializeSessionCoreAsync
-        (_session: AgentSession, _options: JsonSerializerOptions, _ct: CancellationToken)
+        (session: AgentSession, _options: JsonSerializerOptions, _ct: CancellationToken)
         : ValueTask<JsonElement> =
-        raise (NotSupportedException "ScriptedAgent does not support session serialization — not needed by the bridge this release.")
+        let scripted = session :?> ScriptedSession
+        let payload = Dictionary<string, string>()
+        payload["nonce"] <- scripted.Nonce
+        ValueTask<JsonElement>(JsonSerializer.SerializeToElement payload)
 
+    /// Reads back the `"nonce"` string property `SerializeSessionCoreAsync` wrote. Any other shape
+    /// — missing property, wrong `ValueKind`, or a `null` string value — is treated as a corrupt or
+    /// foreign persisted session and throws, rather than fabricating a fresh session silently.
     override _.DeserializeSessionCoreAsync
-        (_element: JsonElement, _options: JsonSerializerOptions, _ct: CancellationToken)
+        (element: JsonElement, _options: JsonSerializerOptions, _ct: CancellationToken)
         : ValueTask<AgentSession> =
-        raise (NotSupportedException "ScriptedAgent does not support session deserialization — not needed by the bridge this release.")
+        let nonce =
+            match element.TryGetProperty "nonce" with
+            | true, prop when prop.ValueKind = JsonValueKind.String -> Option.ofObj (prop.GetString())
+            | _ -> None
+
+        match nonce with
+        | Some nonce -> ValueTask<AgentSession>(ScriptedSession(nonce) :> AgentSession)
+        | None -> raise (InvalidOperationException "unrecognized scripted session shape")
 
     override _.RunCoreStreamingAsync
         (

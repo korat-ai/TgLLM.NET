@@ -44,6 +44,7 @@
     <Compile Include="A2uiStreamingTests.fs" />
     <Compile Include="A2uiUnsupportedTests.fs" />
     <Compile Include="MafScriptedAgent.fs" />
+    <Compile Include="MafScriptedSessionTests.fs" />
     <Compile Include="MafBridgeApprovalTests.fs" />
     <Compile Include="MafBridgeRefusalTests.fs" />
     <Compile Include="MafBridgeFailureTests.fs" />
@@ -57,6 +58,11 @@
     <Compile Include="MafStartupFailureTests.fs" />
     <Compile Include="MafBridgeDisposeTests.fs" />
     <Compile Include="MafWebhookBridgeTests.fs" />
+    <Compile Include="MafDurableResumeTests.fs" />
+    <Compile Include="MafDurableStoreFamilyTests.fs" />
+    <Compile Include="MafDurableLifecycleTests.fs" />
+    <Compile Include="MafDurableReliabilityTests.fs" />
+    <Compile Include="MafDurableCoverageTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

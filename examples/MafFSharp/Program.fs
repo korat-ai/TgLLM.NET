@@ -5,6 +5,15 @@
 /// MAF tool-approval loop produces — built from `AIFunctionFactory.Create`/`ApprovalRequiredAIFunction`
 /// wrapping a chat-model-backed `AIAgent`, per `docs/quickstart.md`'s "Author the agent" step — just
 /// without a model deciding when to call it.
+///
+/// Also wires a DURABLE session store (`TgLLM.Persistence.FileSessionStore`, wrapped in
+/// `ObfuscatingSessionStore` below) and a DURABLE binding store (`TgLLM.Persistence.FileBindingStore`)
+/// via `TgBotConfig.WithSessionStore`/`WithBindingStore` — both are required for a pending approval to
+/// survive a process restart: the tap's button routes via the binding store, and resuming the agent
+/// rehydrates its conversation and still-pending approvals via the session store. With both wired, an
+/// approval message shown BEFORE a restart is still honored AFTER one — the tap resumes the agent and
+/// edits that same message in place, exactly as if the process had never gone down.
+///
 /// Set `BOT_TOKEN` and `CHAT_ID` (a private chat), then `dotnet run`.
 module MafFSharp.Program
 
@@ -19,34 +28,79 @@ open FSharp.UMX
 open TgLLM.Core
 open TgLLM.FSharp
 open TgLLM.Maf
+open TgLLM.Persistence
 
 let private requireEnv (name: string) : string =
     match Environment.GetEnvironmentVariable name |> Option.ofObj with
     | Some value -> value
     | None -> failwith $"environment variable {name} is required"
 
-/// `AgentSession` has only a protected constructor — a trivial subclass with no state of its own is
-/// the whole seam; `DemoAgent` below (not the session) drives what a turn returns.
-type private DemoSession() =
+/// A reversible byte transform over `SessionRecord.Payload`, demonstrating the AT-REST SEAM an
+/// `ISessionStore` decorator sits in — this is NOT encryption. XOR with a single fixed byte is
+/// trivially reversible by anyone reading this file; it only proves the seam exists: `Save`
+/// transforms the payload before handing it to `inner`, `TryGet` reverses the SAME transform on the
+/// way back out, and `Remove`/`EvictIdle` need no transform at all since neither one touches
+/// `Payload`. A host that wants REAL at-rest protection for persisted conversation content plugs an
+/// encrypting store in EXACTLY this position — e.g. a decorator that calls into
+/// `System.Security.Cryptography.AesGcm`, or simply an encrypted disk/volume or a database with
+/// transparent data encryption underneath `FileSessionStore`/`LiteDbSessionStore`. `TgLLM.Core.
+/// ISessionStore` is the seam; the library itself adds no cryptography of its own.
+type private ObfuscatingSessionStore(inner: ISessionStore) =
+    let obfuscationKey = 0x5Auy
+
+    let transform (payload: byte[]) : byte[] = payload |> Array.map (fun b -> b ^^^ obfuscationKey)
+
+    interface ISessionStore with
+        member _.Save(chat: ChatId, record: SessionRecord, ct: CancellationToken) : ValueTask =
+            inner.Save(chat, { record with Payload = transform record.Payload }, ct)
+
+        member _.TryGet(chat: ChatId, ct: CancellationToken) : ValueTask<SessionRecord voption> =
+            ValueTask<SessionRecord voption>(
+                task {
+                    match! inner.TryGet(chat, ct) with
+                    | ValueNone -> return ValueNone
+                    | ValueSome record -> return ValueSome { record with Payload = transform record.Payload }
+                }
+            )
+
+        member _.Remove(chat: ChatId, ct: CancellationToken) : ValueTask = inner.Remove(chat, ct)
+
+        member _.EvictIdle(olderThan: DateTimeOffset) : ValueTask<int> = inner.EvictIdle(olderThan)
+
+/// `AgentSession` has only a protected constructor — `Turn` is the ONLY state this subclass carries:
+/// which scripted step `DemoAgent.RunCoreAsync` is on for THIS chat's conversation. Kept on the
+/// session (not a field on `DemoAgent` itself, unlike an earlier version of this example) precisely
+/// so it round-trips through `SerializeSessionCoreAsync`/`DeserializeSessionCoreAsync` below — a real
+/// `AIAgent`'s own conversation state lives the same way, on the session, which is exactly what a
+/// durable `ISessionStore` persists and restores.
+type private DemoSession(?turn: int) =
     inherit AgentSession()
+    member val Turn = defaultArg turn 0 with get, set
+
+/// Safely downcasts a MAF-supplied session to `DemoSession`. `AIAgent`'s own `RunCoreAsync`/
+/// `SerializeSessionCoreAsync` declare their session parameter nullable — `Option.ofObj` wraps that
+/// boundary explicitly (Always-Rule 5) rather than downcasting a possibly-null reference directly.
+let private asDemoSession (session: AgentSession | null) : DemoSession =
+    match session |> Option.ofObj with
+    | Some(:? DemoSession as demoSession) -> demoSession
+    | _ -> invalidOp "DemoAgent requires a DemoSession — CreateSessionCoreAsync/DeserializeSessionCoreAsync always produce one."
 
 /// One text reply, then one tool-approval pause, then (once resumed) a confirmation reply — enough
 /// to walk both an ordinary text turn and the approval loop in a single run, with no live model.
 type private DemoAgent() =
     inherit AIAgent()
 
-    let mutable turn = 0
-
     override _.RunCoreAsync
         (
             _messages: ChatMessage seq,
-            _session: AgentSession,
+            session: AgentSession | null,
             _options: AgentRunOptions,
             _ct: CancellationToken
         ) : Task<AgentResponse> =
-        turn <- turn + 1
+        let demoSession = asDemoSession session
+        demoSession.Turn <- demoSession.Turn + 1
 
-        match turn with
+        match demoSession.Turn with
         | 1 -> Task.FromResult(AgentResponse(ChatMessage(ChatRole.Assistant, "I can draft and send emails for you.")))
         | 2 ->
             let args = Dictionary<string, obj | null>()
@@ -61,15 +115,24 @@ type private DemoAgent() =
     override _.CreateSessionCoreAsync(_ct: CancellationToken) : ValueTask<AgentSession> =
         ValueTask<AgentSession>(DemoSession() :> AgentSession)
 
+    /// Real (if trivial) session serialization — required for the durable session store wired into
+    /// `main` below to have anything meaningful to persist. `{"turn": N}` is the whole wire shape.
     override _.SerializeSessionCoreAsync
-        (_session: AgentSession, _options: JsonSerializerOptions, _ct: CancellationToken)
+        (session: AgentSession, _options: JsonSerializerOptions, _ct: CancellationToken)
         : ValueTask<JsonElement> =
-        raise (NotSupportedException "DemoAgent does not persist sessions across a restart — this example only.")
+        let demoSession = asDemoSession session
+        ValueTask<JsonElement>(JsonSerializer.SerializeToElement {| turn = demoSession.Turn |})
 
+    /// The read counterpart to `SerializeSessionCoreAsync` — any other shape (missing property, wrong
+    /// `ValueKind`) is a corrupt or foreign record, so it throws rather than fabricating a fresh
+    /// session silently; `Bridge.fs`'s own `restoreOrCreate` catches exactly this and falls back to a
+    /// brand-new session, reporting the failure via `IMafSessionObserver.OnSessionRestoreFailed`.
     override _.DeserializeSessionCoreAsync
-        (_element: JsonElement, _options: JsonSerializerOptions, _ct: CancellationToken)
+        (element: JsonElement, _options: JsonSerializerOptions, _ct: CancellationToken)
         : ValueTask<AgentSession> =
-        raise (NotSupportedException "DemoAgent does not persist sessions across a restart — this example only.")
+        match element.TryGetProperty "turn" with
+        | true, prop when prop.ValueKind = JsonValueKind.Number -> ValueTask<AgentSession>(DemoSession(prop.GetInt32()) :> AgentSession)
+        | _ -> raise (InvalidOperationException "unrecognized demo session shape")
 
     override _.RunCoreStreamingAsync
         (
@@ -89,7 +152,25 @@ let main _ =
         // Maf.startPolling requires a Tool Router (.WithTools) — it registers its own internal
         // maf-approve/maf-reject tools into this SAME registry.
         let tools = ToolRegistry.create ()
-        use! bridge = Maf.startPolling ((TgBotConfig.create botToken).WithTools tools) (DemoAgent())
+
+        // Durable binding store: the approval message's own [Approve][Reject] buttons still route
+        // to maf-approve/maf-reject after a restart. Durable session store (wrapped in
+        // `ObfuscatingSessionStore` above): the agent's conversation and still-pending approvals for
+        // THIS chat are rehydrated on the next turn. Both are required together — with only one of
+        // the two durable, a post-restart tap either can't route (no binding store) or routes but
+        // finds nothing to resume (no session store). With both wired, an approval message shown
+        // BEFORE a process restart is still honored AFTER it: the tap resumes the agent and edits
+        // that same message in place, exactly as if the process had never gone down.
+        let bindingStore = FileBindingStore.openAt "bindings.json"
+        let sessionStore = ObfuscatingSessionStore(FileSessionStore.OpenAt "sessions.json")
+
+        let config =
+            (TgBotConfig.create botToken)
+                .WithTools(tools)
+                .WithBindingStore(bindingStore)
+                .WithSessionStore(sessionStore)
+
+        use! bridge = Maf.startPolling config (DemoAgent())
 
         // A text turn: the agent answers a plain question with plain text — no buttons involved.
         do! bridge.StartRun(chat, "What can you do?")

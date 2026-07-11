@@ -30,7 +30,8 @@ let private entry (chatId: int64) (requestId: string) : PendingApproval =
     { Chat = chat chatId
       Request = requestContent requestId "send_email"
       Owner = Anyone
-      MessageId = messageId 1L }
+      MessageId = messageId 1L
+      ExpiresAt = None }
 
 [<Tests>]
 let pendingApprovalsTests =
@@ -103,6 +104,25 @@ let pendingApprovalsTests =
         testCase "AbandonAllFor on a chat with nothing pending returns an empty list" <| fun _ ->
             let table = PendingApprovals()
             Expect.isTrue (List.isEmpty (table.AbandonAllFor(chat 99L))) "nothing was ever pending for this chat"
+
+        testCase "SnapshotFor lists a chat's own entries WITHOUT removing them" <| fun _ ->
+            let table = PendingApprovals()
+            table.Add(entry 1L "req-a")
+            table.Add(entry 1L "req-b")
+            table.Add(entry 2L "req-c")
+
+            let snapshot = table.SnapshotFor(chat 1L)
+
+            Expect.equal (List.length snapshot) 2 "only chat 1's own entries are in the snapshot"
+            Expect.isTrue (snapshot |> List.forall (fun e -> e.Chat = chat 1L)) "every snapshotted entry belongs to chat 1"
+
+            match table.TryConsume(chat 1L, "req-a") with
+            | ValueSome _ -> ()
+            | ValueNone -> failwith "SnapshotFor must not have removed the entry — it is still consumable afterwards"
+
+        testCase "SnapshotFor on a chat with nothing pending returns an empty list" <| fun _ ->
+            let table = PendingApprovals()
+            Expect.isTrue (List.isEmpty (table.SnapshotFor(chat 99L))) "nothing was ever pending for this chat"
 
         testCase "concurrent TryConsume calls for the same key deliver to exactly one caller" <| fun _ ->
             task {

@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <Compile Include="LiteDbBindingStore.fs" />
+    <Compile Include="LiteDbSessionStore.fs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -202,11 +202,45 @@ The agent's own declared `AIFunction`s project into the SAME Tool Router manifes
 (`MafTools.project`/`MafTools.Project`), and an incoming chat message is answered by the agent's
 reply automatically, on the same per-chat ordering the rest of the Tool Router uses.
 
-The agent's conversation session lives in memory for this release — a process restart loses any
-in-flight approval; a tap on a pre-restart approval message is still acknowledged and owner-checked,
-then surfaced as stale rather than silently misrouted. See
-[`docs/quickstart.md`](docs/quickstart.md#maf-bridge) for the full walkthrough, including the
-approval formatter override and the honest limits.
+**Durable sessions** (optional): survive a process restart. The agent's conversation session lives
+in memory by default; opt into a durable `ISessionStore` (`TgLLM.Persistence.FileSessionStore` or
+`TgLLM.Persistence.LiteDb.LiteDbSessionStore`) via `WithSessionStore`, alongside a durable
+`IBindingStore` via `WithBindingStore` — both stores must be durable together, since the approval
+message's own buttons route through the binding store while the agent's conversation and its
+still-pending approvals rehydrate through the session store.
+
+```fsharp
+open TgLLM.Persistence
+
+let config =
+    (TgBotConfig.create botToken)
+        .WithTools(tools)
+        .WithBindingStore(FileBindingStore.openAt "bindings.json")
+        .WithSessionStore(FileSessionStore.OpenAt "sessions.json")
+
+task {
+    let! bridge = Maf.startPolling config agent
+    // ...
+}
+```
+
+```csharp
+var config = TgBotConfig.create(botToken)
+    .WithTools(tools)
+    .WithBindingStore(TgLLM.Persistence.FileBindingStore.openAt("bindings.json"))
+    .WithSessionStore(TgLLM.Persistence.FileSessionStore.OpenAt("sessions.json"));
+
+await using var bridge = await MafTelegramBridge.StartPollingAsync(config, agent);
+```
+
+With both stores wired, an approval message shown BEFORE a restart is still honored AFTER one — the
+tap resumes the agent and edits that same message in place, exactly as if the process had never gone
+down. Without a session store (the default), a process restart loses any in-flight approval; a tap
+on a pre-restart approval message is still acknowledged and owner-checked, then surfaced as stale
+rather than silently misrouted — the SAME fallback a durable setup also uses whenever a decision
+genuinely can no longer be honored (an incompatible persisted format, a missing tool after restart,
+and so on). See [`docs/quickstart.md`](docs/quickstart.md#maf-bridge) for the full walkthrough,
+including durable sessions' honest limits, the approval formatter override, and more.
 
 ## Project layout
 

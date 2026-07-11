@@ -107,6 +107,22 @@ type IMafObserver =
     /// have reached the chat (a multi-approval turn's earlier messages, most commonly).
     abstract OnTurnFailed: chat: ChatId * error: exn -> unit
 
+/// The durable-session observability seam — a SIBLING of `IMafObserver`, not an extension of it, so
+/// a host's existing `IMafObserver` implementation is unaffected by this addition. Reports the two
+/// failures the durable restore/persist path genuinely surfaces. Idle-session eviction is
+/// deliberately NOT here: it is a silent, count-based background sweep (like the binding store's own
+/// eviction), and its sweeper is a framework-agnostic Core type that cannot reach this leaf's own
+/// observer.
+type IMafSessionObserver =
+    /// A chat's durable session record could not be turned back into a usable session — decode
+    /// failure, or a format/framework-version this build no longer (or not yet) understands. The
+    /// chat starts a fresh session; nothing resumes.
+    abstract OnSessionRestoreFailed: chat: ChatId * failure: SessionFailure -> unit
+    /// Writing a chat's durable session record to the store failed. The in-memory session is
+    /// unaffected; only the DURABLE copy is stale, so a restart before the next successful persist
+    /// would restore an older record (or none).
+    abstract OnSessionPersistFailed: chat: ChatId * error: exn -> unit
+
 /// Reports nothing — the default when a caller has no need to observe MAF-bridge conditions,
 /// mirroring `NoopHookObserver`/`NoopA2uiObserver`.
 type NoopMafObserver() =
@@ -118,6 +134,10 @@ type NoopMafObserver() =
         member _.OnInvalidOutput(_chat: ChatId, _error: MafError) = ()
         member _.OnProjectionProblem(_problem: ProjectionProblem) = ()
         member _.OnTurnFailed(_chat: ChatId, _error: exn) = ()
+
+    interface IMafSessionObserver with
+        member _.OnSessionRestoreFailed(_chat: ChatId, _failure: SessionFailure) = ()
+        member _.OnSessionPersistFailed(_chat: ChatId, _error: exn) = ()
 
 /// Options a host may set when wiring the bridge; every field is optional — the zero-config path
 /// (`Maf.startPolling`/`startWebhook`) is complete without any of them.

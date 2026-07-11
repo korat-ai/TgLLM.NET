@@ -417,6 +417,61 @@ type InMemoryBindingStore() =
 
             ValueTask.FromResult(List.length expiredTokens)
 
+/// The durable state of one chat's agent conversation, as opaque bytes plus the instant it was
+/// last active. Core never inspects `Payload` — a leaf serializes/deserializes it; the store only
+/// persists it. `LastActivityAt` drives idle eviction (`ISessionStore.EvictIdle`).
+[<NoComparison>]
+type SessionRecord =
+    { Payload: byte[]
+      LastActivityAt: DateTimeOffset }
+
+/// A durable, opaque, per-chat session store. Core stays IO- and framework-agnostic — `Payload` is
+/// opaque `byte[]`, never a framework type; a durable (file / embedded-db) implementation lives in
+/// the separate persistence leaf projects, exactly like `IBindingStore`. A host may wrap any
+/// implementation with an encrypting decorator for at-rest protection (the store handles opaque
+/// bytes, so the library adds no cryptographic surface of its own).
+type ISessionStore =
+    abstract Save: chat: ChatId * record: SessionRecord * ct: CancellationToken -> ValueTask
+    abstract TryGet: chat: ChatId * ct: CancellationToken -> ValueTask<SessionRecord voption>
+    abstract Remove: chat: ChatId * ct: CancellationToken -> ValueTask
+
+    /// Removes every record whose `LastActivityAt` is at or before `olderThan` (the boundary instant
+    /// itself counts as idle, matching `Expiry.isLive`'s own at-the-instant convention), returning
+    /// the count removed. A periodic sweeper decides WHEN to call this; the store only decides WHICH
+    /// records are idle as of the given cutoff.
+    abstract EvictIdle: olderThan: DateTimeOffset -> ValueTask<int>
+
+/// Default `ISessionStore`: a `ConcurrentDictionary` keyed by `ChatId`, one record per chat
+/// (a `Save` overwrites) — same shape and synchronous-`ValueTask` contract as
+/// `InMemoryBindingStore`.
+type InMemorySessionStore() =
+    let sessions = ConcurrentDictionary<ChatId, SessionRecord>()
+
+    interface ISessionStore with
+        member _.Save(chat: ChatId, record: SessionRecord, _ct: CancellationToken) : ValueTask =
+            sessions[chat] <- record
+            ValueTask.CompletedTask
+
+        member _.TryGet(chat: ChatId, _ct: CancellationToken) : ValueTask<SessionRecord voption> =
+            match sessions.TryGetValue chat with
+            | true, record -> ValueTask.FromResult(ValueSome record)
+            | false, _ -> ValueTask.FromResult ValueNone
+
+        member _.Remove(chat: ChatId, _ct: CancellationToken) : ValueTask =
+            sessions.TryRemove(chat) |> ignore
+            ValueTask.CompletedTask
+
+        member _.EvictIdle(olderThan: DateTimeOffset) : ValueTask<int> =
+            let idleChats =
+                sessions
+                |> Seq.choose (fun kv -> if kv.Value.LastActivityAt <= olderThan then Some kv.Key else None)
+                |> Seq.toList
+
+            for chat in idleChats do
+                sessions.TryRemove(chat) |> ignore
+
+            ValueTask.FromResult(List.length idleChats)
+
 /// Periodically calls `IBindingStore.EvictExpired` so a long-lived bot's binding store doesn't
 /// grow unbounded: `EvictExpired` itself has no other production caller, so without a background
 /// sweeper, an expiring/expired binding accumulates forever regardless of which store backs a bot.
@@ -437,14 +492,25 @@ type BindingEvictionSweeper(store: IBindingStore, clock: Clock, ?interval: TimeS
     /// The background loop itself: sweeps once every `interval`, forever, until `cts` is
     /// cancelled (by `DisposeAsync`) — `Task.Delay` throwing `OperationCanceledException` is how
     /// this loop learns to stop, same idiom `UpdateProcessor`'s own watchdog task uses for a
-    /// single-shot delay.
+    /// single-shot delay. The `EvictExpired` call itself is wrapped in its OWN `try/with`: a
+    /// durable store's eviction can throw a transient IO error (a file lock or a full disk mid-
+    /// rewrite for `FileBindingStore`, an `ObjectDisposedException` race for a `LiteDbBindingStore`)
+    /// — left unguarded, that throw would fault this `task {}` and permanently kill the sweep (the
+    /// outer `with` only catches the cancellation exit path), silently swallowed later by
+    /// `DisposeAsync`'s own `try do! loopTask with _ -> ()` with no observability and unbounded
+    /// store growth for the rest of the bot's lifetime. Skipping a failed pass and retrying on the
+    /// next tick is the only sensible recovery — there is no caller here to hand a `Result` to.
     let loopTask: Task =
         task {
             try
                 while true do
                     do! Task.Delay(interval, cts.Token)
-                    let! _ = store.EvictExpired(clock ())
-                    ()
+
+                    try
+                        let! _ = store.EvictExpired(clock ())
+                        ()
+                    with _ ->
+                        ()
             with :? OperationCanceledException ->
                 ()
         }
@@ -453,6 +519,63 @@ type BindingEvictionSweeper(store: IBindingStore, clock: Clock, ?interval: TimeS
     /// every `interval`. Exposed directly so a test can drive the sweep deterministically (a fixed
     /// clock advanced past an expiry), without waiting on the real interval.
     member _.SweepOnce() : Task<int> = (store.EvictExpired(clock ())).AsTask()
+
+    interface IAsyncDisposable with
+        member _.DisposeAsync() : ValueTask =
+            task {
+                cts.Cancel()
+
+                try
+                    do! loopTask
+                with _ ->
+                    ()
+
+                cts.Dispose()
+            }
+            |> ValueTask
+
+/// Periodically calls `ISessionStore.EvictIdle` so a long-lived bot's session store doesn't grow
+/// unbounded — the durable-session counterpart to `BindingEvictionSweeper`, same "start eagerly,
+/// dispose cleanly" shape. Unlike the always-on binding sweeper (wired into EVERY bot regardless of
+/// configuration), this one is started by the bot's own wiring ONLY when a session store is
+/// configured (`TgBot.wireBot`, TgLLM.FSharp/TgBot.fs) — a bot with no durable session has nothing
+/// for it to sweep. Idle eviction is silent (count-based, like `EvictIdle` itself): there is no
+/// observer callback here, mirroring `IMafSessionObserver`'s own doc comment on why idle-session
+/// eviction is deliberately absent from that seam. `clock` is the SAME injected `Clock` the rest of
+/// a bot's expiry/dedup decisions use (never ambient `DateTimeOffset.UtcNow`), so a host that
+/// overrides it for deterministic tests gets a deterministic sweep too. `interval` defaults to 1
+/// hour — idle-session eviction bounds a much slower-moving cutoff (days, typically) than binding
+/// expiry, so it needs nowhere near `BindingEvictionSweeper`'s own 5-minute default.
+[<Sealed>]
+type SessionEvictionSweeper(store: ISessionStore, clock: Clock, idleAfter: TimeSpan, ?interval: TimeSpan) =
+    let interval = defaultArg interval (TimeSpan.FromHours 1.0)
+    let cts = new CancellationTokenSource()
+
+    /// The background loop itself: sweeps once every `interval`, forever, until `cts` is
+    /// cancelled (by `DisposeAsync`) — same `Task.Delay`-cancellation idiom as
+    /// `BindingEvictionSweeper`'s own loop, INCLUDING the same per-call `try/with` around
+    /// `EvictIdle` (see `BindingEvictionSweeper.loopTask`'s own doc comment for why): a durable
+    /// store's eviction can throw a transient IO error, and skipping a failed pass — rather than
+    /// letting it fault this `task {}` and kill the sweep for good — is the only sensible recovery.
+    let loopTask: Task =
+        task {
+            try
+                while true do
+                    do! Task.Delay(interval, cts.Token)
+
+                    try
+                        let! _ = store.EvictIdle(clock () - idleAfter)
+                        ()
+                    with _ ->
+                        ()
+            with :? OperationCanceledException ->
+                ()
+        }
+
+    /// Runs ONE sweep pass immediately — the exact operation the background loop above repeats
+    /// every `interval`. Exposed directly so a test can drive the sweep deterministically (a fixed
+    /// clock past a record's idle cutoff), without waiting on the real interval.
+    member _.SweepOnce() : Task<int> = (store.EvictIdle(clock () - idleAfter)).AsTask()
 
     interface IAsyncDisposable with
         member _.DisposeAsync() : ValueTask =
