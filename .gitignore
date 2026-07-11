@@ -54,8 +54,9 @@ launchSettings.json
 # NuGet pack output
 artifacts/
 
-# Spec Kit working artifacts — not part of the shipped product (Principle VII)
+# Spec Kit working artifacts + machinery — not part of the shipped product (Principle VII)
 specs/
+.specify/
 
 # AI agent-context / project-instructions — process tooling, not shipped product (Principle VII)
 /CLAUDE.md
