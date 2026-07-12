@@ -14,6 +14,12 @@
 /// approval message shown BEFORE a restart is still honored AFTER one — the tap resumes the agent and
 /// edits that same message in place, exactly as if the process had never gone down.
 ///
+/// Also turns on live streaming (`TgBotConfig.WithStreaming()`) — both turns below now arrive as
+/// several deltas, paced by a real `Task.Delay` (see `DelayedUpdateSequence` below) rather than one
+/// shot, so the reply visibly edits in place in Telegram instead of appearing all at once. The
+/// approval turn keeps its narration on the SAME live message once the buttons are added — see that
+/// turn's own comment below for why this differs from the non-streaming path.
+///
 /// Set `BOT_TOKEN` and `CHAT_ID` (a private chat), then `dotnet run`.
 module MafFSharp.Program
 
@@ -85,6 +91,47 @@ let private asDemoSession (session: AgentSession | null) : DemoSession =
     | Some(:? DemoSession as demoSession) -> demoSession
     | _ -> invalidOp "DemoAgent requires a DemoSession — CreateSessionCoreAsync/DeserializeSessionCoreAsync always produce one."
 
+/// A minimal, hand-rolled `IAsyncEnumerable<AgentResponseUpdate>` — the shape
+/// `AIAgent.RunCoreStreamingAsync` must return — that yields each `(update, delay)` pair in order,
+/// awaiting a REAL `Task.Delay` immediately before handing each one back. Unlike this repo's own test
+/// double for the same override (`tests/TgLLM.Integration.Tests/MafScriptedAgent.fs`'s
+/// `ScriptedUpdateSequence`), which advances a fake clock deterministically for assertions, this
+/// example drives an ACTUAL bot token/chat — the delay is real wall-clock time, which is what makes
+/// `bot.Streaming`'s live edit-in-place visible when you run this against Telegram.
+type private DelayedUpdateSequence(items: (AgentResponseUpdate * TimeSpan) list) =
+    interface IAsyncEnumerable<AgentResponseUpdate> with
+        member _.GetAsyncEnumerator(_ct: CancellationToken) =
+            let mutable pending = items
+            let mutable current = Unchecked.defaultof<AgentResponseUpdate>
+
+            { new IAsyncEnumerator<AgentResponseUpdate> with
+                member _.Current = current
+
+                member _.MoveNextAsync() =
+                    ValueTask<bool>(
+                        task {
+                            match pending with
+                            | (update, delay) :: rest ->
+                                pending <- rest
+                                do! Task.Delay delay
+                                current <- update
+                                return true
+                            | [] -> return false
+                        }
+                    )
+
+                member _.DisposeAsync() = ValueTask.CompletedTask }
+
+/// One streamed text delta, carrying no other content — `AgentResponseUpdate`'s own
+/// `(role, content: string)` constructor, the same one used for a normal assistant chunk.
+let private textDelta (text: string) : AgentResponseUpdate = AgentResponseUpdate(Nullable ChatRole.Assistant, text)
+
+/// The pacing between scripted deltas below — comfortably straddles the bot's own default 1.5s
+/// coalescing interval (`TgBotConfig.WithStreaming()`'s own default,
+/// `TgLLM.Maf.StreamingDefaults.defaultCoalesceInterval`) so a live edit is actually observable
+/// mid-stream, not just the initial send and the final flush.
+let private pace = TimeSpan.FromMilliseconds 500.
+
 /// One text reply, then one tool-approval pause, then (once resumed) a confirmation reply — enough
 /// to walk both an ordinary text turn and the approval loop in a single run, with no live model.
 type private DemoAgent() =
@@ -134,14 +181,59 @@ type private DemoAgent() =
         | true, prop when prop.ValueKind = JsonValueKind.Number -> ValueTask<AgentSession>(DemoSession(prop.GetInt32()) :> AgentSession)
         | _ -> raise (InvalidOperationException "unrecognized demo session shape")
 
+    /// Streaming counterpart to `RunCoreAsync` above — the SAME scripted turns (`Turn`, shared via
+    /// the same `DemoSession`, still drives which one runs), but each reply arrives as several
+    /// deltas paced by `pace` rather than in one shot, so `bot.Streaming`'s live edit-in-place is
+    /// actually visible against Telegram: the FIRST delta sends a new message immediately (never
+    /// gated), and later deltas edit that SAME message in place once the coalescing interval clears.
+    /// A reply long enough to exceed Telegram's 4096-character per-message cap would instead spill
+    /// into a NEW message at a whitespace-preferred boundary and keep live-editing there
+    /// (`TgLLM.Maf.MessageSplitting.split`, `TgLLM.Maf.ReplyCoalescer`) — neither scripted reply here
+    /// is long enough to trigger that, but the mechanism driving it is the same one this override
+    /// feeds.
     override _.RunCoreStreamingAsync
         (
             _messages: ChatMessage seq,
-            _session: AgentSession,
+            session: AgentSession,
             _options: AgentRunOptions,
             _ct: CancellationToken
         ) : Collections.Generic.IAsyncEnumerable<AgentResponseUpdate> =
-        raise (NotSupportedException "DemoAgent replies in one turn; no streaming in this example.")
+        let demoSession = asDemoSession session
+        demoSession.Turn <- demoSession.Turn + 1
+
+        match demoSession.Turn with
+        | 1 ->
+            DelayedUpdateSequence
+                [ textDelta "I can draft ", pace
+                  textDelta "and send emails ", pace
+                  textDelta "for you — ", pace
+                  textDelta "coordinating drafts, ", pace
+                  textDelta "checking recipients, ", pace
+                  textDelta "and confirming before anything goes out.", pace ]
+            :> IAsyncEnumerable<AgentResponseUpdate>
+        | 2 ->
+            // Narration streams first, then this SAME turn pauses for approval. The bridge keeps
+            // this narration on the live message and ADDS the Approve/Reject buttons to it — unlike
+            // the non-streaming path, whose own preamble (`response.Text` alongside a detected
+            // approval) is dropped rather than sent as a separate message first
+            // (`processInitialResponse`'s own doc comment in `src/TgLLM.Maf/Bridge.fs`).
+            let args = Dictionary<string, obj | null>()
+            args["toAddr"] <- box "alice@example.com"
+            args["body"] <- box "The deploy is done."
+            let call = FunctionCallContent("call-1", "send_email", args)
+            let request = ToolApprovalRequestContent("req-1", call)
+
+            let approvalDelta =
+                AgentResponseUpdate(Nullable ChatRole.Assistant, ResizeArray<AIContent> [ request :> AIContent ])
+
+            DelayedUpdateSequence
+                [ textDelta "Drafting that email now", pace
+                  textDelta "...", pace
+                  approvalDelta, pace ]
+            :> IAsyncEnumerable<AgentResponseUpdate>
+        | _ ->
+            DelayedUpdateSequence [ textDelta "Sent to alice@example.com.", TimeSpan.Zero ]
+            :> IAsyncEnumerable<AgentResponseUpdate>
 
 [<EntryPoint>]
 let main _ =
@@ -169,15 +261,19 @@ let main _ =
                 .WithTools(tools)
                 .WithBindingStore(bindingStore)
                 .WithSessionStore(sessionStore)
+                .WithStreaming() // live edit-in-place at the default 1.5s cadence — see `DelayedUpdateSequence` above
 
         use! bridge = Maf.startPolling config (DemoAgent())
 
-        // A text turn: the agent answers a plain question with plain text — no buttons involved.
+        // A text turn: the agent answers a plain question, streamed live — watch the message edit
+        // in place in Telegram as `DemoAgent.RunCoreStreamingAsync`'s deltas arrive, rather than
+        // appearing all at once.
         do! bridge.StartRun(chat, "What can you do?")
 
-        // The approval loop: the agent's next turn pauses on `send_email`. The bridge sends ONE
-        // owner-scoped [Approve][Reject] message; tapping it resumes the agent and edits that same
-        // message in place to the outcome.
+        // The approval loop: the agent's next turn streams a little narration, then pauses on
+        // `send_email`. The bridge sends ONE owner-scoped [Approve][Reject] message that KEEPS the
+        // narration already shown; tapping it resumes the agent and edits that same message in
+        // place to the outcome.
         do! bridge.StartRun(chat, "Email alice@example.com that the deploy is done.")
 
         printfn "MAF bridge running (long polling). Approve/Reject the pending message in Telegram. Ctrl+C to stop."

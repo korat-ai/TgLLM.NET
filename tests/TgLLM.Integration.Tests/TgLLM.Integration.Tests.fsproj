@@ -63,6 +63,10 @@
     <Compile Include="MafDurableLifecycleTests.fs" />
     <Compile Include="MafDurableReliabilityTests.fs" />
     <Compile Include="MafDurableCoverageTests.fs" />
+    <Compile Include="MafStreamingTurnTests.fs" />
+    <Compile Include="MafStreamingApprovalTests.fs" />
+    <Compile Include="MafStreamingConfigTests.fs" />
+    <Compile Include="MafStreamingReliabilityTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

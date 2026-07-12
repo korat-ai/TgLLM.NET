@@ -14,8 +14,11 @@
     rest of the leaf's MAF-agnostic vocabulary (errors, rendering types, the observer interfaces,
     bridge options) — no MAF type appears in any of the three files.
     OwnerResolution.fs/ApprovalRendering.fs are pure decisions over Types.fs's records, so they
-    compile next, in either relative order. PendingApprovals.fs is the first file to reference a real
-    MAF type (ToolApprovalRequestContent), so it compiles after the pure layer. Conversations.fs
+    compile next, in either relative order. ReplyCoalescer.fs (the coalescing/message-splitting pair
+    behind streaming replies) depends only on TgLLM.Core's Clock and BCL types — no MAF type at all —
+    so it compiles here too, right after the pure layer and still ahead of PendingApprovals.fs.
+    PendingApprovals.fs is the first file to reference a real MAF type (ToolApprovalRequestContent),
+    so it compiles after the pure layer. Conversations.fs
     (per-chat AgentSession) and ApprovalDetection.fs (response -> pending prompts) are independent of
     PendingApprovals.fs but both need MAF types, so they follow it. Projection.fs (AIFunction ->
     ToolRegistry) only needs Types.fs's ProjectionProblem/ProjectionReport/IMafObserver and
@@ -36,6 +39,7 @@
     <Compile Include="Types.fs" />
     <Compile Include="OwnerResolution.fs" />
     <Compile Include="ApprovalRendering.fs" />
+    <Compile Include="ReplyCoalescer.fs" />
     <Compile Include="PendingApprovals.fs" />
     <Compile Include="Conversations.fs" />
     <Compile Include="ApprovalDetection.fs" />
@@ -48,6 +52,14 @@
     <PackageReference Include="Microsoft.Agents.AI" />
     <PackageReference Include="FSharp.SystemTextJson" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <!--
+      Telegram.Bot already flows transitively into this project through the TgLLM.FSharp ->
+      TgLLM.BotApi project-reference chain (TgLLM.BotApi.fsproj's own PackageReference carries no
+      PrivateAssets restriction) — this explicit reference is the more honest/robust choice for
+      Bridge.fs's own direct catch of Telegram.Bot.Exceptions.ApiRequestException (guardedEmit's
+      429 handling) rather than relying on that transitive flow.
+    -->
+    <PackageReference Include="Telegram.Bot" />
   </ItemGroup>
 
   <ItemGroup>

@@ -202,6 +202,24 @@ The agent's own declared `AIFunction`s project into the SAME Tool Router manifes
 (`MafTools.project`/`MafTools.Project`), and an incoming chat message is answered by the agent's
 reply automatically, on the same per-chat ordering the rest of the Tool Router uses.
 
+**Live streaming** (optional): edit-in-place replies instead of one message sent once a turn
+completes. `WithStreaming()`/`WithStreaming(coalesceInterval)` on `TgBotConfig`/`TgWebhookConfig`
+paces live edits safely against Telegram's rate limit (1.5s default, tunable); a reply that would
+exceed Telegram's 4096-character cap spills into a new message instead of failing, and a streamed
+turn that ends in an approval keeps its narration on the same message and adds the buttons to it.
+
+```fsharp
+let! bridge = Maf.startPolling ((TgBotConfig.create botToken).WithTools(tools).WithStreaming()) agent
+```
+
+```csharp
+var config = TgBotConfig.create(botToken).WithTools(tools).WithStreaming();
+```
+
+See [`docs/quickstart.md`](docs/quickstart.md#maf-bridge) ("Live streaming") for the continuation-message
+and streamed-approval behavior in full, plus the `IMafStreamingObserver`/`MafSurfacedEvent
+Kind="StreamFailed"` observability channel.
+
 **Durable sessions** (optional): survive a process restart. The agent's conversation session lives
 in memory by default; opt into a durable `ISessionStore` (`TgLLM.Persistence.FileSessionStore` or
 `TgLLM.Persistence.LiteDb.LiteDbSessionStore`) via `WithSessionStore`, alongside a durable
