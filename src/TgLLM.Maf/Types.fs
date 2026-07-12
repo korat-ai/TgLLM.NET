@@ -123,6 +123,19 @@ type IMafSessionObserver =
     /// would restore an older record (or none).
     abstract OnSessionPersistFailed: chat: ChatId * error: exn -> unit
 
+/// A streaming turn's OWN failure condition — a SIBLING of `IMafObserver`, not an extension of it
+/// (mirrors `IMafSessionObserver`'s own precedent), so a host's existing `IMafObserver`
+/// implementation is unaffected by this addition.
+type IMafStreamingObserver =
+    /// The update stream itself threw AFTER a live message was already shown (narration was
+    /// visible, then the backend/agent failed mid-turn) — the ONE condition `OnTurnFailed`'s own
+    /// contract explicitly does NOT cover ("no message was sent for this turn" — false here).
+    /// `liveMessage` is always the CURRENT (last) message of the turn's own sequence, if the reply
+    /// had already spilled across more than one live message by the time the stream failed — any
+    /// EARLIER message in that sequence is already finalized, complete, and untouched by this
+    /// failure.
+    abstract OnStreamFailed: chat: ChatId * liveMessage: MessageId * error: exn -> unit
+
 /// Reports nothing — the default when a caller has no need to observe MAF-bridge conditions,
 /// mirroring `NoopHookObserver`/`NoopA2uiObserver`.
 type NoopMafObserver() =
@@ -138,6 +151,9 @@ type NoopMafObserver() =
     interface IMafSessionObserver with
         member _.OnSessionRestoreFailed(_chat: ChatId, _failure: SessionFailure) = ()
         member _.OnSessionPersistFailed(_chat: ChatId, _error: exn) = ()
+
+    interface IMafStreamingObserver with
+        member _.OnStreamFailed(_chat: ChatId, _liveMessage: MessageId, _error: exn) = ()
 
 /// Options a host may set when wiring the bridge; every field is optional — the zero-config path
 /// (`Maf.startPolling`/`startWebhook`) is complete without any of them.

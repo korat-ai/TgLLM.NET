@@ -104,6 +104,24 @@ type internal CSharpMafObserverBridge(onSurfaced: Action<MafSurfacedEvent> | nul
         member _.OnSessionPersistFailed(chat: ChatId, error: exn) =
             reportWithError "SessionPersistFailed" $"persisting the durable session for chat {UMX.untag chat} failed: {error.Message}" error
 
+    /// A THIRD sibling block, mirroring the `IMafSessionObserver` one immediately above for the
+    /// identical reason (`Types.fs`'s own `IMafStreamingObserver` doc comment: a SIBLING of
+    /// `IMafObserver`, not an extension of it) — without this, `MafBridge`'s own three-tier
+    /// `streamingObserver` resolution (`Bridge.fs`: `observer` itself when it also implements
+    /// `IMafStreamingObserver`, else the bot's own logger, else noop) can never pick THIS bridge up
+    /// as the streaming-failure channel, so a C# host wiring `MafBridgeSettings.OnSurfaced` plus
+    /// `TgBotConfig.WithStreaming` and no logger would silently lose a mid-stream failure to
+    /// `NoopMafObserver` — the exact dual-façade parity gap `IMafSessionObserver`'s own block above
+    /// already closed for the durable-session channel. Reports through the SAME
+    /// `Action<MafSurfacedEvent>` as both blocks above, so a C# host observes every channel through
+    /// one callback.
+    interface IMafStreamingObserver with
+        member _.OnStreamFailed(chat: ChatId, liveMessage: MessageId, error: exn) =
+            reportWithError
+                "StreamFailed"
+                $"the reply stream in chat {UMX.untag chat} failed after message {UMX.untag liveMessage} was already shown: {error.Message}"
+                error
+
 /// Settings for `MafTelegramBridge.StartPollingAsync`/`StartWebhookAsync` — every member is a
 /// plain, mutable, C#-safe property; omitting all of them (`MafBridgeSettings()`) is the
 /// zero-config path.

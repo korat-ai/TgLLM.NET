@@ -57,6 +57,14 @@ type LoggingMafObserver(logger: ILogger) =
         member _.OnSessionPersistFailed(chat: ChatId, error: exn) =
             logger.LogError(error, "MAF: persisting the durable session for chat {Chat} failed", [| chat :> obj |])
 
+    interface IMafStreamingObserver with
+        member _.OnStreamFailed(chat: ChatId, liveMessage: MessageId, error: exn) =
+            logger.LogError(
+                error,
+                "MAF: the reply stream in chat {Chat} failed after message {MessageId} was already shown",
+                [| chat :> obj; liveMessage :> obj |]
+            )
+
 /// The bridge's internal turn-processing helpers — pure with respect to MAF (no `agent.RunAsync`
 /// call lives here), composing `ApprovalDetection`/`ApprovalRendering`/`ApprovalDescriptor` into
 /// the sends the bridge issues. Kept separate from `MafBridge` itself so the type below stays a
@@ -101,6 +109,46 @@ module private TurnProcessing =
             $"{mark} {tool} {verb}."
 
     let failureNote (tool: string) : string = $"⚠ {tool} could not complete — the agent failed to resume."
+
+/// The state machine's own outcome for one streaming turn — what the finalize step needs to decide
+/// the LAST message's own send/edit, mirroring `TurnProcessing`/`processInitialResponse`'s own
+/// "detected approvals, or plain text" split. `LastSlice` is the LAST message's own kept text — NOT
+/// `FinalResponse.Text`, which is the WHOLE turn's accumulated reply and may span several already
+/// finalized earlier messages once a turn has spilled across more than one message.
+[<NoComparison; NoEquality>]
+type private StreamOutcome =
+    { FinalResponse: AgentResponse
+      Detected: ApprovalDetection.DetectedApproval list
+      /// `None` only if nothing was ever sent for this turn.
+      LastMessage: MessageId option
+      /// The LAST message's own text, live-tracked by its own `ReplyCoalescer` — empty when nothing
+      /// was ever sent live (the "no message was ever sent" finalize branch re-derives its own text
+      /// straight from `FinalResponse.Text` instead).
+      LastSlice: string
+      /// Only meaningful when `LastMessage = Some _`: whether the LAST message's own coalescer has
+      /// any text pending that its own last successful send/edit does NOT already reflect. `false`
+      /// when the message's own last emit already shows `LastSlice` verbatim (e.g. a single
+      /// content-bearing update sent once, with nothing further arriving) — the finalize step skips
+      /// its own mandatory final-flush edit in that case, rather than re-sending byte-identical text
+      /// Telegram would classify as a no-op edit anyway. `true` whenever a later delta arrived after
+      /// the coalescer's own last mark (whether or not the ordinary cadence gate had cleared by
+      /// then) — computed via `ReplyCoalescer.IsDue` at a synthetic far-future instant, which forces
+      /// its own timing-gate check to always pass and leaves ONLY the content-changed comparison as
+      /// the deciding factor.
+      NeedsFinalFlush: bool
+      /// Only meaningful when `LastMessage = None`: the text `finalizeStreamingTurn`'s own `[],
+      /// None` branch splits and (re)sends as fresh messages. `FinalResponse.Text` (the WHOLE turn)
+      /// whenever nothing was EVER sent, or the turn's only message was sent then vanished with no
+      /// spill ever happening — re-sending the complete reply as a new message IS correct recovery
+      /// in both cases, nothing else exists to duplicate. But once a turn HAS spilled (at least one
+      /// earlier message already reached the wire and was finalized by a rollover) and the LAST
+      /// live message then vanishes (`EditNotFound`) with no further update ever arriving to trigger
+      /// a fresh resend, `FinalResponse.Text` would re-send the WHOLE turn — duplicating every
+      /// already-finalized earlier message. In that one case this instead carries only the LAST
+      /// message's own missing slice (`coalescer.RunningText`, unchanged since the vanish, since a
+      /// further delta arriving after a vanish always triggers an immediate fresh send of its own —
+      /// reaching finalize with `LastMessage = None` at all means none ever did).
+      RecoveryText: string }
 
 /// Wires ONE agent to ONE bot: registers `maf-approve`/`maf-reject` into the bot's own Tool Router,
 /// owns the per-chat `Conversations` and `PendingApprovals`, and exposes host-initiated runs.
@@ -148,6 +196,19 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
             match bot.Logger with
             | Some logger -> LoggingMafObserver logger :> IMafSessionObserver
             | None -> NoopMafObserver() :> IMafSessionObserver
+
+    /// Three-tier resolution, mirroring `sessionObserver`'s own fallback chain immediately above:
+    /// `observer` itself when it also implements `IMafStreamingObserver`; else the bot's own logger,
+    /// wrapped; else noop — so a host-supplied custom `IMafObserver` that does not also implement the
+    /// streaming-loop channel still gets `OnStreamFailed` logged whenever a logger is wired, rather
+    /// than every such host silently losing this channel.
+    let streamingObserver: IMafStreamingObserver =
+        match box observer with
+        | :? IMafStreamingObserver as so -> so
+        | _ ->
+            match bot.Logger with
+            | Some logger -> LoggingMafObserver logger :> IMafStreamingObserver
+            | None -> NoopMafObserver() :> IMafStreamingObserver
 
     /// Rebuilds ONE pending approval from its persisted descriptor, with NO live in-memory state —
     /// the read counterpart to `toPersistedDto`. `ArgumentsJson` round-trips through `JsonElement`
@@ -463,32 +524,506 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
     /// FALLS BACK to `sendNewApproval` for a fresh, owner-scoped message — never records a pending
     /// entry against a message with no buttons anywhere, which would hang the turn invisibly (no
     /// way for anyone to ever decide it).
-    let sendChainedApproval (chat: ChatId) (owner: OwnerScope) (messageId: MessageId) (detected: ApprovalDetection.DetectedApproval) : Task =
+    ///
+    /// `bodyOverride`, when `Some`, replaces the rendered prompt's own `Body` as the text sent to
+    /// the wire — the buttons/plan still come from the SAME render (`TurnProcessing.buildKeyboard`)
+    /// either way. `None` (every call below this one) is byte-identical to before this parameter
+    /// existed. Used by the streaming turn's own finalize step to keep a live message's already-
+    /// shown narration in place while still adding the decision buttons, rather than replacing the
+    /// narration with the ordinary tool-call prompt text — a standalone-function `let` binding
+    /// cannot itself carry a true optional argument (only type members can, per the F# spec), so
+    /// `sendChainedApproval` below stays the untouched, no-override entry point, and this is the
+    /// one body of logic both it and the finalize step's own override call route through.
+    /// The largest delay `guardedEmit` will ever actually wait out, in seconds, regardless of what
+    /// `Retry-After` the server sends — see `guardedEmit`'s own doc comment for why this is clamped
+    /// rather than honored verbatim.
+    let guardedEmitMaxDelaySeconds = 5
+
+    /// Runs `send` with a small, bounded, blocking retry on a 429 — used for emits that are
+    /// MANDATORY (the turn cannot correctly finish without them, and no FURTHER stream update is
+    /// coming to retry against, unlike an ordinary mid-stream coalesced edit routed through
+    /// `ReplyCoalescer.NotifyRateLimited`): the end-of-stream final flush and a split's retiring
+    /// edit (`runStreamingTurn`/`rollOver`, below), and `sendChainedApprovalCore`'s own
+    /// `EditKeyboardPlan` call immediately below this — the kept-narration approval render for a
+    /// streamed turn, and the ordinary chained-approval render `HandleDecision`'s own resume chain
+    /// already used before streaming existed. `ex.Parameters` is read null-guarded — itself
+    /// nullable, not just its `RetryAfter` property (`Telegram.Bot.Exceptions.ApiRequestException
+    /// .Parameters : ResponseParameters`, a reference type; `ResponseParameters.RetryAfter :
+    /// Nullable<int>`).
+    ///
+    /// The honored delay is CLAMPED to `guardedEmitMaxDelaySeconds`, never the raw server-supplied
+    /// hint: Telegram.Bot 22.10.1 already auto-retries any 429 with `retry_after <= 60s` internally
+    /// (its own vendor-level `RetryThreshold`), so the ONLY 429s an `ApiRequestException` ever
+    /// carries this far already have `retry_after > 60s` — an un-clamped wait would block whichever
+    /// caller is awaiting this call for well over a minute. This call site is shared by
+    /// `sendChainedApprovalCore`'s own resume chain, which runs under `withChatLock` — a one-minute-
+    /// plus block there would stall that WHOLE chat (every other turn/decision queued behind it),
+    /// not just this one emit. On exhaustion (every attempt still 429, clamped wait included), or on
+    /// any OTHER exception, the failure is returned as `Error` for the caller to report via
+    /// `OnInvalidOutput` — a persistent, minutes-long rate limit surfaces as a reported failure
+    /// rather than hanging the chat; never left to escape uncaught. `cts.Token` is passed to the
+    /// delay so a graceful shutdown does not sit out a full clamped wait either.
+    let guardedEmit (maxAttempts: int) (send: unit -> Task<'a>) : Task<Result<'a, exn>> =
+        task {
+            let mutable attempt = 0
+            let mutable result: Result<'a, exn> option = None
+
+            while result.IsNone do
+                attempt <- attempt + 1
+
+                try
+                    let! r = send ()
+                    result <- Some(Ok r)
+                with
+                | :? Telegram.Bot.Exceptions.ApiRequestException as ex when ex.ErrorCode = 429 && attempt < maxAttempts ->
+                    let retryAfterSeconds =
+                        ex.Parameters
+                        |> Option.ofObj
+                        |> Option.bind (fun p -> Option.ofNullable p.RetryAfter)
+                        |> Option.defaultValue 1
+
+                    let cappedDelaySeconds = min retryAfterSeconds guardedEmitMaxDelaySeconds
+                    do! Task.Delay(TimeSpan.FromSeconds(float cappedDelaySeconds), cts.Token)
+                | ex -> result <- Some(Error ex)
+
+            return result.Value
+        }
+
+    let sendChainedApprovalCore
+        (chat: ChatId)
+        (owner: OwnerScope)
+        (messageId: MessageId)
+        (detected: ApprovalDetection.DetectedApproval)
+        (bodyOverride: string option)
+        : Task =
         task {
             match TurnProcessing.buildKeyboard formatter chat detected with
             | Error e -> observer.OnInvalidOutput(chat, e)
             | Ok(render, plan) ->
-                match MessageText.create render.Body with
-                | Error _ -> observer.OnInvalidOutput(chat, BodyInvalid "the validated render's body failed to re-parse as MessageText")
+                let body = bodyOverride |> Option.defaultValue render.Body
+
+                match MessageText.create body with
+                | Error _ -> observer.OnInvalidOutput(chat, BodyInvalid "the approval message's own body (rendered, or a caller-supplied override) failed to re-parse as MessageText")
                 | Ok bodyText ->
-                    let! outcome = bot.EditKeyboardPlan(chat, messageId, bodyText, plan)
+                    // Mandatory, not best-effort: no further stream update is ever coming to retry
+                    // this render against, exactly like the end-of-stream final flush and a split's
+                    // retiring edit — routed through the SAME bounded `guardedEmit` retry rather than
+                    // surfacing a transient 429 straight to `OnInvalidOutput` with no retry at all
+                    // (this call site is shared by BOTH the streaming finalize step's own
+                    // kept-narration render and `HandleDecision`'s ordinary resume-chain render).
+                    let! attempt = guardedEmit 3 (fun () -> bot.EditKeyboardPlan(chat, messageId, bodyText, plan))
 
-                    match outcome with
-                    | EditApplied
-                    | EditNotModified ->
-                        pendingApprovals.Add
-                            { Chat = chat
-                              Request = detected.Request
-                              Owner = owner
-                              MessageId = messageId
-                              ExpiresAt = expiry |> ValueOption.map (fun span -> bot.Clock() + span) |> ValueOption.toOption }
-                    | EditNotFound ->
-                        observer.OnInvalidOutput(
-                            chat,
-                            DeliveryFailed "the approval message to chain the next request onto no longer exists — sending a fresh one"
-                        )
+                    match attempt with
+                    | Error ex -> observer.OnInvalidOutput(chat, DeliveryFailed $"failed to render the approval: %s{ex.Message}")
+                    | Ok outcome ->
+                        match outcome with
+                        | EditApplied
+                        | EditNotModified ->
+                            pendingApprovals.Add
+                                { Chat = chat
+                                  Request = detected.Request
+                                  Owner = owner
+                                  MessageId = messageId
+                                  ExpiresAt = expiry |> ValueOption.map (fun span -> bot.Clock() + span) |> ValueOption.toOption }
+                        | EditNotFound ->
+                            observer.OnInvalidOutput(
+                                chat,
+                                DeliveryFailed "the approval message to chain the next request onto no longer exists — sending a fresh one"
+                            )
 
-                        do! sendNewApproval chat owner detected
+                            do! sendNewApproval chat owner detected
+        }
+        :> Task
+
+    let sendChainedApproval (chat: ChatId) (owner: OwnerScope) (messageId: MessageId) (detected: ApprovalDetection.DetectedApproval) : Task =
+        sendChainedApprovalCore chat owner messageId detected None
+
+    /// Drives ONE streaming turn: the hand-rolled `IAsyncEnumerator` loop over
+    /// `agent.RunStreamingAsync` (mirrors `TgLLM.Core.UpdateProcessor.RunAsync`'s own loop over its
+    /// `IAsyncEnumerable<AgentEvent>` source), a per-message `ReplyCoalescer` with
+    /// `MessageSplitting`-driven rollover on overflow, and the initial-send-then-edit state machine —
+    /// ending in a `StreamOutcome` the finalize step below consumes. Runs under the SAME per-chat
+    /// lock (`withChatLock`, see the caller) as every other turn; closes over `bot`/`observer`/
+    /// `streamingObserver`. `owner` is threaded through (unused by this story's own loop, which never
+    /// renders an approval itself) purely for signature symmetry with `finalizeStreamingTurn`'s own
+    /// `(chat, owner, ...)` shape — mirrors `processInitialResponse`'s `(chat, owner, response)`.
+    let runStreamingTurn
+        (chat: ChatId)
+        (owner: OwnerScope)
+        (coalesceInterval: TimeSpan)
+        (run: unit -> IAsyncEnumerable<AgentResponseUpdate>)
+        : Task<StreamOutcome option> =
+        ignore owner
+
+        // The mutable turn state, and the two rollover helpers closing over it, live OUTSIDE the
+        // driving `task { }` below — nesting a `let rec` task-returning function's OWN definition
+        // textually inside another task CE's body defeats that OUTER CE's static resumable-state-
+        // machine compilation (FS3511); each of these compiles to its own independent state machine
+        // instead, called (not inlined) from the driving loop below, exactly like `guardedEmit`
+        // above already is.
+        let maxLen = MessageText.MaxLength
+        let mutable coalescer = ReplyCoalescer(bot.Clock, coalesceInterval)
+        let collected = ResizeArray<AgentResponseUpdate>()
+        let mutable currentMessage: MessageId option = None
+        let mutable aborted = false
+        /// `true` once this turn has retired at least one message via `rollOver` — the final
+        /// classification's own signal (see `StreamOutcome.RecoveryText`'s doc comment) that a LATER
+        /// vanish-with-no-live-message must recover only the missing tail, never the whole turn.
+        /// Set unconditionally at the top of `rollOver`, before its own send/edit can fail: reaching
+        /// `rollOver` at all already means `MessageSplitting.split` found genuine overflow for this
+        /// turn, so the spill has functionally begun regardless of whether it goes on to succeed —
+        /// and a failed roll aborts the whole turn (`aborted <- true`) before classification is ever
+        /// reached, so this flag being set on that path has no visible effect either way.
+        let mutable everSpilled = false
+
+        /// Retires the OUTGOING message with a mandatory final edit of `keep` — or, if the very
+        /// FIRST delta of the whole turn already overflows on its own (no message exists yet at
+        /// all), sends `keep` as an ordinary new message instead of silently dropping it — then
+        /// sends `newSlice` as the NEW current message immediately: no cadence gate, since a
+        /// rolled-over message's own first content is never paced. Seeds a fresh coalescer for the
+        /// new message, already marked emitted for `newSlice`. Returns `false` (aborting the roll)
+        /// only if retiring/starting the outgoing message itself fails to reach the wire at all.
+        let rollOver (keep: string) (newSlice: string) : Task<bool> =
+            task {
+                everSpilled <- true
+
+                let! outgoingOk =
+                    task {
+                        match MessageText.create keep with
+                        | Error _ ->
+                            // Unreachable in practice: `keep` is a `MessageSplitting.split` chunk,
+                            // always <= maxLen; only an all-whitespace chunk (trimmed to empty)
+                            // could land here, which `split`'s own trimming only ever produces for
+                            // pathological all-whitespace input.
+                            return true
+                        | Ok validatedKeep ->
+                            match currentMessage with
+                            | Some id ->
+                                let! outcome = guardedEmit 3 (fun () -> bot.EditText(chat, id, validatedKeep))
+
+                                match outcome with
+                                | Error ex ->
+                                    observer.OnInvalidOutput(chat, DeliveryFailed $"failed to finalize a spilled message: %s{ex.Message}")
+                                | Ok EditNotFound ->
+                                    // The message being retired vanished (the user deleted it) before its
+                                    // own final keep-slice could be written — its tail is lost. Reported,
+                                    // not silently swallowed, exactly as the mid-stream edit and the
+                                    // end-of-stream final flush already report their own `EditNotFound`.
+                                    observer.OnInvalidOutput(chat, DeliveryFailed "a spilled message to finalize no longer exists")
+                                | Ok(EditApplied | EditNotModified) -> ()
+
+                                return true
+                            | None ->
+                                // No message exists yet at all — the STREAM's own very first update
+                                // already overflowed on its own. `keep` is this turn's first-ever
+                                // content and must still reach the wire as an ordinary new send, not
+                                // be silently dropped in favor of only `newSlice`. Mandatory, like
+                                // every other send in this function — routed through `guardedEmit` so
+                                // a transient 429 is bounded-retried rather than aborting the whole
+                                // roll on the FIRST rate limit hit.
+                                let! attempt = guardedEmit 3 (fun () -> bot.SendText(chat, validatedKeep))
+
+                                match attempt with
+                                | Ok id ->
+                                    currentMessage <- Some id
+                                    return true
+                                | Error ex ->
+                                    observer.OnInvalidOutput(chat, DeliveryFailed $"initial send failed: %s{ex.Message}")
+                                    return false
+                    }
+
+                if not outgoingOk then
+                    return false
+                else
+                    match MessageText.create newSlice with
+                    | Error _ ->
+                        observer.OnInvalidOutput(chat, DeliveryFailed "a continuation message's own overflow slice failed validation")
+                        return false
+                    | Ok validatedSlice ->
+                        // Mandatory, not best-effort: no further stream update is coming to retry
+                        // this send against — routed through `guardedEmit` for the same reason as
+                        // every other mandatory emit in this file.
+                        let! attempt = guardedEmit 3 (fun () -> bot.SendText(chat, validatedSlice))
+
+                        match attempt with
+                        | Ok newId ->
+                            currentMessage <- Some newId
+                            coalescer <- ReplyCoalescer(bot.Clock, coalesceInterval, seed = newSlice)
+                            coalescer.MarkEmitted(bot.Clock())
+                            return true
+                        | Error ex ->
+                            observer.OnInvalidOutput(chat, DeliveryFailed $"failed to send a continuation message: %s{ex.Message}")
+                            return false
+            }
+
+        /// Rolls every chunk in `pending` forward in turn — all but the last become their OWN
+        /// already-finalized message (the rare case one delta alone spans several message-lengths);
+        /// the LAST seeds the new current coalescer.
+        let rec rollAll (pending: string list) (outgoing: string) : Task<unit> =
+            task {
+                match pending with
+                | [ last ] ->
+                    let! ok = rollOver outgoing last
+                    if not ok then aborted <- true
+                | mid :: more ->
+                    let! ok = rollOver outgoing mid
+
+                    if ok then
+                        do! rollAll more mid
+                    else
+                        aborted <- true
+                | [] -> ()
+            }
+
+        task {
+            try
+                use enumerator = (run ()).GetAsyncEnumerator(cts.Token)
+                let mutable moving = true
+
+                while moving && not aborted do
+                    let! hasNext = enumerator.MoveNextAsync()
+
+                    if not hasNext then
+                        moving <- false
+                    else
+                        let update = enumerator.Current
+                        collected.Add update
+                        coalescer.Append update.Text
+
+                        match MessageSplitting.split maxLen coalescer.RunningText with
+                        | [] -> () // `split` returns `[]` only for `""` — the running text is still empty
+                        | [ _ ] ->
+                            // No overflow — the ordinary single-message send/edit transition.
+                            match currentMessage, coalescer.IsDue(bot.Clock()) with
+                            | None, _ when not (String.IsNullOrWhiteSpace coalescer.RunningText) ->
+                                match MessageText.create coalescer.RunningText with
+                                | Error _ -> () // unreachable: already whitespace- and length-guarded above
+                                | Ok validated ->
+                                    // Mandatory: the turn's very first message. Routed through the
+                                    // (clamped, `guardedEmit`) bounded retry rather than an ordinary
+                                    // try/with, so a single transient 429 does not discard the whole
+                                    // reply (and any pending approval riding on it) — matching how the
+                                    // mid-stream EDIT just below already absorbs a 429 of its own.
+                                    let! attempt = guardedEmit 3 (fun () -> bot.SendText(chat, validated))
+
+                                    match attempt with
+                                    | Ok id ->
+                                        currentMessage <- Some id
+                                        coalescer.MarkEmitted(bot.Clock())
+                                    | Error ex ->
+                                        observer.OnInvalidOutput(chat, DeliveryFailed $"initial send failed: %s{ex.Message}")
+                                        aborted <- true
+                            | Some id, true ->
+                                match MessageText.create coalescer.RunningText with
+                                | Error _ -> () // unreachable: already length-guarded above; text can't have gone whitespace-only once sent
+                                | Ok validated ->
+                                    try
+                                        let! outcome = bot.EditText(chat, id, validated)
+
+                                        match outcome with
+                                        | EditApplied
+                                        | EditNotModified -> coalescer.MarkEmitted(bot.Clock())
+                                        | EditNotFound ->
+                                            observer.OnInvalidOutput(chat, DeliveryFailed "the live message no longer exists")
+                                            currentMessage <- None // a LATER split still rolls to a fresh send
+                                    with
+                                    | :? Telegram.Bot.Exceptions.ApiRequestException as ex when ex.ErrorCode = 429 ->
+                                        let retryAfter =
+                                            ex.Parameters
+                                            |> Option.ofObj
+                                            |> Option.bind (fun p -> Option.ofNullable p.RetryAfter)
+                                            |> Option.map (float >> TimeSpan.FromSeconds >> ValueSome)
+                                            |> Option.defaultValue ValueNone
+
+                                        coalescer.NotifyRateLimited(bot.Clock(), retryAfter) // never blocks
+                                    | ex -> observer.OnInvalidOutput(chat, DeliveryFailed $"edit failed: %s{ex.Message}")
+                            | _ -> () // not due yet, or nothing to send yet
+                        | keep :: rest -> do! rollAll rest keep
+            with
+            | :? OperationCanceledException when cts.IsCancellationRequested ->
+                // A graceful shutdown (`MafBridge.DisposeAsync`'s own `cts.Cancel()`) cancels the
+                // enumerator's own `MoveNextAsync` mid-stream — NOT a genuine stream failure. Neither
+                // the failure-note edit (`TurnProcessing.failureNote` is a RESUME-path string,
+                // misapplied to an ordinary restart) nor `OnStreamFailed` runs: an in-flight turn
+                // that happens to be cancelled by a routine restart should never destroy the user's
+                // own partial narration or be reported as an outage. The chat lock is still released
+                // normally — `withChatLock`'s own `finally` (the caller of this function) runs
+                // regardless of how this `task { }` completes. Guarded on `cts.IsCancellationRequested`
+                // so this ONLY absorbs OUR OWN shutdown: an `OperationCanceledException` raised while
+                // `cts` is still live is an agent-origin cancellation (e.g. a model backend's own
+                // `HttpClient` timeout surfacing as `TaskCanceledException`) — a genuine failure that
+                // must fall through to the `| ex ->` arm below and be reported, exactly as the
+                // non-streaming path's own `OnTurnFailed` reports the identical failure.
+                aborted <- true
+            | ex ->
+                match currentMessage with
+                | None -> observer.OnTurnFailed(chat, ex)
+                | Some id ->
+                    let! _ = guardedEmit 1 (fun () -> bot.EditText(chat, id, MessageText.unsafe (TurnProcessing.failureNote "the reply")))
+                    streamingObserver.OnStreamFailed(chat, id, ex)
+
+                aborted <- true
+
+            if aborted then
+                return None
+            elif collected.Count = 0 then
+                observer.OnEmptyTurn chat
+                return None
+            else
+                let finalResponse = AgentResponseExtensions.ToAgentResponse collected
+                let detected = ApprovalDetection.detect chat finalResponse
+
+                match currentMessage with
+                | Some _ ->
+                    // Bypasses the ordinary cadence gate on purpose (see `NeedsFinalFlush`'s own doc
+                    // comment) — this asks ONLY "has anything changed since the last successful
+                    // send/edit", not "would an ordinary tick be due right now".
+                    let needsFinalFlush = coalescer.IsDue DateTimeOffset.MaxValue
+
+                    return
+                        Some
+                            { FinalResponse = finalResponse
+                              Detected = detected
+                              LastMessage = currentMessage
+                              LastSlice = coalescer.RunningText
+                              NeedsFinalFlush = needsFinalFlush
+                              RecoveryText = finalResponse.Text (* unused whenever LastMessage = Some _ *) }
+                | None ->
+                    // `currentMessage = None` here for one of three reasons — see
+                    // `StreamOutcome.RecoveryText`'s own doc comment for the full reasoning:
+                    //   (a) nothing ever touched the wire live (every tick was gated, one giant
+                    //       update completed the stream before its own edit was ever due, or the
+                    //       WHOLE turn was a bare approval with no narration text at all — a
+                    //       `ToolApprovalRequestContent`-only update still counts as `collected` but
+                    //       never appends anything to the coalescer);
+                    //   (b) the turn's ONE message was sent, then vanished (`EditNotFound`), with no
+                    //       spill ever happening and no further update arriving to trigger a fresh
+                    //       resend;
+                    //   (c) same as (b), but AFTER this turn had already spilled across more than one
+                    //       message — the vanished message was the LAST of several, and at least one
+                    //       EARLIER message is already finalized on the wire.
+                    // (a) and (b) both want the complete reply re-derived from `finalResponse.Text` —
+                    // nothing else exists yet to duplicate. Only (c) must recover just the missing
+                    // tail (`coalescer.RunningText`, unchanged since the vanish) instead, or it would
+                    // re-send every already-finalized earlier message a second time.
+                    let recoveryText = if everSpilled then coalescer.RunningText else finalResponse.Text
+
+                    // Gated on `everSpilled`, OR `detected` non-empty, OR non-blank text — not text
+                    // alone: a bare approval has `detected` non-empty but `finalResponse.Text = ""`,
+                    // and dropping THAT case here would silently discard the approval and leave the
+                    // agent's session mid-turn forever (`finalizeStreamingTurn`'s own `first :: rest,
+                    // None` arm already renders it via `sendNewApproval` once it gets here).
+                    if everSpilled || not (List.isEmpty detected) || not (String.IsNullOrWhiteSpace finalResponse.Text) then
+                        return
+                            Some
+                                { FinalResponse = finalResponse
+                                  Detected = detected
+                                  LastMessage = None
+                                  LastSlice = ""
+                                  NeedsFinalFlush = true
+                                  RecoveryText = recoveryText }
+                    else
+                        observer.OnEmptyTurn chat
+                        return None
+        }
+
+    /// The finalize step — shared by `StartRun`'s and `HandleIncomingMessage`'s streaming branches,
+    /// mirroring `processInitialResponse`'s own role for the non-streaming path. NEVER THROWS: the
+    /// whole body is wrapped in one outer try/with reporting via `OnInvalidOutput`, mirroring
+    /// `processInitialResponse`'s own discipline — so the caller's `do! finalize; do!
+    /// persistConversation` always reaches the persist call.
+    let finalizeStreamingTurn (chat: ChatId) (owner: OwnerScope) (outcome: StreamOutcome) : Task =
+        task {
+            try
+                match outcome.Detected, outcome.LastMessage with
+                | [], Some id ->
+                    // The mandatory final flush: guarantees the message shows the COMPLETE reply even
+                    // if the very last delta arrived inside the coalescer's own interval window and
+                    // never got its own periodic edit. Skipped when `NeedsFinalFlush = false` — the
+                    // message's own last successful send/edit already shows `LastSlice` verbatim
+                    // (e.g. a single content-bearing update sent once, nothing further arriving), so
+                    // re-editing would only reproduce Telegram's own "message is not modified" no-op.
+                    if outcome.NeedsFinalFlush then
+                        match MessageText.create outcome.LastSlice with
+                        | Error _ -> observer.OnInvalidOutput(chat, DeliveryFailed "the final message slice failed validation")
+                        | Ok validated ->
+                            let! r = guardedEmit 3 (fun () -> bot.EditText(chat, id, validated))
+
+                            match r with
+                            | Error ex -> observer.OnInvalidOutput(chat, DeliveryFailed $"final flush failed: %s{ex.Message}")
+                            // `EditNotFound` is a SUCCESSFUL HTTP call (never an exception) that
+                            // `guardedEmit` happily wraps in `Ok` — matching `Ok _ -> ()` here would
+                            // silently drop the pending tail text with no report at all, the same
+                            // class of gap `sendChainedApprovalCore`'s own `EditNotFound` handling
+                            // (immediately above) already closes for a chained approval's render.
+                            | Ok EditNotFound ->
+                                observer.OnInvalidOutput(
+                                    chat,
+                                    DeliveryFailed "the final flush's own target message no longer exists — the tail text was not delivered"
+                                )
+                            | Ok(EditApplied | EditNotModified) -> ()
+                | [], None ->
+                    // No LIVE message exists (every tick was gated, the stream produced its whole
+                    // reply before the coalescer's very first tick was ever due, or the last live
+                    // message vanished with nothing further arriving to replace it) — split
+                    // `outcome.RecoveryText` fresh and send each non-blank chunk as its own new
+                    // message. Deliberately NOT `outcome.FinalResponse.Text` — see
+                    // `StreamOutcome.RecoveryText`'s own doc comment: once a turn has already spilled
+                    // across more than one message, `FinalResponse.Text` is the WHOLE turn and would
+                    // duplicate every earlier, already-finalized message.
+                    let chunks =
+                        MessageSplitting.split MessageText.MaxLength outcome.RecoveryText
+                        |> List.filter (fun chunk -> not (String.IsNullOrWhiteSpace chunk))
+
+                    if List.isEmpty chunks then
+                        observer.OnEmptyTurn chat
+                    else
+                        // Mandatory, like every other send in this file: no further stream update is
+                        // ever coming to retry a chunk against — routed through `guardedEmit` so a
+                        // transient 429 on, say, the FIRST of three chunks is bounded-retried rather
+                        // than discarding the rest of the reply outright. On exhaustion (or any other
+                        // failure), reported via `OnInvalidOutput` and the remaining chunks are
+                        // skipped — mirrors this loop's own pre-`guardedEmit` behavior, where an
+                        // unguarded send failure here escaped straight to this function's own outer
+                        // try/with and stopped the loop the same way.
+                        let mutable chunkFailed = false
+
+                        for chunk in chunks do
+                            if not chunkFailed then
+                                match MessageText.create chunk with
+                                | Error _ -> observer.OnInvalidOutput(chat, DeliveryFailed "a split reply chunk failed validation")
+                                | Ok validated ->
+                                    let! attempt = guardedEmit 3 (fun () -> bot.SendText(chat, validated))
+
+                                    match attempt with
+                                    | Ok _ -> ()
+                                    | Error ex ->
+                                        observer.OnInvalidOutput(chat, DeliveryFailed $"failed to send a split reply chunk: %s{ex.Message}")
+                                        chunkFailed <- true
+                | first :: rest, Some id ->
+                    // A live message already exists: the FIRST detected approval repurposes it —
+                    // its own already-shown text (`LastSlice`, this message's own slice once a turn
+                    // has spilled, never the whole accumulated reply) is kept, and the decision
+                    // buttons are added on top, via `sendChainedApprovalCore`'s body override. Every
+                    // OTHER detected approval in the same turn (a further request the agent raised
+                    // alongside the first) goes through the unchanged, no-override `sendNewApproval`
+                    // — its own fresh message, exactly like a non-streaming turn's own further
+                    // approvals.
+                    do! sendChainedApprovalCore chat owner id first (Some outcome.LastSlice)
+
+                    for d in rest do
+                        do! sendNewApproval chat owner d
+                | first :: rest, None ->
+                    // No live message ever existed for this turn (every tick was gated, or the
+                    // stream's very first content-bearing update already carried the approval) — the
+                    // FIRST detected approval has no message to chain onto either, so it goes
+                    // through `sendNewApproval` too, same as every other one.
+                    do! sendNewApproval chat owner first
+
+                    for d in rest do
+                        do! sendNewApproval chat owner d
+            with ex ->
+                observer.OnInvalidOutput(chat, DeliveryFailed $"failed to deliver this streamed turn's outcome: %s{ex.Message}")
         }
         :> Task
 
@@ -702,9 +1237,22 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                 try
                     let! conversation = conversations.GetOrCreate(chat, restoreOrCreate chat)
                     let resolvedOwner = RunOwner.resolve explicitOwner None chat
-                    let! response = agent.RunAsync(prompt, conversation.Session, cancellationToken = cts.Token)
-                    do! processInitialResponse chat resolvedOwner response
-                    do! persistConversation chat conversation.Session
+
+                    match bot.Streaming with
+                    | None ->
+                        let! response = agent.RunAsync(prompt, conversation.Session, cancellationToken = cts.Token)
+                        do! processInitialResponse chat resolvedOwner response
+                        do! persistConversation chat conversation.Session
+                    | Some interval ->
+                        let! outcome =
+                            runStreamingTurn chat resolvedOwner interval (fun () ->
+                                agent.RunStreamingAsync(prompt, conversation.Session, cancellationToken = cts.Token))
+
+                        match outcome with
+                        | Some o ->
+                            do! finalizeStreamingTurn chat resolvedOwner o
+                            do! persistConversation chat conversation.Session
+                        | None -> () // already reported (OnTurnFailed/OnStreamFailed/OnInvalidOutput/OnEmptyTurn) inside runStreamingTurn
                 with ex ->
                     observer.OnTurnFailed(chat, ex)
             })
@@ -733,9 +1281,22 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                 try
                     let! conversation = conversations.GetOrCreate(message.Chat, restoreOrCreate message.Chat)
                     let resolvedOwner = RunOwner.resolve None (Some message.Sender.Id) message.Chat
-                    let! response = agent.RunAsync(message.Text, conversation.Session, cancellationToken = cts.Token)
-                    do! processInitialResponse message.Chat resolvedOwner response
-                    do! persistConversation message.Chat conversation.Session
+
+                    match bot.Streaming with
+                    | None ->
+                        let! response = agent.RunAsync(message.Text, conversation.Session, cancellationToken = cts.Token)
+                        do! processInitialResponse message.Chat resolvedOwner response
+                        do! persistConversation message.Chat conversation.Session
+                    | Some interval ->
+                        let! outcome =
+                            runStreamingTurn message.Chat resolvedOwner interval (fun () ->
+                                agent.RunStreamingAsync(message.Text, conversation.Session, cancellationToken = cts.Token))
+
+                        match outcome with
+                        | Some o ->
+                            do! finalizeStreamingTurn message.Chat resolvedOwner o
+                            do! persistConversation message.Chat conversation.Session
+                        | None -> () // already reported (OnTurnFailed/OnStreamFailed/OnInvalidOutput/OnEmptyTurn) inside runStreamingTurn
                 with ex ->
                     observer.OnTurnFailed(message.Chat, ex)
             })

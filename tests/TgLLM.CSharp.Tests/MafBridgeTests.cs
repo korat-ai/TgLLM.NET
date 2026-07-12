@@ -170,7 +170,7 @@ public class MafTextTurnSmokeTests
         const long chatId = 9501L;
 
         var steps = ListModule.OfArray(new[] { ScriptedStep.NewRepliesWith("Hello from C#!") });
-        var agent = new ScriptedAgent(steps, null, null);
+        var agent = new ScriptedAgent(steps, null, null, null);
 
         var tools = TgLLM.FSharp.ToolRegistry.create();
         var config = TgBotConfig.create(FakeToken).WithBaseUrl(server.BaseUrl).WithTools(tools);

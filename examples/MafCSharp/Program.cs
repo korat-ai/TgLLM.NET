@@ -14,6 +14,12 @@
 // restart is still honored AFTER it: the tap resumes the agent and edits that same message in
 // place, exactly as if the process had never gone down.
 //
+// Also turns on live streaming (TgBotConfig.WithStreaming()) — both turns below now arrive as
+// several deltas, paced by a real Task.Delay (see DemoAgent.StreamDeltasAsync below) rather than
+// one shot, so the reply visibly edits in place in Telegram instead of appearing all at once. The
+// approval turn keeps its narration on the SAME live message once the buttons are added — see that
+// turn's own comment below for why this differs from the non-streaming path.
+//
 // Set BOT_TOKEN and CHAT_ID (a private chat), then `dotnet run`.
 using System;
 using System.Collections.Generic;
@@ -38,16 +44,21 @@ var chatId = long.Parse(RequireEnv("CHAT_ID"));
 var tools = ToolRegistry.create();
 var bindingStore = FileBindingStore.openAt("bindings.json");
 var sessionStore = FileSessionStore.OpenAt("sessions.json");
-var config = TgBotConfig.create(botToken).WithTools(tools).WithBindingStore(bindingStore).WithSessionStore(sessionStore);
+var config = TgBotConfig.create(botToken)
+    .WithTools(tools)
+    .WithBindingStore(bindingStore)
+    .WithSessionStore(sessionStore)
+    .WithStreaming(); // live edit-in-place at the default 1.5s cadence — see DemoAgent.StreamDeltasAsync below
 
 await using var bridge = await MafTelegramBridge.StartPollingAsync(config, new DemoAgent());
 
-// A text turn: the agent answers a plain question with plain text — no buttons involved.
+// A text turn: the agent answers a plain question, streamed live — watch the message edit in place
+// in Telegram as DemoAgent.RunCoreStreamingAsync's deltas arrive, rather than appearing all at once.
 await bridge.StartRunAsync(chatId, "What can you do?");
 
-// The approval loop: the agent's next turn pauses on send_email. The bridge sends ONE owner-scoped
-// [Approve][Reject] message; tapping it resumes the agent and edits that same message in place to
-// the outcome.
+// The approval loop: the agent's next turn streams a little narration, then pauses on send_email.
+// The bridge sends ONE owner-scoped [Approve][Reject] message that KEEPS the narration already
+// shown; tapping it resumes the agent and edits that same message in place to the outcome.
 await bridge.StartRunAsync(chatId, "Email alice@example.com that the deploy is done.");
 
 Console.WriteLine("MAF bridge running (long polling). Approve/Reject the pending message in Telegram. Ctrl+C to stop.");
@@ -124,10 +135,92 @@ sealed class DemoAgent : AIAgent
         throw new InvalidOperationException("unrecognized demo session shape");
     }
 
+    // The pacing between scripted deltas below — comfortably straddles the bot's own default 1.5s
+    // coalescing interval (TgBotConfig.WithStreaming()'s own default,
+    // TgLLM.Maf.StreamingDefaults.defaultCoalesceInterval) so a live edit is actually observable
+    // mid-stream, not just the initial send and the final flush.
+    private static readonly TimeSpan Pace = TimeSpan.FromMilliseconds(500);
+
+    // Streaming counterpart to RunCoreAsync above — the SAME scripted turns (Turn, shared via the
+    // same DemoSession, still drives which one runs), but each reply arrives as several deltas
+    // paced by Pace rather than in one shot, so bot.Streaming's live edit-in-place is actually
+    // visible against Telegram: the FIRST delta sends a new message immediately (never gated), and
+    // later deltas edit that SAME message in place once the coalescing interval clears. A reply
+    // long enough to exceed Telegram's 4096-character per-message cap would instead spill into a
+    // NEW message at a whitespace-preferred boundary and keep live-editing there
+    // (TgLLM.Maf.MessageSplitting.split, TgLLM.Maf.ReplyCoalescer) — neither scripted reply here is
+    // long enough to trigger that, but the mechanism driving it is the same one this override feeds.
     protected override IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(
         IEnumerable<ChatMessage> messages,
         AgentSession? session,
         AgentRunOptions? options,
-        CancellationToken cancellationToken) =>
-        throw new NotSupportedException("DemoAgent replies in one turn; no streaming in this example.");
+        CancellationToken cancellationToken)
+    {
+        if (session is not DemoSession demoSession)
+        {
+            throw new InvalidOperationException(
+                "DemoAgent requires a DemoSession — CreateSessionCoreAsync/DeserializeSessionCoreAsync always produce one.");
+        }
+
+        demoSession.Turn++;
+
+        return demoSession.Turn switch
+        {
+            1 => StreamDeltasAsync(new (AgentResponseUpdate Update, TimeSpan Delay)[]
+            {
+                (TextDelta("I can draft "), Pace),
+                (TextDelta("and send emails "), Pace),
+                (TextDelta("for you — "), Pace),
+                (TextDelta("coordinating drafts, "), Pace),
+                (TextDelta("checking recipients, "), Pace),
+                (TextDelta("and confirming before anything goes out."), Pace),
+            }),
+            // Narration streams first, then this SAME turn pauses for approval. The bridge keeps
+            // this narration on the live message and ADDS the Approve/Reject buttons to it — unlike
+            // the non-streaming path, whose own preamble (response.Text alongside a detected
+            // approval) is dropped rather than sent as a separate message first
+            // (processInitialResponse's own doc comment in src/TgLLM.Maf/Bridge.fs).
+            2 => StreamDeltasAsync(new (AgentResponseUpdate Update, TimeSpan Delay)[]
+            {
+                (TextDelta("Drafting that email now"), Pace),
+                (TextDelta("..."), Pace),
+                (ApprovalDelta(), Pace),
+            }),
+            _ => StreamDeltasAsync(new (AgentResponseUpdate Update, TimeSpan Delay)[]
+            {
+                (TextDelta("Sent to alice@example.com."), TimeSpan.Zero),
+            }),
+        };
+    }
+
+    // One streamed text delta, carrying no other content — AgentResponseUpdate's own
+    // (role, content: string) constructor, the same one used for a normal assistant chunk.
+    private static AgentResponseUpdate TextDelta(string text) => new(ChatRole.Assistant, text);
+
+    private static AgentResponseUpdate ApprovalDelta()
+    {
+        var arguments = new Dictionary<string, object?>
+        {
+            ["toAddr"] = "alice@example.com",
+            ["body"] = "The deploy is done.",
+        };
+        var call = new FunctionCallContent("call-1", "send_email", arguments);
+        var request = new ToolApprovalRequestContent("req-1", call);
+        return new AgentResponseUpdate(ChatRole.Assistant, new List<AIContent> { request });
+    }
+
+    // Yields each (update, delay) pair in order, awaiting a REAL Task.Delay immediately before
+    // handing each one back — a real bot token/chat drives this example, so the delay is real
+    // wall-clock time, which is what makes bot.Streaming's live edit-in-place visible when you run
+    // this against Telegram. C#'s async iterator (yield return inside async IAsyncEnumerable<T>)
+    // needs no hand-rolled enumerator type, unlike this repo's F# examples/tests for the same shape.
+    private static async IAsyncEnumerable<AgentResponseUpdate> StreamDeltasAsync(
+        (AgentResponseUpdate Update, TimeSpan Delay)[] items)
+    {
+        foreach (var (update, delay) in items)
+        {
+            await Task.Delay(delay);
+            yield return update;
+        }
+    }
 }

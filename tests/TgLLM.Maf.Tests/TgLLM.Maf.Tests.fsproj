@@ -12,6 +12,8 @@
     <Compile Include="ApprovalRenderingTests.fs" />
     <Compile Include="PendingApprovalsTests.fs" />
     <Compile Include="ProjectionTests.fs" />
+    <Compile Include="MessageSplittingTests.fs" />
+    <Compile Include="ReplyCoalescerTests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

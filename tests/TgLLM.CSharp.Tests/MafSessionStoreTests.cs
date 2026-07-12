@@ -79,7 +79,7 @@ public class MafSessionStoreSmokeTests
             {
                 ScriptedStep.NewPausesFor("req-1", "send_email", ListModule.OfArray(Array.Empty<Tuple<string, object?>>())),
             });
-            var agent1 = new ScriptedAgent(pauseSteps, null, null);
+            var agent1 = new ScriptedAgent(pauseSteps, null, null, null);
 
             var bridge1 = await MafTelegramBridge.StartPollingAsync(config1, agent1);
             await bridge1.StartRunAsync(chatId, "Email alice that the deploy is done.");
@@ -101,7 +101,7 @@ public class MafSessionStoreSmokeTests
                 .WithSessionStore(FileSessionStore.OpenAt(path));
 
             var resumeSteps = ListModule.OfArray(new[] { ScriptedStep.NewRepliesWith("Email sent to alice@example.com.") });
-            var agent2 = new ScriptedAgent(resumeSteps, null, null);
+            var agent2 = new ScriptedAgent(resumeSteps, null, null, null);
 
             await using var bridge2 = await MafTelegramBridge.StartPollingAsync(config2, agent2);
 
@@ -160,7 +160,7 @@ public class MafSessionStoreSmokeTests
             {
                 ScriptedStep.NewPausesFor("req-1", "send_email", ListModule.OfArray(Array.Empty<Tuple<string, object?>>())),
             });
-            var agent1 = new ScriptedAgent(pauseSteps, null, null);
+            var agent1 = new ScriptedAgent(pauseSteps, null, null, null);
 
             var bridge1 = await MafTelegramBridge.StartPollingAsync(config1, agent1);
             await bridge1.StartRunAsync(chatId, "Email alice that the deploy is done.");
@@ -190,7 +190,7 @@ public class MafSessionStoreSmokeTests
             var settings = new MafBridgeSettings { OnSurfaced = e => surfaced.Add(e) };
 
             var resumeSteps = ListModule.OfArray(new[] { ScriptedStep.NewRepliesWith("unexpected") });
-            var agent2 = new ScriptedAgent(resumeSteps, null, null);
+            var agent2 = new ScriptedAgent(resumeSteps, null, null, null);
 
             await using var bridge2 = await MafTelegramBridge.StartPollingAsync(config2, agent2, settings);
 

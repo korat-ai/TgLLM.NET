@@ -37,7 +37,10 @@ type RecordedRequest =
 /// `"message to edit not found"`/`"message is not modified"` without a real vanished message.
 type internal CannedResponse =
     | Success of resultJson: string
-    | Failure of errorCode: int * description: string
+    /// `retryAfterSeconds`: `None` produces today's error body (no `parameters` field at all);
+    /// `Some n` adds a Bot-API-shaped `"parameters":{"retry_after":n}` — the 429 shape Telegram
+    /// itself sends when a rate limit carries a `Retry-After` hint the caller should honor.
+    | Failure of errorCode: int * description: string * retryAfterSeconds: int option
 
 [<Sealed>]
 type FakeBotApiServer
@@ -69,8 +72,12 @@ type FakeBotApiServer
     /// simulates editing a vanished message. Telegram.Bot's own client throws `ApiRequestException`
     /// for any `ok:false` response, regardless of HTTP status (Principle V, verified against its
     /// source), so the exact status code here is cosmetic realism, not load-bearing.
-    member _.EnqueueError(methodName: string, errorCode: int, description: string) : unit =
-        responses.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue(Failure(errorCode, description))
+    /// `retryAfterSeconds`, when supplied, adds a `"parameters":{"retry_after":n}` field to the
+    /// body — e.g. `server.EnqueueError("editMessageText", 429, "Too Many Requests", retryAfterSeconds = 1)`
+    /// simulates a rate limit that carries Telegram's own `Retry-After` hint; omitted (the default),
+    /// the body is byte-identical to before this parameter existed (no `parameters` field at all).
+    member _.EnqueueError(methodName: string, errorCode: int, description: string, ?retryAfterSeconds: int) : unit =
+        responses.GetOrAdd(methodName, (fun _ -> ConcurrentQueue())).Enqueue(Failure(errorCode, description, retryAfterSeconds))
 
     /// Delays the NEXT call to `methodName` by `delay` before this server writes back its response
     /// (canned or default) — widens the in-flight window of a real HTTP round-trip so a test can
@@ -166,14 +173,19 @@ module FakeBotApiServer =
                         ctx.Response.ContentType <- "application/json"
 
                         match canned with
-                        | Some(Failure(errorCode, description)) ->
+                        | Some(Failure(errorCode, description, retryAfterSeconds)) ->
                             ctx.Response.StatusCode <- 400
 
                             let escapedDescription = System.Text.Json.JsonSerializer.Serialize<string>(description)
 
+                            let parametersField =
+                                match retryAfterSeconds with
+                                | Some n -> $""","parameters":{{"retry_after":{n}}}"""
+                                | None -> ""
+
                             do!
                                 ctx.Response.WriteAsync
-                                    $"""{{"ok":false,"error_code":{errorCode},"description":{escapedDescription}}}"""
+                                    $"""{{"ok":false,"error_code":{errorCode},"description":{escapedDescription}{parametersField}}}"""
                         | Some(Success resultJson) -> do! ctx.Response.WriteAsync $"""{{"ok":true,"result":{resultJson}}}"""
                         | None ->
                             let resultJson = defaultResult methodName bodyNode nextMessageIdFn

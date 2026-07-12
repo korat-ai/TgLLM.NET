@@ -517,6 +517,56 @@ user:  What can you do?
 bot:   I can draft and send emails for you. …
 ```
 
+**Live streaming** (optional). By default a turn's reply is one whole message, sent once it
+completes — everything above. Opt into live, edit-in-place streaming with
+`WithStreaming()`/`WithStreaming(coalesceInterval)` on `TgBotConfig`/`TgWebhookConfig`: the SAME
+turn's reply now arrives via `AIAgent.RunStreamingAsync` instead, sending an initial message
+immediately and editing it in place as further deltas arrive, paced no more often than the
+coalescing interval (`WithStreaming()`'s own default, 1.5s, safe against Telegram's
+`editMessageText` rate limit without any host tuning).
+
+```fsharp
+let config = (TgBotConfig.create "<BOT_TOKEN>").WithTools(tools).WithStreaming()
+// or .WithStreaming(TimeSpan.FromSeconds 0.5) to pace edits faster than the default
+let! bridge = Maf.startPolling config agent
+```
+
+```csharp
+var config = TgBotConfig.create("<BOT_TOKEN>").WithTools(tools).WithStreaming();
+await using var bridge = await MafTelegramBridge.StartPollingAsync(config, agent);
+```
+
+A reply long enough to exceed Telegram's 4096-character `sendMessage`/`editMessageText` cap never
+fails or truncates while streaming: it spills into a NEW message the instant the current one would
+overflow, splitting at the last whitespace at-or-before the cap (a hard cut only when one unbroken
+token has no whitespace to split on there), and keeps live-editing from the new message onward —
+only the LAST message in that sequence is ever edited again; earlier ones are already finalized,
+plain text. Without streaming, the SAME over-long reply instead fails outright
+(`IMafObserver.OnInvalidOutput`/`MafError.ReplyTooLong`) — a whole-message send has nowhere to
+spill to.
+
+A streamed turn that ends in a tool approval keeps its already-shown narration on that SAME live
+message and ADDS the `[Approve][Reject]` buttons to it — deliberately UNLIKE the non-streaming path
+above, whose own preamble (`response.Text` alongside a detected approval) is dropped rather than
+sent as a separate message first. If the reply had already spilled across more than one message by
+the time the approval arrives, the buttons land on the LAST (still-live) message only, showing just
+that message's own slice of the reply — earlier, already-finalized messages are untouched. Resuming
+the decision works exactly like the non-streaming approval loop above.
+
+A stream that fails after a live message was already shown — the one condition
+`IMafObserver.OnTurnFailed`'s own "no message was sent for this turn" contract does not cover —
+reaches a SIBLING observer, `IMafStreamingObserver.OnStreamFailed(chat, liveMessage, error)`; a C#
+host sees the same condition through `MafBridgeSettings.OnSurfaced` as a `MafSurfacedEvent` with
+`Kind = "StreamFailed"`, the same "nothing is silently dropped" discipline the durable-session
+channel below already follows. A Telegram rate-limit response (429) hit mid-stream is absorbed
+silently and never reaches either channel — the underlying
+[`Telegram.Bot`](https://github.com/TelegramBots/Telegram.Bot) client library retries it first;
+this leaf's own coalescer backs off further if that retry itself is exhausted — so a busy chat
+never surfaces a spurious failure for what is, from the host's perspective, an ordinary paced edit.
+Full runnable example (a scripted agent, no live model needed):
+[`examples/MafFSharp`](../examples/MafFSharp)/[`examples/MafCSharp`](../examples/MafCSharp) both
+call `WithStreaming()`.
+
 **Custom rendering and host-initiated runs** (optional). Redact arguments or localize labels with a
 formatter; `owner` on `StartRun` (or `DefaultOwner` on the options) overrides who may decide an
 approval a host-initiated run raises — a message-initiated turn always defaults to its own sender.
@@ -640,7 +690,9 @@ even for chats nobody ever returns to.
 - **No silent cross-version migration.** An incompatible persisted format or a `Microsoft.Agents.AI`
   version drift is detected on restore (`IMafSessionObserver.OnSessionRestoreFailed`) and falls back
   to a fresh session rather than mis-restoring one — there is no automatic migration between formats.
-- The reply path is non-streaming: one turn, one reply message.
+- **Streaming is opt-in, per bot, not per turn.** Without `WithStreaming()` (see "Live streaming"
+  above), a turn's reply is one whole message, sent once it completes — unchanged from every
+  release before this feature.
 - `Microsoft.Agents.AI` is a preview package, pinned to an exact version — it has renamed types
   across releases, so an upgrade is a deliberate, verified change, not a routine bump.
 

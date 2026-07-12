@@ -124,7 +124,14 @@ type CommonConfig =
       /// `MessageReceived` event reaching `UpdateProcessor` with no handler wired is a no-op.
       /// Config-time only (see `WithOnMessage`'s own doc comment for why): a bot already ingesting
       /// updates cannot late-bind this.
-      OnMessage: MessageHandler option }
+      OnMessage: MessageHandler option
+      /// Paces a live-edited reply's cadence for a collaborator built on top of this bot (e.g. the
+      /// MAF bridge's streaming turn) — this façade itself never reads it. `None` (the default)
+      /// keeps every existing bot's behavior byte-identical: no streaming code path runs.
+      /// `Some coalesceInterval` turns streaming on, edits paced no more often than this interval.
+      /// Like `SessionStore`, there is no in-memory "on" default — a bot with no explicit
+      /// `WithStreaming` call stays off.
+      Streaming: TimeSpan option }
 
 module CommonConfig =
     let create (botToken: string) : CommonConfig =
@@ -138,7 +145,8 @@ module CommonConfig =
           IdleChatEviction = None
           Clock = None
           BindingEvictionInterval = None
-          OnMessage = None }
+          OnMessage = None
+          Streaming = None }
 
     let withBaseUrl (url: string) (c: CommonConfig) = { c with BaseUrl = Some url }
     /// Surface hook failures / unknown presses through this logger.
@@ -167,6 +175,29 @@ module CommonConfig =
     /// Answer an incoming user text message with `handler`, run on that message's chat's
     /// dispatcher lane (serialized with that chat's own button presses, in arrival order).
     let withOnMessage (handler: MessageHandler) (c: CommonConfig) = { c with OnMessage = Some handler }
+    /// Turn on the streaming coalescing cadence a collaborator built on this bot (e.g. the MAF
+    /// bridge) paces its live edits against. `interval` must be strictly positive — zero or
+    /// negative would defeat the whole point of coalescing (`IsDue`, `TgLLM.Maf.ReplyCoalescer`,
+    /// would pass on every single delta), sending one Bot API edit per streamed token and
+    /// guaranteeing sustained 429s the very first real turn. The zero-arg `WithStreaming()`
+    /// overload's own built-in default (1.5s) never reaches this check with an invalid value.
+    let withStreaming (interval: TimeSpan) (c: CommonConfig) =
+        if interval <= TimeSpan.Zero then
+            // `ParamName` names the PUBLIC surface's own parameter (`WithStreaming(coalesceInterval)`
+            // on `TgBotConfig`/`TgWebhookConfig`), not this internal helper's `interval`, so a caller
+            // catching the `ArgumentException` sees a name that exists in the signature they called.
+            invalidArg "coalesceInterval" $"the streaming coalescing interval must be positive — got {interval}"
+
+        { c with Streaming = Some interval }
+
+    /// The coalescing interval `WithStreaming()`'s zero-arg overload applies — safe against
+    /// Telegram's edit rate limit without host tuning. Deliberately NOT shared with (nor
+    /// referencing) `TgLLM.Maf.ReplyCoalescer`'s own `StreamingDefaults.defaultCoalesceInterval`,
+    /// which carries the SAME value: this façade project (`TgLLM.FSharp`) is a DEPENDENCY of the
+    /// MAF leaf, never the reverse (`TgLLM.Maf.fsproj` references this project, not the other way
+    /// around), so there is no project reference this constant could be shared through without
+    /// inverting that layering.
+    let defaultStreamingInterval = TimeSpan.FromSeconds 1.5
 
 /// Long-polling bot configuration. `WithBaseUrl` overrides the Bot API endpoint — for a local Bot
 /// API server, Telegram's test environment, or pointing tests at a fake server.
@@ -202,6 +233,15 @@ type TgBotConfig =
         { this with Common = this.Common |> CommonConfig.withBindingEvictionInterval interval }
 
     member this.WithOnMessage(handler: MessageHandler) = { this with Common = this.Common |> CommonConfig.withOnMessage handler }
+
+    /// Turns streaming on at the built-in default cadence (`defaultStreamingInterval`, 1.5s) — safe
+    /// against Telegram's edit rate limit without any host tuning.
+    member this.WithStreaming() =
+        { this with Common = this.Common |> CommonConfig.withStreaming CommonConfig.defaultStreamingInterval }
+
+    /// Turns streaming on, pacing live edits no more often than `coalesceInterval`.
+    member this.WithStreaming(coalesceInterval: TimeSpan) =
+        { this with Common = this.Common |> CommonConfig.withStreaming coalesceInterval }
 
 /// Webhook bot configuration. `PublicUrl` is the HTTPS URL Telegram POSTs updates to; `SecretToken`
 /// is echoed in the `X-Telegram-Bot-Api-Secret-Token` header and verified on every request.
@@ -244,6 +284,15 @@ type TgWebhookConfig =
 
     member this.WithOnMessage(handler: MessageHandler) = { this with Common = this.Common |> CommonConfig.withOnMessage handler }
 
+    /// Turns streaming on at the built-in default cadence (`defaultStreamingInterval`, 1.5s) — safe
+    /// against Telegram's edit rate limit without any host tuning.
+    member this.WithStreaming() =
+        { this with Common = this.Common |> CommonConfig.withStreaming CommonConfig.defaultStreamingInterval }
+
+    /// Turns streaming on, pacing live edits no more often than `coalesceInterval`.
+    member this.WithStreaming(coalesceInterval: TimeSpan) =
+        { this with Common = this.Common |> CommonConfig.withStreaming coalesceInterval }
+
 /// Internal signal ONLY: `TgBot.EditKeyboardPlan`'s own `send` closure to `ToolKeyboardOps.deliver`
 /// raises this when the edit classifies as `EditNotFound`, so it reaches `deliver`'s EXISTING
 /// throw-triggered compensation (removes the just-saved replacement bindings) exactly as any other
@@ -270,6 +319,7 @@ type TgBot
         clock: Clock,
         logger: ILogger option,
         sessionStore: ISessionStore option,
+        streaming: TimeSpan option,
         cts: CancellationTokenSource,
         runTask: Task,
         evictionSweeper: BindingEvictionSweeper,
@@ -318,6 +368,14 @@ type TgBot
     /// the same reason as `Tools`/`Clock`/`Logger`: a collaborator built AFTER this bot (e.g. the MAF
     /// bridge) can read the configured session store rather than needing its own separate wiring seam.
     member _.SessionStore: ISessionStore option = sessionStore
+
+    /// This bot's own streaming cadence (`TgBotConfig.WithStreaming`/`TgWebhookConfig.WithStreaming`),
+    /// if turned on — `None` means the streaming feature is off, exactly the condition `wireBot`
+    /// itself leaves unresolved (no in-memory default, unlike `BindingStore`). The option itself is
+    /// both the on/off flag AND, when on, the already-resolved coalescing interval — a collaborator
+    /// built AFTER this bot (e.g. the MAF bridge's streaming turn) reads this rather than needing its
+    /// own separate wiring seam, the same reason `Tools`/`Clock`/`Logger`/`SessionStore` are exposed.
+    member _.Streaming: TimeSpan option = streaming
 
     /// Send a keyboard built from a neutral Tool Router plan; presses route to the tools
     /// registered via `TgBotConfig.WithTools`. Delegates to the shared `ToolKeyboardOps.deliver`
@@ -583,6 +641,10 @@ type TgBot
         // NO in-memory default here (unlike `bindingStore` above) — `None` means the durable-session
         // feature stays off, keeping every bot's in-memory conversation/approval behavior unchanged.
         let sessionStore = common.SessionStore
+        // Same "no in-memory default" shape as `sessionStore` above — `None` keeps every bot's
+        // behavior byte-identical (no streaming code path runs); this façade itself never reads it,
+        // it is only ever exposed for a collaborator built on top (e.g. the MAF bridge).
+        let streaming = common.Streaming
         // Shared with `ToolDispatch` below (via `UpdateProcessor`) so `SendKeyboardPlan`'s
         // send-time record and `EditKeyboardAsync`'s edit-time remove agree on one message's
         // history of bindings.
@@ -665,6 +727,7 @@ type TgBot
             clock,
             common.Logger,
             sessionStore,
+            streaming,
             cts,
             runTask,
             evictionSweeper,
