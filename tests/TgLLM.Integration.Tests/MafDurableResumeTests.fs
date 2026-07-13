@@ -8,9 +8,11 @@
 module TgLLM.Integration.Tests.MafDurableResumeTests
 
 open System
+open System.Collections.Concurrent
 open System.Net.Http
 open System.Text
 open System.Text.Json.Nodes
+open System.Threading
 open System.Threading.Tasks
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
@@ -89,12 +91,12 @@ let private post (http: HttpClient) (url: string) (json: string) (secret: string
     http.SendAsync request
 
 type private RecordingSessionObserver() =
-    let staleDecisions = ResizeArray<ApprovalDescriptor>()
+    let staleDecisions = ConcurrentQueue<ApprovalDescriptor>()
 
     member _.StaleDecisions: ApprovalDescriptor list = List.ofSeq staleDecisions
 
     interface IMafObserver with
-        member _.OnStaleDecision(descriptor) = staleDecisions.Add descriptor
+        member _.OnStaleDecision(descriptor) = staleDecisions.Enqueue descriptor
         member _.OnMalformedDecision(_raw) = ()
         member _.OnResumeFailed(_descriptor, _error) = ()
         member _.OnEmptyTurn(_chat) = ()
@@ -219,6 +221,19 @@ let mafDurableResumeTests =
 
                     do! deliverTap server 1 "q-chain-restart-1" approveToken1 chat 1 chat
                     do! pollUntil 15000 (fun () -> server.RequestsFor "editMessageText" |> List.isEmpty |> not)
+
+                    // The fake server records an edit when its request arrives, before the bridge
+                    // receives the response. Chained req-2 is added and persisted only after that
+                    // response completes, so wait for the durable state this test actually claims
+                    // before disposing bridge2 and simulating the second restart.
+                    do!
+                        pollUntil 15000 (fun () ->
+                            match (sessionStore.TryGet(UMX.tag<chatId> chat, CancellationToken.None)).AsTask().GetAwaiter().GetResult() with
+                            | ValueSome record ->
+                                match SessionEnvelope.decode record.Payload with
+                                | Ok envelope -> envelope.Approvals |> Array.exists (fun approval -> approval.RequestId = "req-2")
+                                | Error _ -> false
+                            | ValueNone -> false)
 
                     Expect.equal resumes2[0] ("req-1", true) "the first restart's resume decided req-1"
                     Expect.equal (List.length (server.RequestsFor "sendMessage")) 1 "the chained req-2 reuses the SAME message — no new send"

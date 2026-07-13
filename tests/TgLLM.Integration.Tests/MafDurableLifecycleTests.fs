@@ -47,6 +47,18 @@ let private pollUntil (ms: int) (predicate: unit -> bool) : Task =
             failtest "timed out waiting for the expected request"
     }
 
+/// A test clock shared between the test thread and the bot's background dispatcher. Storing UTC
+/// ticks behind Interlocked avoids the unsynchronised mutable DateTimeOffset read/write that can
+/// remain stale under the Release JIT.
+type private AtomicClock(initial: DateTimeOffset) =
+    let mutable utcTicks = initial.UtcDateTime.Ticks
+
+    member _.Read() : DateTimeOffset =
+        DateTimeOffset(Interlocked.Read(&utcTicks), TimeSpan.Zero)
+
+    member _.Advance(span: TimeSpan) : unit =
+        Interlocked.Add(&utcTicks, span.Ticks) |> ignore
+
 let private deliverTap (server: FakeBotApiServer) (updateId: int) (queryId: string) (token: string) (chat: int64) (messageId: int) (userId: int64) : Task =
     server.EnqueueResult("getUpdates", TelegramJson.batch [ TelegramJson.callbackQueryUpdate updateId queryId token chat messageId userId "Tester" ])
     Task.CompletedTask
@@ -60,16 +72,19 @@ let private pollingConfig (server: FakeBotApiServer) (bindingStore: IBindingStor
         .WithSessionStore(sessionStore)
 
 type private RecordingObserver() =
-    let staleDecisions = ResizeArray<ApprovalDescriptor>()
-    let resumeFailures = ResizeArray<ApprovalDescriptor * exn>()
+    // Observer callbacks run on the bot's background dispatcher while assertions poll from the
+    // test thread. A ConcurrentQueue supplies the publication barrier a ResizeArray data race did
+    // not, which made Release CI occasionally never observe an already-recorded stale decision.
+    let staleDecisions = ConcurrentQueue<ApprovalDescriptor>()
+    let resumeFailures = ConcurrentQueue<ApprovalDescriptor * exn>()
 
     member _.StaleDecisions: ApprovalDescriptor list = List.ofSeq staleDecisions
     member _.ResumeFailures: (ApprovalDescriptor * exn) list = List.ofSeq resumeFailures
 
     interface IMafObserver with
-        member _.OnStaleDecision(descriptor) = staleDecisions.Add descriptor
+        member _.OnStaleDecision(descriptor) = staleDecisions.Enqueue descriptor
         member _.OnMalformedDecision(_raw) = ()
-        member _.OnResumeFailed(descriptor, error) = resumeFailures.Add(descriptor, error)
+        member _.OnResumeFailed(descriptor, error) = resumeFailures.Enqueue(descriptor, error)
         member _.OnEmptyTurn(_chat) = ()
         member _.OnInvalidOutput(_chat, _error) = ()
         member _.OnProjectionProblem(_problem) = ()
@@ -184,8 +199,8 @@ let mafDurableLifecycleTests =
                     let chat = 9302L
                     let bindingStore = InMemoryBindingStore() :> IBindingStore
                     let sessionStore = InMemorySessionStore() :> ISessionStore
-                    let mutable now = DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)
-                    let clock: Clock = fun () -> now
+                    let testClock = AtomicClock(DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero))
+                    let clock: Clock = fun () -> testClock.Read()
 
                     let options: MafBridgeOptions =
                         { MafBridgeOptions.defaults with
@@ -204,7 +219,7 @@ let mafDurableLifecycleTests =
                     // snapshots `pendingApprovals` WITHOUT it (`Bridge.fs`'s `persistConversation`
                     // filters by `Expiry.isLive`), even though the in-memory entry itself is
                     // untouched (nothing decided it) and the FIRST message's buttons still stand.
-                    now <- now.AddMinutes 6.0
+                    testClock.Advance(TimeSpan.FromMinutes 6.0)
                     do! bridge1.StartRun(UMX.tag<chatId> chat, "Anything else?")
                     do! pollUntil 15000 (fun () -> (server.RequestsFor "sendMessage").Length >= 2)
 
@@ -213,7 +228,7 @@ let mafDurableLifecycleTests =
                     // this test is about (the durable record no longer carries req-1) from the
                     // Tool Router's OWN, separate binding-level expiry, which would otherwise refuse
                     // the tap before it ever reached the MAF leaf at all.
-                    now <- now.AddMinutes -5.0
+                    testClock.Advance(TimeSpan.FromMinutes -5.0)
 
                     do! (bridge1 :> IAsyncDisposable).DisposeAsync().AsTask()
 
@@ -244,8 +259,8 @@ let mafDurableLifecycleTests =
                     let chat = 9304L
                     let bindingStore = InMemoryBindingStore() :> IBindingStore
                     let sessionStore = InMemorySessionStore() :> ISessionStore
-                    let mutable now = DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)
-                    let clock: Clock = fun () -> now
+                    let testClock = AtomicClock(DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero))
+                    let clock: Clock = fun () -> testClock.Read()
 
                     let observer = RecordingObserver()
                     let resumes = ResizeArray<string * bool>()
@@ -281,6 +296,20 @@ let mafDurableLifecycleTests =
                     do! deliverTap server 1 "q-chain-expiry-1" approveToken1 chat 1 chat
                     do! pollUntil 15000 (fun () -> server.RequestsFor "editMessageText" |> List.isEmpty |> not)
 
+                    // Seeing the edit REQUEST at the fake server is not a completion barrier: the
+                    // bridge may still be awaiting that HTTP response, and it only stamps/adds
+                    // req-2 afterwards. Wait until the following end-of-turn persist contains
+                    // req-2 before advancing the clock, otherwise Release scheduling can move the
+                    // clock first and make req-2 expire five minutes from the already-advanced time.
+                    do!
+                        pollUntil 15000 (fun () ->
+                            match (sessionStore.TryGet(UMX.tag<chatId> chat, CancellationToken.None)).AsTask().GetAwaiter().GetResult() with
+                            | ValueSome record ->
+                                match SessionEnvelope.decode record.Payload with
+                                | Ok envelope -> envelope.Approvals |> Array.exists (fun approval -> approval.RequestId = "req-2")
+                                | Error _ -> false
+                            | ValueNone -> false)
+
                     Expect.equal resumes.Count 1 "req-1's own resume ran exactly once"
                     Expect.equal resumes[0] ("req-1", true) "req-1 was approved"
 
@@ -290,7 +319,7 @@ let mafDurableLifecycleTests =
                     // Past req-2's own 5-minute expiry — NO restart happens here at all: this is the
                     // SAME bridge, the SAME in-memory `pendingApprovals` entry for req-2, untouched by
                     // anything except the clock.
-                    now <- now.AddMinutes 6.0
+                    testClock.Advance(TimeSpan.FromMinutes 6.0)
 
                     do! deliverTap server 2 "q-chain-expiry-2" approveToken2 chat 1 chat
                     do! pollUntil 15000 (fun () -> observer.StaleDecisions |> List.isEmpty |> not)
