@@ -5,6 +5,7 @@
 /// that `startWebhook` registered the webhook.
 module TgLLM.Integration.Tests.BothTransportsTests
 
+open System
 open System.Net.Http
 open System.Text
 open System.Text.Json.Nodes
@@ -128,4 +129,44 @@ let bothTransportsTests =
                           Expect.isNonEmpty (botApi.RequestsFor "setWebhook") "startWebhook registered the webhook"
                   }
                   |> Async.AwaitTask
-          } ]
+          }
+
+          testCaseAsync "a saturated webhook queue returns a retryable 503"
+          <| async {
+              do!
+                  task {
+                      let secret = "queue-secret"
+                      let source = TgLLM.Webhooks.WebhookUpdateSource(1)
+                      use! host = startWebhookHost source secret
+                      let webhookUrl = (Seq.head host.Urls).TrimEnd('/') + "/telegram/webhook"
+                      let token = CallbackToken.generate ()
+
+                      let first =
+                          TelegramJson.callbackQueryUpdate 10 "q-1" (CallbackToken.value token) 1L 1 1L "A"
+
+                      let second =
+                          TelegramJson.callbackQueryUpdate 11 "q-2" (CallbackToken.value token) 1L 1 1L "A"
+
+                      use http = new HttpClient()
+                      let! accepted = post http webhookUrl first secret
+                      let! overloaded = post http webhookUrl second secret
+
+                      Expect.equal (int accepted.StatusCode) 200 "the available slot accepts the first delivery"
+                      Expect.equal (int overloaded.StatusCode) 503 "Telegram can retry while the queue is saturated"
+                  }
+                  |> Async.AwaitTask
+          }
+
+          testCase "the ASP.NET endpoint cannot be mapped without a secret" <| fun _ ->
+              let builder = WebApplication.CreateBuilder()
+              let app = builder.Build()
+
+              try
+                  Expect.throwsT<ArgumentException>
+                      (fun () ->
+                          app.MapTelegramWebhook("/telegram/webhook", TgLLM.Webhooks.WebhookUpdateSource(), "")
+                          |> ignore)
+                      "mapping without authentication must fail at startup"
+              finally
+                  app.DisposeAsync().AsTask().GetAwaiter().GetResult()
+          ]

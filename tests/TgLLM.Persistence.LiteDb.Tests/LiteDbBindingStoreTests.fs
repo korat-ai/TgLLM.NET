@@ -76,6 +76,24 @@ let liteDbBindingStoreTests =
             finally
                 File.Delete path
 
+        testCase "empty and whitespace-sensitive string fields round-trip without lossy mapper normalization" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                use store = LiteDbBindingStore.OpenAt path
+                let token = CallbackToken.generate ()
+
+                let binding =
+                    { ToolBinding.create token (toolName "exact-strings") (Some "  arg  ") with
+                        DeniedNotice = Some "" }
+
+                ((store :> IBindingStore).Save([ binding ], CancellationToken.None)).GetAwaiter().GetResult()
+                let result = ((store :> IBindingStore).TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+
+                Expect.equal result (ValueSome binding) "opaque strings retain whitespace and empty remains distinct from None"
+            finally
+                File.Delete path
+
         testCase "TryGet on an unknown token resolves to ValueNone" <| fun _ ->
             let path = tempPath ()
 

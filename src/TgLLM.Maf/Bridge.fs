@@ -392,17 +392,12 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                   ExpiresAt = p.ExpiresAt |> Option.toNullable }
         | _ -> None
 
-    /// End-of-turn persist: writes this chat's WHOLE durable record — the framework's own serialized
-    /// session, plus every still-pending, not-yet-expired approval snapshotted from
-    /// `pendingApprovals` (an already-decided or expired entry is never written, so a restored table
-    /// never resurrects a decision that can no longer be honored anyway). Never throws — a write
-    /// failure self-reports via `IMafSessionObserver.OnSessionPersistFailed` instead, since the
-    /// turn it is persisting the OUTCOME of already succeeded on the MAF side by the time this runs;
-    /// only the DURABLE copy is at risk. A no-op when no store is configured.
-    let persistConversation (chat: ChatId) (session: AgentSession) : Task =
+    /// Writes this chat's WHOLE durable record and reports whether it succeeded. Never throws: a
+    /// write failure self-reports via `IMafSessionObserver.OnSessionPersistFailed` and returns false.
+    let tryPersistConversation (chat: ChatId) (session: AgentSession) : Task<bool> =
         task {
             match bot.SessionStore with
-            | None -> ()
+            | None -> return true
             | Some store ->
                 try
                     let! element = agent.SerializeSessionAsync(session, cancellationToken = cts.Token)
@@ -422,8 +417,16 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                           Approvals = approvals }
 
                     do! store.Save(chat, { Payload = SessionEnvelope.encode envelope; LastActivityAt = now }, cts.Token)
+                    return true
                 with ex ->
                     sessionObserver.OnSessionPersistFailed(chat, ex)
+                    return false
+        }
+
+    let persistConversation (chat: ChatId) (session: AgentSession) : Task =
+        task {
+            let! _ = tryPersistConversation chat session
+            ()
         }
         :> Task
 
@@ -1149,16 +1152,26 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                                         task {
                                             try
                                                 let! conversation = conversations.GetOrCreate(chat, restoreOrCreate chat)
-                                                let responseContent = pending.Request.CreateResponse approved
-                                                let contents = ResizeArray<AIContent> [ responseContent :> AIContent ]
-                                                let resumeMessage = ChatMessage(ChatRole.User, contents)
-                                                let! response = agent.RunAsync(resumeMessage, conversation.Session, cancellationToken = cts.Token)
-                                                return Ok(response, conversation.Session)
+                                                // Persist the atomic in-memory consume before the agent can act on it.
+                                                // A failed write leaves the request pending and never resumes the agent.
+                                                let! durableClaimed = tryPersistConversation chat conversation.Session
+
+                                                if durableClaimed then
+                                                    let responseContent = pending.Request.CreateResponse approved
+                                                    let contents = ResizeArray<AIContent> [ responseContent :> AIContent ]
+                                                    let resumeMessage = ChatMessage(ChatRole.User, contents)
+                                                    let! response = agent.RunAsync(resumeMessage, conversation.Session, cancellationToken = cts.Token)
+                                                    return Ok(Some(response, conversation.Session))
+                                                else
+                                                    return Ok None
                                             with ex ->
                                                 return Error ex
                                         }
 
                                     match resumed with
+                                    | Ok None ->
+                                        pendingApprovals.Add pending
+                                        ctx.Answer("The decision could not be saved. Please try again.", alert = true)
                                     | Error ex ->
                                         observer.OnResumeFailed(descriptor, ex)
 
@@ -1184,7 +1197,7 @@ type MafBridge internal (bot: TgBot, agent: AIAgent, observer: IMafObserver, for
                                                 do! store.Remove(chat, cts.Token)
                                             with removeEx ->
                                                 sessionObserver.OnSessionPersistFailed(chat, removeEx)
-                                    | Ok(response, session) ->
+                                    | Ok(Some(response, session)) ->
                                         // The resume itself already succeeded by this point — a
                                         // failure delivering ITS outcome (the edit-in-place, or a
                                         // chained/further approval's own send) is a Telegram-side
@@ -1375,6 +1388,11 @@ module private BridgeBuild =
     /// (`IToolRegistry.Register` is add-or-replace by design), orphaning every approval it already
     /// sent, mirroring `A2ui.renderer`'s own guard for the identical class of mistake.
     let build (bot: TgBot) (agent: AIAgent) (options: MafBridgeOptions) : MafBridge =
+        match options.ApprovalExpiry with
+        | ValueSome expiry when expiry <= TimeSpan.Zero ->
+            invalidArg "options" "MAF approval expiry must be positive when configured"
+        | _ -> ()
+
         match bot.Tools with
         | None ->
             invalidOp
@@ -1408,25 +1426,10 @@ module Maf =
     /// Builds `bot` from `config` (requires `.WithTools`), registers `maf-approve`/`maf-reject`
     /// into its Tool Router, and returns the live bridge.
     ///
-    /// The Core seam's `OnMessage` is config-time (`CommonConfig.OnMessage`'s own doc comment: a
-    /// bot starts consuming updates the instant it starts, so a late-bound handler would race the
-    /// first message) — but the handler needs to call INTO the `MafBridge` this very function is
-    /// still building, which doesn't exist until AFTER the bot does (`MafBridge`'s constructor
-    /// takes `bot: TgBot`). Resolved with a mutable local the closure below captures by reference:
-    /// the handler is wired into `config` (and therefore live from the bot's very first ingested
-    /// update) before `TgBot.startPolling` is ever called, while the cell it reads is only
-    /// populated once the bridge itself exists, a few synchronous calls later — the same "narrow,
-    /// practically-instant, not literally atomic" window `BridgeBuild.build`'s own tool
-    /// registration already accepts for `maf-approve`/`maf-reject` (both land well before the pump
-    /// loop could plausibly have a real update to hand off). A message that somehow arrived in
-    /// that window is a no-op (`Task.CompletedTask`), never a crash.
-    /// `bot` is already RUNNING (ingesting updates in the background) by the time `BridgeBuild.build`
-    /// runs — the config-time `OnMessage` wiring above needs the bot to exist before the bridge can,
-    /// and `TgBot.startPolling`/`startWebhook` starts ingestion as part of that same call, so there
-    /// is no earlier point to build the bridge at. If `build` then throws (no `.WithTools`, or a
-    /// double-attach onto a bot that already has a bridge), `bot` would otherwise be leaked —
-    /// long-polling (or listening for a webhook) forever with nothing left to stop it. Caught here
-    /// and disposed before the exception is re-raised, so a failed build never outlives its own call.
+    /// A startup barrier keeps update ingestion paused until the bridge exists and its decision
+    /// tools are registered. The config-time message handler waits on the same readiness task, so
+    /// neither a polling backlog message nor a durable callback can observe a half-built bridge.
+    /// If `build` throws, `buildOrDispose` cancels the paused bot before re-raising.
     let private buildOrDispose (bot: TgBot) (agent: AIAgent) (options: MafBridgeOptions) : Task<MafBridge> =
         task {
             try
@@ -1447,18 +1450,27 @@ module Maf =
 
     let startPollingWith (options: MafBridgeOptions) (config: TgBotConfig) (agent: AIAgent) : Task<MafBridge> =
         task {
-            let mutable bridgeCell: MafBridge option = None
+            let ready = TaskCompletionSource<MafBridge>(TaskCreationOptions.RunContinuationsAsynchronously)
 
             let handler: MessageHandler =
-                fun message _ct ->
-                    match bridgeCell with
-                    | Some bridge -> bridge.HandleIncomingMessage message
-                    | None -> Task.CompletedTask
+                fun message ct ->
+                    task {
+                        let! bridge = ready.Task.WaitAsync(ct)
+                        do! bridge.HandleIncomingMessage message
+                    }
+                    :> Task
 
-            let! bot = TgBot.startPolling (config.WithOnMessage handler)
-            let! bridge = buildOrDispose bot agent options
-            bridgeCell <- Some bridge
-            return bridge
+            let configured = config.WithOnMessage handler
+            let configured = { configured with Common = configured.Common |> CommonConfig.withStartupBarrier ready.Task }
+            let! bot = TgBot.startPolling configured
+
+            try
+                let! bridge = buildOrDispose bot agent options
+                ready.SetResult bridge
+                return bridge
+            with ex ->
+                ready.TrySetException ex |> ignore
+                return raise ex
         }
 
     /// Zero-config variant of `startPollingWith`.
@@ -1469,18 +1481,27 @@ module Maf =
     /// wiring, same reasoning (see that function's own doc comment).
     let startWebhookWith (options: MafBridgeOptions) (config: TgWebhookConfig) (agent: AIAgent) : Task<MafBridge> =
         task {
-            let mutable bridgeCell: MafBridge option = None
+            let ready = TaskCompletionSource<MafBridge>(TaskCreationOptions.RunContinuationsAsynchronously)
 
             let handler: MessageHandler =
-                fun message _ct ->
-                    match bridgeCell with
-                    | Some bridge -> bridge.HandleIncomingMessage message
-                    | None -> Task.CompletedTask
+                fun message ct ->
+                    task {
+                        let! bridge = ready.Task.WaitAsync(ct)
+                        do! bridge.HandleIncomingMessage message
+                    }
+                    :> Task
 
-            let! bot = TgBot.startWebhook (config.WithOnMessage handler)
-            let! bridge = buildOrDispose bot agent options
-            bridgeCell <- Some bridge
-            return bridge
+            let configured = config.WithOnMessage handler
+            let configured = { configured with Common = configured.Common |> CommonConfig.withStartupBarrier ready.Task }
+            let! bot = TgBot.startWebhook configured
+
+            try
+                let! bridge = buildOrDispose bot agent options
+                ready.SetResult bridge
+                return bridge
+            with ex ->
+                ready.TrySetException ex |> ignore
+                return raise ex
         }
 
     /// Zero-config variant of `startWebhookWith`.

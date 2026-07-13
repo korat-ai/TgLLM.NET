@@ -56,7 +56,8 @@ public sealed record A2uiIngestResult
 /// </summary>
 /// <param name="Kind">
 /// A stable tag for the condition (<c>"MalformedMessage"</c>/<c>"UnknownCatalog"</c>/
-/// <c>"UnsupportedComponent"</c>/<c>"DuplicateSurface"</c>/<c>"UnknownSurface"</c>) — for a host
+/// <c>"UnsupportedComponent"</c>/<c>"DuplicateSurface"</c>/<c>"UnknownSurface"</c>/
+/// <c>"MalformedAction"</c>/<c>"StaleSurfaceAction"</c>) — for a host
 /// that wants to branch on the condition without parsing <see cref="Description"/>.
 /// </param>
 /// <param name="Description">The same human-readable text <see cref="A2uiIngestResult.Error"/> uses.</param>
@@ -83,17 +84,15 @@ internal sealed class CSharpA2uiObserverBridge : TgLLM.A2UI.IA2uiObserver
             TgLLM.FSharp.A2uiErrorBridge.kind(error),
             TgLLM.FSharp.A2uiErrorBridge.description(error)));
 
-    // A malformed (or stale-surface) tap-time action has no C#-facing observer surface (yet) — this
-    // bridge only ever carries A2uiError conditions to a C# caller; OnMalformedAction/
-    // OnStaleSurfaceAction are required interface members with nothing to forward to, so they're
-    // deliberate no-ops rather than a partial implementation.
-    public void OnMalformedAction(TgLLM.A2UI.ActionDescriptor descriptor)
-    {
-    }
+    public void OnMalformedAction(TgLLM.A2UI.ActionDescriptor descriptor) =>
+        _onError?.Invoke(new A2uiErrorInfo(
+            "MalformedAction",
+            $"A2UI action '{descriptor.Name}' on surface '{descriptor.SurfaceId}' requested a response but has no actionId."));
 
-    public void OnStaleSurfaceAction(TgLLM.A2UI.ActionDescriptor descriptor)
-    {
-    }
+    public void OnStaleSurfaceAction(TgLLM.A2UI.ActionDescriptor descriptor) =>
+        _onError?.Invoke(new A2uiErrorInfo(
+            "StaleSurfaceAction",
+            $"A2UI action '{descriptor.Name}' targets surface '{descriptor.SurfaceId}', which is no longer tracked."));
 }
 
 /// <summary>
@@ -121,7 +120,8 @@ public sealed class A2uiRenderer
     /// <param name="sink">Where outbound A2UI <c>action</c> messages go.</param>
     /// <param name="onError">
     /// Receives every A2UI-level condition this renderer surfaces (an unknown catalog, an
-    /// unsupported component, a malformed message, a duplicate/unknown surface) — including ones
+    /// unsupported component, a malformed message, a duplicate/unknown surface, or a malformed/
+    /// stale tap-time action) — including ones
     /// that don't fail the triggering <see cref="IngestAsync"/> call outright, such as an
     /// unsupported component next to supported siblings that still render. Omitted (<c>null</c>,
     /// the default) means these conditions are surfaced only through each call's own

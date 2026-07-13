@@ -38,19 +38,9 @@ open TgLLM.Core
 /// about the absolute instant, so this is lossless for the one thing that matters, even though the
 /// original (irrelevant) offset itself isn't preserved.
 ///
-/// Empirically-verified caveat (found via an FsCheck round-trip property over the REAL store, not
-/// assumed — reflection against the installed 5.0.21 assembly confirms the cause):
-/// `LiteDB.BsonMapper`'s own `TrimWhitespace` AND `EmptyStringToNull` properties both default to
-/// `true`, and this store maps `BindingDocument` through `BsonMapper.Global`, which never overrides
-/// either. This means, on ANY string field (`Arg`, `DeniedNotice`; `ToolName` is unaffected in
-/// practice, since `TgLLM.Core.ToolName.create` already trims before a value ever reaches this
-/// type): leading/trailing whitespace is silently stripped, and a value that is empty (or becomes
-/// empty after that trim) comes back as BSON `null` — `TryGet` on a reloaded document then sees
-/// `None`, indistinguishable from a binding that never had that field set at all. A `None`/
-/// already-trimmed-non-empty value round-trips exactly regardless. Not fixed here (this store's
-/// `ofDomain`/`toDomain` do not special-case it, and neither reconfigures `BsonMapper.Global`) —
-/// recorded so it isn't mistaken for a fresh bug, and so a future caller knows a whitespace-only or
-/// empty-string override is not durably distinguishable from "unset" through this store.
+/// This store uses a private `BsonMapper` with whitespace trimming and empty-string-to-null
+/// conversion disabled. Both LiteDB defaults are lossy for opaque arguments and user-facing
+/// notices, where `""`, `"  "`, and `None` are distinct domain values.
 [<CLIMutable; NoComparison>]
 type BindingDocument =
     { Id: string
@@ -162,7 +152,10 @@ type LiteDbBindingStore
     /// read `ExpiresAtUtc` as UTC, this pragma is required for the field to round-trip as the SAME
     /// instant at all, not merely a style preference.
     static member OpenAt(path: string) : LiteDbBindingStore =
-        let db = new LiteDatabase(path)
+        let mapper = BsonMapper()
+        mapper.TrimWhitespace <- false
+        mapper.EmptyStringToNull <- false
+        let db = new LiteDatabase(path, mapper)
         db.Pragma("UTC_DATE", BsonValue true) |> ignore
         let collection = db.GetCollection<BindingDocument> "bindings"
         collection.EnsureIndex("idx_ExpiresAtUtc", BsonExpression.Create "$.ExpiresAtUtc", false) |> ignore

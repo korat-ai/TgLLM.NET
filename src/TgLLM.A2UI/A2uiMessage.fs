@@ -91,11 +91,6 @@ module A2uiMessage =
         | Some(:? JsonObject as o) -> Some o
         | _ -> None
 
-    let private tryGetArray (obj: JsonObject) (name: string) : JsonArray option =
-        match tryGetNode obj name with
-        | Some(:? JsonArray as a) -> Some a
-        | _ -> None
-
     let private parseComponent (node: JsonNode) : RawComponent option =
         match node with
         | :? JsonObject as o ->
@@ -105,12 +100,12 @@ module A2uiMessage =
         | _ -> None
 
     /// A missing `"components"` key is a well-formed empty list (both `createSurface` and
-    /// `updateComponents` tolerate it); a present-but-malformed array (a non-object entry, or an
-    /// entry missing `id`/`component`) fails the whole parse.
+    /// `updateComponents` tolerate it); a present non-array value, or a malformed array (a
+    /// non-object entry, or an entry missing `id`/`component`), fails the whole parse.
     let private parseComponents (obj: JsonObject) : RawComponent list option =
-        match tryGetArray obj "components" with
+        match tryGetNode obj "components" with
         | None -> Some []
-        | Some arr ->
+        | Some(:? JsonArray as arr) ->
             let parsed =
                 arr
                 |> Seq.map (function
@@ -122,6 +117,7 @@ module A2uiMessage =
                 Some(parsed |> List.choose id)
             else
                 None
+        | Some _ -> None
 
     let private parseCreateSurface (body: JsonObject) : Result<A2uiMessage, A2uiError> =
         match tryGetString body "surfaceId", tryGetString body "catalogId", parseComponents body with

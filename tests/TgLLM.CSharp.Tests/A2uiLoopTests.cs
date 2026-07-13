@@ -59,6 +59,22 @@ public class A2uiLoopTests
 
     private const string DeleteSurfaceJson = """{ "version": "v1.0", "deleteSurface": { "surfaceId": "cs-loop-surface" } }""";
 
+    private const string MalformedActionSurfaceJson = """
+        {
+          "version": "v1.0",
+          "createSurface": {
+            "surfaceId": "cs-malformed-action",
+            "catalogId": "telegram-basic",
+            "components": [
+              { "id": "root", "component": "Column", "children": [ "t1", "b1" ] },
+              { "id": "t1", "component": "Text", "text": "Confirm?" },
+              { "id": "b1", "component": "Button", "text": "Confirm",
+                "action": { "event": { "name": "confirm", "wantResponse": true } } }
+            ]
+          }
+        }
+        """;
+
     private static FSharpList<string> ListOf(params string[] items) => ListModule.OfArray(items);
 
     private static async Task WaitUntilAsync(Func<bool> predicate, int timeoutMs, CancellationToken ct)
@@ -148,5 +164,40 @@ public class A2uiLoopTests
         var deleteBody = deleteRequest.Body!.Value;
         Assert.Equal(chatId, deleteBody["chat_id"]!.GetValue<long>());
         Assert.Equal(messageId, deleteBody["message_id"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task Malformed_tap_time_actions_reach_the_CSharp_error_observer()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await FakeServerModule.start();
+        const long chatId = 7002L;
+        var observed = new TaskCompletionSource<A2uiErrorInfo>();
+
+        await using var agent = await TelegramAgent.StartPollingAsync(
+            new TelegramAgentOptions { BotToken = FakeToken, BaseUrl = server.BaseUrl, Tools = new ToolRegistry() },
+            ct);
+
+        var renderer = A2uiRenderer.Create(
+            agent,
+            _ => Task.CompletedTask,
+            error =>
+            {
+                if (error.Kind == "MalformedAction") observed.TrySetResult(error);
+            });
+
+        Assert.True((await renderer.IngestAsync(chatId, MalformedActionSurfaceJson, ct)).Success);
+        var body = Assert.Single(server.RequestsFor("sendMessage")).Body!.Value;
+        var token = body["reply_markup"]!["inline_keyboard"]![0]![0]!["callback_data"]!.GetValue<string>();
+
+        server.EnqueueResult(
+            "getUpdates",
+            TelegramJson.batch(ListOf(TelegramJson.callbackQueryUpdate(1, "q-malformed", token, chatId, 1, 9102L, "Cs"))));
+
+        await WaitUntilAsync(() => observed.Task.IsCompleted, 5000, ct);
+        var error = await observed.Task;
+        Assert.Equal("MalformedAction", error.Kind);
+        Assert.Contains("confirm", error.Description);
+        Assert.Contains("cs-malformed-action", error.Description);
     }
 }

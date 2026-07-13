@@ -162,6 +162,22 @@ type private ThrowingSaveStore(inner: ISessionStore) =
         member _.Remove(chat, ct) = inner.Remove(chat, ct)
         member _.EvictIdle(olderThan) = inner.EvictIdle(olderThan)
 
+type private FailOnSaveStore(inner: ISessionStore, failOnCall: int) =
+    let mutable calls = 0
+
+    interface ISessionStore with
+        member _.Save(chat, record, ct) =
+            let call = Interlocked.Increment(&calls)
+
+            if call = failOnCall then
+                ValueTask.FromException(InvalidOperationException "the durable claim write failed")
+            else
+                inner.Save(chat, record, ct)
+
+        member _.TryGet(chat, ct) = inner.TryGet(chat, ct)
+        member _.Remove(chat, ct) = inner.Remove(chat, ct)
+        member _.EvictIdle(olderThan) = inner.EvictIdle(olderThan)
+
 /// A `Remove`-only failure: `TryGet`/`Save`/`EvictIdle` all forward to `inner` — the shape a
 /// read-only filesystem gives `FileSessionStore.Remove` (which itself rewrites the file), reachable
 /// from `restoreOrCreate`'s own two remove-on-failure gates.
@@ -565,6 +581,44 @@ let mafDurableReliabilityTests =
                     Expect.equal (List.length (server.RequestsFor "sendMessage")) 1 "the turn's own approval message was still delivered despite the durable save failing"
                     let sent = (server.RequestsFor "sendMessage").Head.Body |> Option.get
                     Expect.isNonEmpty (callbackDataAt 0 0 sent) "the delivered message still carries a real Approve keyboard button"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "a decision is not resumed until its durable consumption has been saved"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 9811L
+                    let bindingStore = InMemoryBindingStore() :> IBindingStore
+                    let innerStore = InMemorySessionStore() :> ISessionStore
+                    let sessionStore = FailOnSaveStore(innerStore, 2) :> ISessionStore
+
+                    let agent1 = ScriptedAgent [ PausesFor("req-1", "send_email", []) ]
+                    let! bridge1 = Maf.startPolling (pollingConfig server bindingStore sessionStore) agent1
+                    do! bridge1.StartRun(UMX.tag<chatId> chat, "Send the email.")
+
+                    let sent = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken = callbackDataAt 0 0 sent
+                    let rejectToken = callbackDataAt 0 1 sent
+                    do! (bridge1 :> IAsyncDisposable).DisposeAsync().AsTask()
+
+                    let observer = CapturingObserver()
+                    let options = { MafBridgeOptions.defaults with Observer = ValueSome(observer :> IMafObserver) }
+                    let agent2 = ScriptedAgent [ RepliesWith "Done." ]
+                    use! bridge2 = Maf.startPollingWith options (pollingConfig server bindingStore sessionStore) agent2
+
+                    do! deliverTap server 1 "q-claim-save-fails" approveToken chat 1 chat
+                    do! pollUntil 15000 (fun () -> not (List.isEmpty observer.PersistFailed))
+
+                    Expect.equal agent2.RunCount 0 "the agent is not resumed while the consumed decision is absent from durable state"
+                    Expect.isEmpty (server.RequestsFor "editMessageText") "the approval stays visible after the failed claim write"
+
+                    do! deliverTap server 2 "q-claim-save-retry" rejectToken chat 1 chat
+                    do! pollUntil 15000 (fun () -> server.RequestsFor "editMessageText" |> List.isEmpty |> not)
+
+                    Expect.equal agent2.RunCount 1 "a later sibling tap retries the durable claim and resumes once it succeeds"
                 }
                 |> Async.AwaitTask
         }

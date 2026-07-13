@@ -65,6 +65,20 @@ let private updateWithButtonJson (surfaceId: string) (buttonJson: string) : stri
     }
     """
 
+let private updateTextJson (surfaceId: string) : string =
+    $$"""
+    {
+      "version": "v1.0",
+      "updateComponents": {
+        "surfaceId": "{{surfaceId}}",
+        "components": [ { "id": "t1", "component": "Text", "text": "updated" } ]
+      }
+    }
+    """
+
+let private deleteSurfaceJson (surfaceId: string) : string =
+    $$"""{ "version": "v1.0", "deleteSurface": { "surfaceId": "{{surfaceId}}" } }"""
+
 [<Tests>]
 let a2uiValidationTests =
     testList "A2uiValidation" [
@@ -89,6 +103,12 @@ let a2uiValidationTests =
                             | Error _ -> ()
 
                             Expect.isEmpty (server.RequestsFor "sendMessage") "an invalid rendered keyboard is never sent to Telegram"
+
+                            match! renderer.Ingest(UMX.tag<chatId> 7001L, surfaceWithButtonJson "bad-surface" validButtonJson) with
+                            | Error e -> failtestf "the corrected create should retry the rolled-back surface, got %A" e
+                            | Ok() -> ()
+
+                            Expect.equal (List.length (server.RequestsFor "sendMessage")) 1 "the corrected create sends normally"
                         }
                         |> Async.AwaitTask
                 }
@@ -116,6 +136,49 @@ let a2uiValidationTests =
                         | Error _ -> ()
 
                         Expect.isEmpty (server.RequestsFor "editMessageText") "an invalid replacement keyboard is never edited onto the wire"
+
+                        match! renderer.Ingest(chat, updateTextJson "bad-edit-surface") with
+                        | Error e -> failtestf "the failed replacement must not poison the live surface, got %A" e
+                        | Ok() -> ()
+
+                        Expect.equal (List.length (server.RequestsFor "editMessageText")) 1 "a later partial update still renders against the last valid state"
+                    }
+                    |> Async.AwaitTask
+            }
+        )
+
+        testCaseAsync "a failed delete restores the surface so a later update can still edit it" (
+            async {
+                do!
+                    task {
+                        use! server = FakeBotApiServer.start ()
+                        use! bot = buildBot server
+                        let renderer = A2ui.renderer bot noopSink
+                        let chat = UMX.tag<chatId> 7003L
+                        let surfaceId = "failed-delete-surface"
+
+                        match! renderer.Ingest(chat, surfaceWithButtonJson surfaceId validButtonJson) with
+                        | Error e -> failtestf "test setup: expected Ok, got %A" e
+                        | Ok() -> ()
+
+                        server.EnqueueError("deleteMessage", 500, "Internal Server Error")
+
+                        let! threw =
+                            task {
+                                try
+                                    let! _ = renderer.Ingest(chat, deleteSurfaceJson surfaceId)
+                                    return false
+                                with _ ->
+                                    return true
+                            }
+
+                        Expect.isTrue threw "the simulated Telegram delete failure reaches the caller"
+
+                        match! renderer.Ingest(chat, updateWithButtonJson surfaceId validButtonJson) with
+                        | Error e -> failtestf "the restored surface should remain editable, got %A" e
+                        | Ok() -> ()
+
+                        Expect.equal (List.length (server.RequestsFor "editMessageText")) 1 "the later update edits the original message"
                     }
                     |> Async.AwaitTask
             }

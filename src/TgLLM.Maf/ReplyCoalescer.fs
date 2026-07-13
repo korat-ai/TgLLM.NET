@@ -79,6 +79,10 @@ type ReplyCoalescer(clock: Clock, interval: TimeSpan, ?seed: string) =
     let mutable lastEmitted: string voption = ValueNone
     let mutable nextAllowedAt: DateTimeOffset voption = ValueNone
 
+    do
+        if interval <= TimeSpan.Zero then
+            invalidArg (nameof interval) "reply coalescing interval must be positive"
+
     /// Appends one streamed delta (already a per-update delta, never cumulative) to this message's
     /// own running slice. A null/empty delta is a no-op — `AgentResponseUpdate.Text` is itself a
     /// nullable-string boundary this leaf never trusts blindly.

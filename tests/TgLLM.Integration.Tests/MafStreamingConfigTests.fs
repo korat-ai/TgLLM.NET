@@ -38,6 +38,51 @@ let mafStreamingConfigTests =
             Expect.isNone common.Streaming "an unconfigured bot never turns streaming on"
         }
 
+        test "non-positive lifecycle durations are rejected at configuration time" {
+            let config = TgBotConfig.create "123456789:TEST-fake-token"
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> config.WithIdleChatEviction(TimeSpan.Zero) |> ignore)
+                "idle chat eviction cannot run with a zero duration"
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> config.WithBindingEvictionInterval(TimeSpan.FromSeconds -1.0) |> ignore)
+                "a background sweep interval must be positive"
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> config.WithSessionStore(InMemorySessionStore(), TimeSpan.Zero) |> ignore)
+                "durable session idle eviction must be positive"
+        }
+
+        testCaseAsync "a non-positive MAF approval expiry is rejected during bridge construction"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let agent = ScriptedAgent [ RepliesWith "unused" ]
+
+                    let config =
+                        (TgBotConfig.create "123456789:TEST-fake-token")
+                            .WithBaseUrl(server.BaseUrl)
+                            .WithTools(ToolRegistry.create ())
+
+                    let options =
+                        { MafBridgeOptions.defaults with
+                            ApprovalExpiry = ValueSome TimeSpan.Zero }
+
+                    let mutable threw = false
+
+                    try
+                        use! _bridge = Maf.startPollingWith options config agent
+                        ()
+                    with :? ArgumentException ->
+                        threw <- true
+
+                    Expect.isTrue threw "an immediately-expired approval keyboard is a configuration error"
+                }
+                |> Async.AwaitTask
+        }
+
         test "TgBotConfig.WithStreaming() applies the built-in default cadence (1.5s)" {
             let config = (TgBotConfig.create "123456789:TEST-fake-token").WithStreaming()
             Expect.equal config.Common.Streaming (Some(TimeSpan.FromSeconds 1.5)) "the zero-arg overload applies the built-in default coalescing interval"

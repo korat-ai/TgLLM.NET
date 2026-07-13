@@ -50,8 +50,9 @@ type private FakeUpdateSource(events: AgentEvent list) =
 /// simulates a transient `AnswerCallback` failure for specific query ids — every existing call
 /// site omits it (empty by default), so this is a pure addition, unchanged behavior for every
 /// pre-existing test.
-type private FakeBotApiClient(?throwForQueries: CallbackQueryId list) =
+type private FakeBotApiClient(?throwForQueries: CallbackQueryId list, ?throwOnSendKeyboard: bool) =
     let throwFor = defaultArg throwForQueries [] |> Set.ofList
+    let throwOnSendKeyboard = defaultArg throwOnSendKeyboard false
     let answered = ResizeArray<CallbackQueryId>()
     let sentTexts = ResizeArray<ChatId * MessageText>()
     member _.Answered: CallbackQueryId list = List.ofSeq answered
@@ -68,8 +69,17 @@ type private FakeBotApiClient(?throwForQueries: CallbackQueryId list) =
             sentTexts.Add(chat, text)
             Task.FromResult(UMX.tag<messageId> 0L)
 
-        member _.SendKeyboard(_chat, _text, _keyboard, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
-        member _.SendKeyboard(_chat, _text, _keyboard, _parseMode, _ct) = Task.FromResult(UMX.tag<messageId> 0L)
+        member _.SendKeyboard(_chat, _text, _keyboard, _ct) =
+            if throwOnSendKeyboard then
+                Task.FromException<MessageId>(InvalidOperationException "simulated send failure")
+            else
+                Task.FromResult(UMX.tag<messageId> 0L)
+
+        member _.SendKeyboard(_chat, _text, _keyboard, _parseMode, _ct) =
+            if throwOnSendKeyboard then
+                Task.FromException<MessageId>(InvalidOperationException "simulated send failure")
+            else
+                Task.FromResult(UMX.tag<messageId> 0L)
 
         member _.AnswerCallback(query, _ct) =
             if throwFor.Contains query then
@@ -122,6 +132,36 @@ type private FakeHookObserver() =
 [<Tests>]
 let updateProcessorTests =
     testList "UpdateProcessor" [
+
+        testCase "AgentOps removes newly registered closure hooks when sending the keyboard fails" <| fun _ ->
+            let token = CallbackToken.generate ()
+            let store: IHookStore = InMemoryHookStore()
+            let api = FakeBotApiClient(throwOnSendKeyboard = true) :> IBotApiClient
+
+            let keyboard =
+                let button: ButtonSpec = { Label = "Yes"; Hook = fun _ -> Task.CompletedTask }
+
+                match Keyboard.create [ [ button ] ] with
+                | Ok value -> value
+                | Error error -> failtestf "test keyboard should be valid: %A" error
+
+            Expect.throwsT<InvalidOperationException>
+                (fun () ->
+                    AgentOps.sendKeyboard
+                        store
+                        api
+                        (fun () -> token)
+                        (UMX.tag<chatId> 1L)
+                        (MessageText.unsafe "Deploy?")
+                        keyboard
+                        CancellationToken.None
+                    |> fun task -> task.GetAwaiter().GetResult()
+                    |> ignore)
+                "the original send failure still propagates"
+
+            match (store.TryResolve(token, CancellationToken.None)).GetAwaiter().GetResult() with
+            | ValueNone -> ()
+            | ValueSome _ -> failtest "the unreachable closure token was not compensated"
 
         testCase "AnswerCallback is called for an unknown token; no hook runs, no error" <| fun _ ->
             let token = CallbackToken.generate ()

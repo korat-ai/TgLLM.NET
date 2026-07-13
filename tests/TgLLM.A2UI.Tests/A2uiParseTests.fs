@@ -304,4 +304,13 @@ let a2uiParseTests =
             match A2uiMessage.parse json with
             | Error(MalformedMessage _) -> ()
             | other -> failwithf "expected Error MalformedMessage, got %A" other
+
+        testCase "a present components property with a non-array value is malformed" <| fun _ ->
+            let json =
+                """{ "version":"v1.0", "createSurface": {
+                    "surfaceId":"x", "catalogId":"telegram-basic", "components":42 } }"""
+
+            match A2uiMessage.parse json with
+            | Error(MalformedMessage _) -> ()
+            | other -> failwithf "expected Error MalformedMessage, got %A" other
     ]

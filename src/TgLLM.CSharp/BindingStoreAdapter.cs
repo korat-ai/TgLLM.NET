@@ -101,8 +101,8 @@ internal sealed class CSharpBindingStoreBridge : TgLLM.Core.IBindingStore
     /// <summary>
     /// Reconstructs a <c>ToolBinding</c> from a DTO the host store returned; <c>null</c> if the
     /// token or tool name isn't a value this library could ever have written itself (a hand-edited
-    /// or corrupted host-side record) — treated as a miss rather than a thrown exception, the same
-    /// best-effort-load contract the library's own file store uses.
+    /// or corrupted host-side record). A custom store controls its own corruption policy; this
+    /// adapter represents an invalid row as a lookup miss because its interface has no error case.
     /// </summary>
     private static TgLLM.Core.ToolBinding? ToDomain(ToolBindingDto dto)
     {

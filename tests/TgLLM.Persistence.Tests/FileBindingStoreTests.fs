@@ -104,31 +104,42 @@ let fileBindingStoreTests =
             finally
                 File.Delete path
 
-        testCase "openAt on a file with truncated/garbage JSON does not throw and starts empty" <| fun _ ->
+        testCase "openAt fails loudly on truncated or garbage JSON" <| fun _ ->
             let path = tempPath ()
 
             try
                 File.WriteAllText(path, "{ this is not valid json at all ]")
-                let store = FileBindingStore.openAt path :> IBindingStore
-                let token = CallbackToken.generate ()
 
-                let result = (store.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
-
-                Expect.equal result ValueNone "a corrupt file on disk must not crash openAt — best-effort empty store"
+                Expect.throwsT<InvalidDataException>
+                    (fun () -> FileBindingStore.openAt path |> ignore)
+                    "corrupt durable state must not be mistaken for an empty store"
             finally
                 File.Delete path
 
-        testCase "openAt on a file containing the JSON literal null does not throw and starts empty" <| fun _ ->
+        testCase "openAt fails loudly on the JSON literal null" <| fun _ ->
             let path = tempPath ()
 
             try
                 File.WriteAllText(path, "null")
-                let store = FileBindingStore.openAt path :> IBindingStore
-                let token = CallbackToken.generate ()
 
-                let result = (store.TryGet(token, CancellationToken.None)).GetAwaiter().GetResult()
+                Expect.throwsT<InvalidDataException>
+                    (fun () -> FileBindingStore.openAt path |> ignore)
+                    "JSON null is not a valid durable binding collection"
+            finally
+                File.Delete path
 
-                Expect.equal result ValueNone "a JSON `null` payload must not crash openAt — best-effort empty store"
+        testCase "openAt rejects an invalid row instead of partially loading the file" <| fun _ ->
+            let path = tempPath ()
+
+            try
+                File.WriteAllText(
+                    path,
+                    """[{"Token":"bad","ToolName":"approve","Arg":null,"OwnerUserId":null,"ExpiresAt":null,"SingleUse":false,"DeniedNotice":null}]"""
+                )
+
+                Expect.throwsT<InvalidDataException>
+                    (fun () -> FileBindingStore.openAt path |> ignore)
+                    "an invalid durable row must fail the whole load"
             finally
                 File.Delete path
 

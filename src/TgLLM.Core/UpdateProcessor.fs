@@ -96,17 +96,23 @@ type UpdateProcessor
         ?watchdogBudget: TimeSpan,
         ?clock: Clock,
         ?onMessage: MessageHandler,
-        ?messageObserver: IMessageObserver
+        ?messageObserver: IMessageObserver,
+        ?startupBarrier: Task
     ) =
 
     /// Default ~2s: safely under Telegram's unpublished answer-callback deadline, long enough for
     /// ordinary tool work. Tests override it to keep the watchdog path fast.
     let watchdogBudget = defaultArg watchdogBudget (TimeSpan.FromSeconds 2.0)
 
+    do
+        if watchdogBudget <= TimeSpan.Zero then
+            invalidArg (nameof watchdogBudget) "callback acknowledgement watchdog budget must be positive"
+
     /// Defaults to the dependency-free noop, same convention as `observer`'s own resolution one
     /// layer up (`TgBot.wireBot`) — every pre-`?onMessage` caller never even looks at this, since
     /// `MessageReceived` is a no-op when `onMessage` itself is `None` (see `RunAsync` below).
     let messageObserver = defaultArg messageObserver (NoopMessageObserver() :> IMessageObserver)
+    let startupBarrier = defaultArg startupBarrier Task.CompletedTask
 
     /// "Now", injected rather than read ambiently — defaults to real wall-clock
     /// time; tests override it to drive `Expiry.isLive`'s decision deterministically. Feeds BOTH
@@ -477,6 +483,7 @@ type UpdateProcessor
     member _.RunAsync(ct: CancellationToken) : Task =
         task {
             use enumerator = source.Updates(ct).GetAsyncEnumerator(ct)
+            do! startupBarrier.WaitAsync(ct)
             let mutable moving = true
 
             while moving do
@@ -532,5 +539,12 @@ module AgentOps =
         task {
             let registeredKeyboard, bindings = KeyboardPlan.assign (Seq.initInfinite (fun _ -> tokenGen ())) spec
             do! store.Register(bindings, ct)
-            return! api.SendKeyboard(chat, text, registeredKeyboard, ct)
+
+            try
+                return! api.SendKeyboard(chat, text, registeredKeyboard, ct)
+            with ex ->
+                // Nothing reached Telegram, so none of the newly registered closure tokens can
+                // ever be pressed. Compensate instead of leaking unreachable live closures.
+                do! store.Remove(bindings |> List.map (fun b -> b.Token), ct)
+                return raise ex
         }
