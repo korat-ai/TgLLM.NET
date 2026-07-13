@@ -59,6 +59,17 @@ type private ThrowOnceThenDelegateBindingStore(inner: IBindingStore) =
 let bindingEvictionSweeperTests =
     testList "BindingEvictionSweeper" [
 
+        testCase "a non-positive sweep interval is rejected" <| fun _ ->
+            Expect.throwsT<ArgumentException>
+                (fun () ->
+                    BindingEvictionSweeper(
+                        InMemoryBindingStore(),
+                        (fun () -> DateTimeOffset.UnixEpoch),
+                        interval = TimeSpan.Zero
+                    )
+                    |> ignore)
+                "an invalid interval must fail at construction instead of killing the loop later"
+
         testCase "SweepOnce removes an expired binding using the injected clock — no host code beyond construction" <| fun _ ->
             task {
                 let store = InMemoryBindingStore() :> IBindingStore

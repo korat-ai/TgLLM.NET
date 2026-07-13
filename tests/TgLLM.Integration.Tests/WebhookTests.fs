@@ -3,11 +3,13 @@
 /// domain event long polling produces).
 module TgLLM.Integration.Tests.WebhookTests
 
+open System
 open System.Collections.Generic
 open System.Threading
 open Expecto
 open FSharp.UMX
 open TgLLM.Core
+open TgLLM.FSharp
 open TgLLM.Webhooks
 open TgLLM.Integration.Tests.FakeBotApiServer
 
@@ -72,4 +74,56 @@ let webhookTests =
                       | _ -> failtestf "expected exactly one ButtonPressed, got %A" events
                   }
                   |> Async.AwaitTask
-          } ]
+          }
+
+          testCaseAsync "the bounded queue reports overload without growing its backlog"
+          <| async {
+              do!
+                  task {
+                      let token = CallbackToken.generate ()
+                      let source = WebhookUpdateSource(1)
+
+                      let first =
+                          TelegramJson.callbackQueryUpdate 8 "q-1" (CallbackToken.value token) 321L 12 654L "Wanda"
+                          |> Webhook.parseUpdate
+
+                      let second =
+                          TelegramJson.callbackQueryUpdate 9 "q-2" (CallbackToken.value token) 321L 12 654L "Wanda"
+                          |> Webhook.parseUpdate
+
+                      Expect.isTrue (source.TryIngest first) "the first event fits"
+                      Expect.isFalse (source.TryIngest second) "a full queue reports overload immediately"
+
+                      let enumerator =
+                          (source :> IUpdateSource).Updates(CancellationToken.None).GetAsyncEnumerator(CancellationToken.None)
+
+                      let! hasFirst = enumerator.MoveNextAsync()
+                      Expect.isTrue hasFirst "the first event can be drained"
+                      Expect.isTrue (source.TryIngest second) "capacity becomes available after draining"
+                      source.Complete()
+
+                      let! hasSecond = enumerator.MoveNextAsync()
+                      Expect.isTrue hasSecond "the retried event was accepted"
+                      let! hasMore = enumerator.MoveNextAsync()
+                      Expect.isFalse hasMore "only the two accepted events are present"
+                      do! enumerator.DisposeAsync()
+                  }
+                  |> Async.AwaitTask
+          }
+
+          testList
+              "TgWebhookConfig"
+              [ test "requires an absolute HTTPS public URL" {
+                    Expect.throwsT<ArgumentException>
+                        (fun () -> TgWebhookConfig.create("token", "http://example.test/hook", "secret") |> ignore)
+                        "Telegram webhook registration must not use an insecure URL"
+                }
+                test "requires a non-empty valid secret" {
+                    Expect.throwsT<ArgumentException>
+                        (fun () -> TgWebhookConfig.create("token", "https://example.test/hook", "") |> ignore)
+                        "secret verification cannot be disabled accidentally"
+
+                    Expect.throwsT<ArgumentException>
+                        (fun () -> TgWebhookConfig.create("token", "https://example.test/hook", "bad secret") |> ignore)
+                        "Telegram rejects characters outside its secret-token alphabet"
+                } ] ]

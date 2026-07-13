@@ -28,6 +28,19 @@ type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int, ?
     let timeout = defaultArg timeoutSeconds 30
     let initialBackoff = defaultArg initialBackoff (TimeSpan.FromSeconds 1.0)
     let maxBackoff = defaultArg maxBackoff (TimeSpan.FromSeconds 30.0)
+    let ready = TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    do
+        if timeout < 0 then
+            invalidArg (nameof timeoutSeconds) "long-poll timeout cannot be negative"
+
+        if initialBackoff <= TimeSpan.Zero then
+            invalidArg (nameof initialBackoff) "initial retry backoff must be positive"
+
+        if maxBackoff < initialBackoff then
+            invalidArg (nameof maxBackoff) "maximum retry backoff must be at least the initial backoff"
+
+    member _.Ready: Task = ready.Task
 
     interface IUpdateSource with
         member _.Updates(ct: CancellationToken) : IAsyncEnumerable<AgentEvent> =
@@ -51,7 +64,21 @@ type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int, ?
                 task {
                     try
                         // getUpdates will not work while a webhook is set.
-                        do! client.DeleteWebhook(cancellationToken = ct)
+                        let mutable webhookDeleted = false
+                        let mutable deleteAttempts = 0
+                        let mutable deleteBackoff = initialBackoff
+
+                        while not webhookDeleted do
+                            deleteAttempts <- deleteAttempts + 1
+
+                            try
+                                do! client.DeleteWebhook(cancellationToken = ct)
+                                webhookDeleted <- true
+                            with ex when not (ex :? OperationCanceledException) && deleteAttempts < 3 ->
+                                do! Task.Delay(deleteBackoff, ct)
+                                deleteBackoff <- min maxBackoff (deleteBackoff * 2.0)
+
+                        ready.TrySetResult() |> ignore
 
                         let mutable offset = 0
                         let mutable backoff = initialBackoff
@@ -80,8 +107,12 @@ type LongPollingUpdateSource(client: ITelegramBotClient, ?timeoutSeconds: int, ?
 
                         writer.TryComplete() |> ignore
                     with
-                    | :? OperationCanceledException -> writer.TryComplete() |> ignore
-                    | ex -> writer.TryComplete ex |> ignore
+                    | :? OperationCanceledException ->
+                        ready.TrySetCanceled ct |> ignore
+                        writer.TryComplete() |> ignore
+                    | ex ->
+                        ready.TrySetException ex |> ignore
+                        writer.TryComplete ex |> ignore
                 }
 
             // Fire the pump; cancellation via `ct` stops it and completes the channel.

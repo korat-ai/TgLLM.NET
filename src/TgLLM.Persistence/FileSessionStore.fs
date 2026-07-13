@@ -35,12 +35,8 @@ module SessionRowDto =
           PayloadBase64 = Convert.ToBase64String record.Payload
           LastActivityAt = record.LastActivityAt }
 
-    /// `None` for a row this store could never have written itself (a hand-edited or corrupted
-    /// file, a `PayloadBase64` that isn't valid Base64, or a `PayloadBase64` that is JSON `null` —
-    /// `System.Text.Json`'s reflection-based deserializer binds `null` into this DTO's `string`
-    /// field regardless of the field's own non-nullable annotation, and `Convert.FromBase64String`
-    /// throws `ArgumentNullException` on a null input) — skipped on load rather than failing the
-    /// whole `OpenAt` call, mirroring `BindingDto.toDomain`'s own best-effort, total contract.
+    /// `None` for a row this store could never have written itself. `OpenAt` treats that as file
+    /// corruption and fails the whole load so partial durable state is never accepted silently.
     let toDomain (dto: SessionRowDto) : (ChatId * SessionRecord) option =
         try
             let chat = UMX.tag<chatId> dto.ChatId
@@ -125,18 +121,22 @@ type FileSessionStore
         if File.Exists path then
             let json = File.ReadAllText path
 
-            if not (String.IsNullOrWhiteSpace json) then
-                // Best-effort load (mirrors `FileBindingStore.openAt`'s own contract): a truncated
-                // write, a hand-edited file, or the JSON literal `null` (STJ then returns a null
-                // array reference, Always-Rule 5) must not crash the bot — start empty instead.
-                try
-                    match JsonSerializer.Deserialize<SessionRowDto[]> json |> Option.ofObj with
-                    | None -> ()
-                    | Some dtos ->
-                        for dto in dtos do
-                            match SessionRowDto.toDomain dto with
-                            | Some(chat, record) -> initial[chat] <- record
-                            | None -> ()
-                with :? JsonException -> ()
+            if String.IsNullOrWhiteSpace json then
+                raise (InvalidDataException($"Session store '{path}' is empty or whitespace."))
+
+            try
+                match JsonSerializer.Deserialize<SessionRowDto[]> json |> Option.ofObj with
+                | None -> raise (InvalidDataException($"Session store '{path}' contains JSON null."))
+                | Some dtos ->
+                    for dto in dtos do
+                        if isNull (box dto) then
+                            raise (InvalidDataException($"Session store '{path}' contains a null row."))
+
+                        match SessionRowDto.toDomain dto with
+                        | Some(chat, record) -> initial[chat] <- record
+                        | None ->
+                            raise (InvalidDataException($"Session store '{path}' contains an invalid session row."))
+            with :? JsonException as ex ->
+                raise (InvalidDataException($"Session store '{path}' is not valid JSON.", ex))
 
         FileSessionStore(path, initial)

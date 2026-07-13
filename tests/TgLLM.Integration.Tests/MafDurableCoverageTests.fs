@@ -276,6 +276,36 @@ let mafDurableCoverageTests =
                 |> Async.AwaitTask
         }
 
+        testCaseAsync "a durable decision already waiting at startup routes after the MAF tools are registered"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 9606L
+                    let bindingStore = InMemoryBindingStore() :> IBindingStore
+                    let sessionStore = InMemorySessionStore() :> ISessionStore
+
+                    let agent1 = ScriptedAgent [ PausesFor("req-1", "send_email", []) ]
+                    let! bridge1 = Maf.startPolling (pollingConfig server bindingStore sessionStore) agent1
+                    do! bridge1.StartRun(UMX.tag<chatId> chat, "Send the email.")
+
+                    let sent = (server.RequestsFor "sendMessage").Head.Body |> Option.get
+                    let approveToken = callbackDataAt 0 0 sent
+                    do! (bridge1 :> IAsyncDisposable).DisposeAsync().AsTask()
+
+                    let resumes = ResizeArray<string * bool>()
+                    let agent2 = ScriptedAgent([ RepliesWith "Done." ], onResume = (fun value -> resumes.Add value))
+                    do! deliverTap server 1 "q-startup-backlog" approveToken chat 1 chat
+
+                    use! bridge2 = Maf.startPolling (pollingConfig server bindingStore sessionStore) agent2
+                    do! pollUntil 15000 (fun () -> server.RequestsFor "editMessageText" |> List.isEmpty |> not)
+
+                    Expect.equal resumes.Count 1 "the queued callback resumes exactly once"
+                    Expect.equal resumes[0] ("req-1", true) "the registered approval tool handles the queued callback"
+                }
+                |> Async.AwaitTask
+        }
+
         testCaseAsync "an idle record evicted directly on the store behaves exactly like one that was never persisted — the post-restart tap lands stale, never resumed"
         <| async {
             do!

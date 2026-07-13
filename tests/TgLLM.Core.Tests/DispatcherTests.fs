@@ -23,6 +23,15 @@ let private toChatIndex (PositiveInt n) = n % chatCount
 let dispatcherTests =
     testList "PerChatChannelDispatcher" [
 
+        testCase "non-positive shutdown and idle durations are rejected" <| fun _ ->
+            Expect.throwsT<ArgumentException>
+                (fun () -> PerChatChannelDispatcher(shutdownBudget = TimeSpan.Zero) |> ignore)
+                "shutdown cannot be unbounded by an invalid budget"
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> PerChatChannelDispatcher(idleTimeout = TimeSpan.Zero) |> ignore)
+                "idle eviction requires a real positive deadline"
+
         testCase "DisposeAsync drains a work item that was already queued (buffered, unread) behind a still-running item, instead of cancelling it out from under it" <| fun _ ->
             task {
                 let dispatcher: IPressDispatcher = new PerChatChannelDispatcher()
@@ -65,6 +74,29 @@ let dispatcherTests =
                 Expect.isTrue
                     item2Ran
                     "an item already queued (buffered) behind an in-flight one must still be drained by DisposeAsync, per the type's own \"drains whatever is already queued\" doc comment — not dropped because Cancel() already fired before it got a turn"
+            }
+            |> fun t -> t.GetAwaiter().GetResult()
+
+        testCase "DisposeAsync returns after the bounded cancellation grace when work ignores cancellation" <| fun _ ->
+            task {
+                let budget = TimeSpan.FromMilliseconds 40.0
+                let dispatcher: IPressDispatcher = new PerChatChannelDispatcher(shutdownBudget = budget)
+                let started = TaskCompletionSource()
+                let release = TaskCompletionSource()
+
+                do!
+                    (dispatcher.Enqueue(
+                        UMX.tag<chatId> 2L,
+                        (fun _ct ->
+                            task {
+                                started.SetResult()
+                                do! release.Task
+                            })
+                    )).AsTask()
+
+                do! started.Task
+                do! dispatcher.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds 1.0)
+                release.SetResult()
             }
             |> fun t -> t.GetAwaiter().GetResult()
 

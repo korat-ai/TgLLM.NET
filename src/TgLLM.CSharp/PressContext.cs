@@ -52,7 +52,10 @@ public sealed class PressContext
             throw new InvalidOperationException("PressContext.GetArg: this press carries no argument.");
         }
 
-        return JsonSerializer.Deserialize<T>(json, CSharpSupport.structuredArgJsonOptions)!;
+        var value = JsonSerializer.Deserialize<T>(json, CSharpSupport.structuredArgJsonOptions);
+        return value is null
+            ? throw new InvalidOperationException("PressContext.GetArg: the payload deserialized to null.")
+            : value;
     }
 
     /// <summary>
@@ -65,10 +68,15 @@ public sealed class PressContext
         {
             try
             {
-                value = JsonSerializer.Deserialize<T>(json, CSharpSupport.structuredArgJsonOptions)!;
-                return true;
+                var parsed = JsonSerializer.Deserialize<T>(json, CSharpSupport.structuredArgJsonOptions);
+
+                if (parsed is not null)
+                {
+                    value = parsed;
+                    return true;
+                }
             }
-            catch (JsonException)
+            catch (Exception ex) when (ex is JsonException or NotSupportedException)
             {
                 // falls through to the "no value" return below
             }

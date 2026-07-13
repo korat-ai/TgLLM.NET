@@ -1,12 +1,10 @@
-/// Acceptance for `Maf.startPolling`/`startPollingWith`'s own build-failure path: `TgBot.startPolling`
-/// already starts the bot (long-polling in the background) BEFORE `BridgeBuild.build` ever runs —
-/// there is no earlier point to build the bridge at, since the config-time `OnMessage` handler needs
-/// the bot to exist first. If `build` then throws (no `.WithTools` wired, or a double-attach), the
-/// started bot must not be leaked — polling forever with nothing left able to stop it.
+/// Acceptance for MAF's startup barrier and build-failure cleanup: queued updates must wait for the
+/// bridge and its tools, while a failed build must cancel the paused bot rather than leak it.
 module TgLLM.Integration.Tests.MafStartupFailureTests
 
 open System.Threading.Tasks
 open Expecto
+open TgLLM.Core
 open TgLLM.FSharp
 open TgLLM.Maf
 open TgLLM.Integration.Tests.FakeBotApiServer
@@ -15,6 +13,35 @@ open TgLLM.Integration.Tests.MafScriptedAgent
 [<Tests>]
 let mafStartupFailureTests =
     testList "MafBridge startup-failure cleanup" [
+
+        testCaseAsync "a text update already waiting at startup is handled after the bridge is ready"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    let chat = 9901L
+                    let agent = ScriptedAgent [ RepliesWith "Ready." ]
+
+                    server.EnqueueResult("getUpdates", TelegramJson.batch [ TelegramJson.textMessageUpdate 1 chat 1 chat "Tester" "Hello" ])
+
+                    let config =
+                        (TgBotConfig.create "123456789:TEST-fake-token")
+                            .WithBaseUrl(server.BaseUrl)
+                            .WithTools(ToolRegistry.create ())
+
+                    use! bridge = Maf.startPolling config agent
+
+                    let mutable tries = 0
+
+                    while List.isEmpty (server.RequestsFor "sendMessage") && tries < 1500 do
+                        do! Task.Delay 10
+                        tries <- tries + 1
+
+                    Expect.equal agent.RunCount 1 "the startup backlog message reaches the initialized bridge exactly once"
+                    Expect.equal (List.length (server.RequestsFor "sendMessage")) 1 "the agent's reply reaches Telegram"
+                }
+                |> Async.AwaitTask
+        }
 
         testCaseAsync "Maf.startPolling on a config with no .WithTools fails fast and leaves no orphaned poller running"
         <| async {

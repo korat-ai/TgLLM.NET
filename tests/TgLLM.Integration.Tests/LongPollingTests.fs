@@ -30,6 +30,23 @@ let private polledWithOffset (server: FakeBotApiServer) (offset: int) : bool =
 let longPollingTests =
     testList "LongPollingUpdateSource" [
 
+        testCase "invalid timeout and backoff settings fail at construction" <| fun _ ->
+            let client = Unchecked.defaultof<ITelegramBotClient>
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> LongPollingUpdateSource(client, timeoutSeconds = -1) |> ignore)
+                "a negative Telegram poll timeout is invalid"
+
+            Expect.throwsT<ArgumentException>
+                (fun () ->
+                    LongPollingUpdateSource(
+                        client,
+                        initialBackoff = TimeSpan.FromSeconds 2.0,
+                        maxBackoff = TimeSpan.FromSeconds 1.0
+                    )
+                    |> ignore)
+                "maximum retry delay cannot be smaller than the initial delay"
+
         testCaseAsync "deletes webhook first, yields a mapped press, and advances offset"
         <| async {
             do!
@@ -72,6 +89,69 @@ let longPollingTests =
                     | _ -> failtest "expected exactly one ButtonPressed event"
 
                     Expect.isTrue (polledWithOffset server 43) "next poll used offset = update_id + 1"
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "deleteWebhook is retried before the source reports ready"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+                    server.EnqueueError("deleteWebhook", 500, "Internal Server Error")
+
+                    let source =
+                        LongPollingUpdateSource(
+                            makeClient server,
+                            timeoutSeconds = 0,
+                            initialBackoff = TimeSpan.FromMilliseconds 10.0,
+                            maxBackoff = TimeSpan.FromMilliseconds 20.0
+                        )
+
+                    use cts = new CancellationTokenSource()
+                    let enumerator = (source :> IUpdateSource).Updates(cts.Token).GetAsyncEnumerator(cts.Token)
+                    do! source.Ready.WaitAsync(TimeSpan.FromSeconds 1.0)
+
+                    Expect.equal (List.length (server.RequestsFor "deleteWebhook")) 2 "startup retried the transient delete failure"
+
+                    cts.Cancel()
+                    do! enumerator.DisposeAsync()
+                }
+                |> Async.AwaitTask
+        }
+
+        testCaseAsync "three deleteWebhook failures fault readiness and never start getUpdates"
+        <| async {
+            do!
+                task {
+                    use! server = FakeBotApiServer.start ()
+
+                    for _ in 1..3 do
+                        server.EnqueueError("deleteWebhook", 500, "Internal Server Error")
+
+                    let source =
+                        LongPollingUpdateSource(
+                            makeClient server,
+                            timeoutSeconds = 0,
+                            initialBackoff = TimeSpan.FromMilliseconds 10.0,
+                            maxBackoff = TimeSpan.FromMilliseconds 20.0
+                        )
+
+                    use cts = new CancellationTokenSource()
+                    let enumerator = (source :> IUpdateSource).Updates(cts.Token).GetAsyncEnumerator(cts.Token)
+
+                    let! failed =
+                        task {
+                            try
+                                do! source.Ready.WaitAsync(TimeSpan.FromSeconds 1.0)
+                                return false
+                            with _ ->
+                                return true
+                        }
+
+                    Expect.isTrue failed "readiness faults when webhook deletion cannot be established"
+                    Expect.isEmpty (server.RequestsFor "getUpdates") "polling never starts while a webhook may still be active"
+                    do! enumerator.DisposeAsync()
                 }
                 |> Async.AwaitTask
         }

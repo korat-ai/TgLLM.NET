@@ -154,6 +154,51 @@ public class StructuredArgTests
     }
 
     [Fact]
+    public async Task JSON_null_is_never_reported_as_a_successful_typed_argument()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = await FakeServerModule.start();
+        const long chatId = 4105L;
+        var observed = new TaskCompletionSource<(bool TrySucceeded, Exception GetError)>();
+
+        var tools = new ToolRegistry().Register(
+            "approve",
+            ctx =>
+            {
+                var trySucceeded = ctx.TryGetArg<ApprovalRequest>(out _);
+
+                try
+                {
+                    ctx.GetArg<ApprovalRequest>();
+                    throw new Xunit.Sdk.XunitException("GetArg unexpectedly returned null");
+                }
+                catch (InvalidOperationException error)
+                {
+                    observed.TrySetResult((trySucceeded, error));
+                }
+
+                return Task.CompletedTask;
+            });
+
+        await using var agent = await TelegramAgent.StartPollingAsync(
+            new TelegramAgentOptions { BotToken = FakeToken, BaseUrl = server.BaseUrl, Tools = tools },
+            ct);
+
+        var plan = new PlanBuilder().Row(r => r.Tool("Approve", "approve", "null")).Build();
+        await agent.SendKeyboardPlanAsync(chatId, "Deploy?", plan, ct: ct);
+        var token = CallbackDataAt(server.RequestsFor("sendMessage").First().Body!.Value, 0, 0);
+
+        server.EnqueueResult(
+            "getUpdates",
+            TelegramJson.batch(ListOf(TelegramJson.callbackQueryUpdate(1, "q-null", token, chatId, 14, 904L, "Tester"))));
+
+        await WaitUntilAsync(() => observed.Task.IsCompleted, 5000, ct);
+        var result = await observed.Task;
+        Assert.False(result.TrySucceeded);
+        Assert.Contains("deserialized to null", result.GetError.Message);
+    }
+
+    [Fact]
     public async Task A_slice_2_plain_string_argument_still_routes_via_Arg_unchanged()
     {
         var ct = TestContext.Current.CancellationToken;

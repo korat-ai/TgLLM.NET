@@ -27,6 +27,11 @@ let private nonEmptyDelta (s: string | null) : string =
 let replyCoalescerTests =
     testList "ReplyCoalescer" [
 
+        testCase "a non-positive coalescing interval is rejected" <| fun _ ->
+            Expect.throwsT<ArgumentException>
+                (fun () -> ReplyCoalescer(clock, TimeSpan.Zero) |> ignore)
+                "zero would allow one edit per token"
+
         testCase "a freshly constructed coalescer (no seed) has empty RunningText" <| fun _ ->
             let c = ReplyCoalescer(clock, interval)
             Expect.equal c.RunningText "" "nothing was ever appended"

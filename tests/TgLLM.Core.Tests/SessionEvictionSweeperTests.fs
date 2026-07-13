@@ -53,6 +53,18 @@ type private ThrowOnceThenDelegateSessionStore(inner: ISessionStore) =
 let sessionEvictionSweeperTests =
     testList "SessionEvictionSweeper" [
 
+        testCase "non-positive idle and sweep durations are rejected" <| fun _ ->
+            let store = InMemorySessionStore()
+            let clock = fun () -> DateTimeOffset.UnixEpoch
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> SessionEvictionSweeper(store, clock, TimeSpan.Zero) |> ignore)
+                "an invalid idle window must fail at construction"
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> SessionEvictionSweeper(store, clock, TimeSpan.FromHours 1.0, interval = TimeSpan.Zero) |> ignore)
+                "an invalid interval must fail at construction"
+
         testCase "SweepOnce evicts a record at the idle boundary (LastActivityAt = now - idleAfter) using the injected clock" <| fun _ ->
             task {
                 let store = InMemorySessionStore() :> ISessionStore

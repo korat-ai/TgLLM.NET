@@ -64,6 +64,37 @@ let sendKeyboardPlanExpirySingleUseTests =
         "TgBot.SendKeyboardPlan expiresIn/singleUse"
         [
 
+          testCaseAsync "a non-positive expiresIn is rejected before any binding or message is created"
+          <| async {
+              do!
+                  task {
+                      use! server = FakeBotApiServer.start ()
+                      let store = InMemoryBindingStore() :> IBindingStore
+                      let tools = ToolRegistry.create().Register("approve", fun _ -> task { return () })
+                      use! bot = TgBot.startPolling (config server tools store (fun () -> DateTimeOffset.UtcNow))
+                      let plan = planOrFail [ [ Plan.tool "Approve" "approve" ] ]
+
+                      let mutable threw = false
+
+                      try
+                          let! _ =
+                              bot.SendKeyboardPlan(
+                                  UMX.tag<chatId> 9100L,
+                                  MessageText.unsafe "Deploy?",
+                                  plan,
+                                  expiresIn = TimeSpan.Zero
+                              )
+
+                          ()
+                      with :? ArgumentException ->
+                          threw <- true
+
+                      Expect.isTrue threw "zero expiry is a configuration error"
+                      Expect.isEmpty (server.RequestsFor "sendMessage") "nothing reached Telegram"
+                  }
+                  |> Async.AwaitTask
+          }
+
           testCaseAsync "a keyboard sent with expiresIn stores bindings whose ExpiresAt is the bot's clock plus the given span"
           <| async {
               do!

@@ -80,4 +80,15 @@ let toolManifestTests =
         testCase "an empty registry emits an empty manifest" <| fun _ ->
             let registry = InMemoryToolRegistry() :> IToolRegistry
             Expect.equal (registry.Manifest().Tools) [] "no tools registered means no manifest entries"
+
+        testCase "concurrent registration of one name never duplicates its manifest entry" <| fun _ ->
+            let registry = InMemoryToolRegistry() :> IToolRegistry
+            let sameName = name "approve"
+
+            Parallel.For(0, 1000, fun _ -> registry.Register(sameName, noop)) |> ignore
+
+            Expect.equal
+                (registry.Manifest().Tools |> List.map (fun entry -> entry.Name))
+                [ "approve" ]
+                "registration order and dictionary membership are updated atomically"
     ]

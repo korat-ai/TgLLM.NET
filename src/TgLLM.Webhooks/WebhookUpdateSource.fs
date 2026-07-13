@@ -1,7 +1,7 @@
 /// Webhook transport: a host-agnostic `IUpdateSource` fed by an HTTP endpoint that pushes each
-/// incoming `Update`. It buffers mapped events in a single-reader channel so the endpoint can
-/// return 200 immediately (Telegram retries a slow endpoint) while the processor drains events on
-/// its own. The `Update` -> domain mapping is the SAME pure `Mapping.toAgentEvent` the
+/// incoming `Update`. It buffers mapped events in a bounded single-reader channel so the endpoint
+/// can return immediately — 200 when accepted, or retryable 503 when saturated — while the
+/// processor drains events on its own. The `Update` -> domain mapping is the SAME pure `Mapping.toAgentEvent` the
 /// long-polling source uses, so hook behavior is identical across transports.
 namespace TgLLM.Webhooks
 
@@ -43,12 +43,27 @@ module Webhook =
         | None -> invalidArg (nameof json) "webhook body did not deserialize to a Telegram Update"
 
 /// `IUpdateSource` fed by pushed webhook updates. Multiple producers (concurrent inbound POSTs) may
-/// `Ingest`; a single consumer (the processor) drains `Updates`.
+/// `Ingest`; a single consumer (the processor) drains `Updates`. The bounded queue protects the
+/// process from an inbound burst growing memory without limit.
 [<Sealed>]
-type WebhookUpdateSource() =
+type WebhookUpdateSource(capacity: int) =
+
+    do
+        if capacity <= 0 then
+            invalidArg (nameof capacity) "webhook queue capacity must be positive"
 
     let channel =
-        Channel.CreateUnbounded<AgentEvent>(UnboundedChannelOptions(SingleReader = true, SingleWriter = false))
+        Channel.CreateBounded<AgentEvent>(
+            BoundedChannelOptions(
+                capacity,
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait
+            )
+        )
+
+    /// Create a source with a conservative bounded backlog.
+    new() = WebhookUpdateSource(1024)
 
     /// Map one pushed `Update` to a domain event and buffer it. An update mappable to neither a
     /// `CallbackQuery` outcome nor a plain user text `Message` (`ValueNone`) is dropped, matching
@@ -58,11 +73,20 @@ type WebhookUpdateSource() =
     /// either — it yields `MessageReceived` — both flow through this same channel like any other
     /// `AgentEvent` and reach `UpdateProcessor`'s own handling — this transport needs no code
     /// change of its own for either, since both fall out of sharing `Mapping.toAgentEvent` with
-    /// `LongPollingUpdateSource`. Returns quickly so the HTTP handler can 200.
+    /// `LongPollingUpdateSource`. Direct callers may await capacity; the HTTP endpoint uses
+    /// `TryIngest` below so it never holds requests open behind a saturated queue.
     member _.Ingest(update: Update, ct: CancellationToken) : ValueTask =
         match Mapping.toAgentEvent update with
         | ValueSome event -> channel.Writer.WriteAsync(event, ct)
         | ValueNone -> ValueTask.CompletedTask
+
+    /// Try to buffer an HTTP-delivered update without making the request wait for queue capacity.
+    /// Returns false when the bounded queue is full or completed, allowing the endpoint to return a
+    /// retryable overload response. Updates irrelevant to this library remain successful no-ops.
+    member _.TryIngest(update: Update) : bool =
+        match Mapping.toAgentEvent update with
+        | ValueSome event -> channel.Writer.TryWrite event
+        | ValueNone -> true
 
     /// Stop the stream (e.g. on shutdown), so `Updates` enumeration completes.
     member _.Complete() : unit = channel.Writer.TryComplete() |> ignore

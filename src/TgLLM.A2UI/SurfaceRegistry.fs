@@ -149,6 +149,18 @@ type SurfaceRegistry(catalog: Catalog) =
                 | Some messageId -> Ok(DeleteMessage(surface.Chat, messageId))
                 | None -> Ok NoEffect
 
+    /// Captures the state needed to roll back an `Apply` whose validation or Telegram IO fails.
+    /// The mutable JSON data model is deep-cloned; the remaining fields are immutable values.
+    member _.Snapshot(surfaceId: string) : LiveSurface option =
+        match surfaces.TryGetValue surfaceId with
+        | true, surface -> Some { surface with DataModel = surface.DataModel.DeepClone() }
+        | false, _ -> None
+
+    member _.Restore(surfaceId: string, snapshot: LiveSurface option) : unit =
+        match snapshot with
+        | Some surface -> surfaces[surfaceId] <- surface
+        | None -> surfaces.TryRemove surfaceId |> ignore
+
     /// Records the message a surface's `SendNew` render landed on — called by the façade AFTER
     /// the send reaches the wire, never guessed ahead of it. A surface id no longer tracked (e.g.
     /// already deleted) is silently ignored: nothing downstream depends on this call having any

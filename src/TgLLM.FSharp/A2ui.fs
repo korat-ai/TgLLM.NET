@@ -102,50 +102,68 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
         | Ok msg ->
             withSurfaceLock (A2uiMessage.surfaceId msg) (fun () ->
                 task {
+                    let surfaceId = A2uiMessage.surfaceId msg
+                    let snapshot = registry.Snapshot surfaceId
+
+                    let fail (error: A2uiError) =
+                        registry.Restore(surfaceId, snapshot)
+                        A2uiObservability.reportError observer error
+
                     match registry.Apply(chat, msg) with
-                    | Error e -> return A2uiObservability.reportError observer e
+                    | Error e -> return fail e
                     | Ok NoEffect -> return Ok()
                     | Ok(SendNew(sendChat, rendered)) ->
                         A2uiObservability.reportUnsupported observer rendered
 
                         match MessageText.create rendered.Text with
                         | Error(TextTooLong(length, max)) ->
-                            return A2uiObservability.reportError observer (A2uiRenderer.BodyTooLongError(length, max))
+                            return fail (A2uiRenderer.BodyTooLongError(length, max))
                         // `MessageText.create`'s only other reachable case is `EmptyLabel` (the body
                         // resolved to empty/whitespace-only) — `EmptyKeyboard`/`EmptyRow` are DEAD here
                         // (that smart constructor never produces them; only `Keyboard.create` does).
-                        | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
+                        | Error _ -> return fail A2uiRenderer.NoRenderableTextError
                         | Ok text ->
                             match A2uiRenderer.validateKeyboard rendered with
-                            | Error e -> return A2uiObservability.reportError observer e
+                            | Error e -> return fail e
                             | Ok() ->
-                                let! messageId =
-                                    if List.isEmpty rendered.Keyboard.Rows then
-                                        bot.SendText(sendChat, text, Some MarkdownV2)
-                                    else
-                                        bot.SendKeyboardPlan(sendChat, text, rendered.Keyboard, parseMode = MarkdownV2)
+                                try
+                                    let! messageId =
+                                        if List.isEmpty rendered.Keyboard.Rows then
+                                            bot.SendText(sendChat, text, Some MarkdownV2)
+                                        else
+                                            bot.SendKeyboardPlan(sendChat, text, rendered.Keyboard, parseMode = MarkdownV2)
 
-                                registry.RecordMessageId(A2uiMessage.surfaceId msg, messageId)
-                                return Ok()
+                                    registry.RecordMessageId(surfaceId, messageId)
+                                    return Ok()
+                                with ex ->
+                                    registry.Restore(surfaceId, snapshot)
+                                    return raise ex
                     | Ok(EditExisting(surfaceChat, messageId, rendered)) ->
                         A2uiObservability.reportUnsupported observer rendered
 
                         match MessageText.create rendered.Text with
                         | Error(TextTooLong(length, max)) ->
-                            return A2uiObservability.reportError observer (A2uiRenderer.BodyTooLongError(length, max))
+                            return fail (A2uiRenderer.BodyTooLongError(length, max))
                         // `MessageText.create`'s only other reachable case is `EmptyLabel` (the body
                         // resolved to empty/whitespace-only) — `EmptyKeyboard`/`EmptyRow` are DEAD here
                         // (that smart constructor never produces them; only `Keyboard.create` does).
-                        | Error _ -> return A2uiObservability.reportError observer A2uiRenderer.NoRenderableTextError
+                        | Error _ -> return fail A2uiRenderer.NoRenderableTextError
                         | Ok text ->
                             match A2uiRenderer.validateKeyboard rendered with
-                            | Error e -> return A2uiObservability.reportError observer e
+                            | Error e -> return fail e
                             | Ok() ->
                                 let! outcome =
-                                    if List.isEmpty rendered.Keyboard.Rows then
-                                        bot.EditText(surfaceChat, messageId, text, parseMode = MarkdownV2)
-                                    else
-                                        bot.EditKeyboardPlan(surfaceChat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
+                                    task {
+                                        try
+                                            return!
+                                                if List.isEmpty rendered.Keyboard.Rows then
+                                                    bot.EditText(surfaceChat, messageId, text, parseMode = MarkdownV2)
+                                                else
+                                                    bot.EditKeyboardPlan(surfaceChat, messageId, text, rendered.Keyboard, parseMode = MarkdownV2)
+                                        with ex ->
+                                            registry.Restore(surfaceId, snapshot)
+                                            return raise ex
+                                    }
 
                                 match outcome with
                                 | EditApplied
@@ -158,12 +176,16 @@ type A2uiRenderer internal (bot: TgBot, registry: SurfaceRegistry, observer: IA2
                                     // but clears the tracked message id so the surface's NEXT update
                                     // re-sends fresh rather than trying (and failing) to edit the same
                                     // vanished message forever.
-                                    registry.ClearMessageId(A2uiMessage.surfaceId msg)
-                                    observer.OnA2uiError(MessageVanished(A2uiMessage.surfaceId msg))
+                                    registry.ClearMessageId(surfaceId)
+                                    observer.OnA2uiError(MessageVanished surfaceId)
                                     return Ok()
                     | Ok(DeleteMessage(surfaceChat, messageId)) ->
-                        do! bot.DeleteMessage(surfaceChat, messageId)
-                        return Ok()
+                        try
+                            do! bot.DeleteMessage(surfaceChat, messageId)
+                            return Ok()
+                        with ex ->
+                            registry.Restore(surfaceId, snapshot)
+                            return raise ex
                 })
 
     /// A rendered surface with no Text/Divider/Image anywhere in its tree has no body a Bot API

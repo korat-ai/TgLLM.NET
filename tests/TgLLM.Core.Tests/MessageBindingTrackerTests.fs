@@ -5,6 +5,7 @@
 /// tracker is keyed by `(ChatId, MessageId)`, and `Record`/`TryGetPrevious` take a `ChatId` too.
 module TgLLM.Core.Tests.MessageBindingTrackerTests
 
+open System.Threading.Tasks
 open FSharp.UMX
 open Expecto
 open TgLLM.Core
@@ -124,4 +125,30 @@ let messageBindingTrackerTests =
 
             Expect.equal (tracker.TryGetPrevious(chat, messageIdA)) (Some latestTokensForA) "A's latest tokens are still tracked"
             Expect.equal (tracker.TryGetPrevious(chat, messageIdB)) (Some tokensForB) "B was NOT evicted by A's re-recordings (still within capacity)"
+
+        testCase "concurrent re-recording cannot duplicate FIFO bookkeeping or break the capacity bound" <| fun _ ->
+            let tracker = MessageBindingTracker(capacity = 2)
+            let chat = UMX.tag<chatId> 1L
+            let repeatedlyRecorded = UMX.tag<messageId> 1L
+
+            Parallel.For(
+                0,
+                1000,
+                fun _ -> tracker.Record(chat, repeatedlyRecorded, [ CallbackToken.generate () ])
+            )
+            |> ignore
+
+            let second = UMX.tag<messageId> 2L
+            let third = UMX.tag<messageId> 3L
+            tracker.Record(chat, second, [ CallbackToken.generate () ])
+            tracker.Record(chat, third, [ CallbackToken.generate () ])
+
+            Expect.equal (tracker.TryGetPrevious(chat, repeatedlyRecorded)) None "the true oldest distinct key is evicted"
+            Expect.isSome (tracker.TryGetPrevious(chat, second)) "the second distinct key remains"
+            Expect.isSome (tracker.TryGetPrevious(chat, third)) "the newest distinct key remains"
+
+        testCase "a non-positive capacity is rejected" <| fun _ ->
+            Expect.throwsT<System.ArgumentException>
+                (fun () -> MessageBindingTracker(capacity = 0) |> ignore)
+                "a zero-capacity tracker cannot satisfy its storage contract"
     ]

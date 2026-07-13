@@ -125,6 +125,9 @@ type CommonConfig =
       /// Config-time only (see `WithOnMessage`'s own doc comment for why): a bot already ingesting
       /// updates cannot late-bind this.
       OnMessage: MessageHandler option
+      /// Optional activation barrier used by collaborators that must finish registering handlers
+      /// and tools before this bot starts consuming updates.
+      StartupBarrier: Task option
       /// Paces a live-edited reply's cadence for a collaborator built on top of this bot (e.g. the
       /// MAF bridge's streaming turn) — this façade itself never reads it. `None` (the default)
       /// keeps every existing bot's behavior byte-identical: no streaming code path runs.
@@ -134,6 +137,12 @@ type CommonConfig =
       Streaming: TimeSpan option }
 
 module CommonConfig =
+    let private requirePositive (parameterName: string) (value: TimeSpan) : TimeSpan =
+        if value <= TimeSpan.Zero then
+            invalidArg parameterName $"the duration must be positive — got {value}"
+
+        value
+
     let create (botToken: string) : CommonConfig =
         { BotToken = botToken
           BaseUrl = None
@@ -146,6 +155,7 @@ module CommonConfig =
           Clock = None
           BindingEvictionInterval = None
           OnMessage = None
+          StartupBarrier = None
           Streaming = None }
 
     let withBaseUrl (url: string) (c: CommonConfig) = { c with BaseUrl = Some url }
@@ -163,18 +173,22 @@ module CommonConfig =
     let withSessionStore (store: ISessionStore) (c: CommonConfig) = { c with SessionStore = Some store }
     /// Override the idle window this bot's background session-eviction sweep uses — defaults to 30
     /// days when a session store IS configured. Has no effect on a bot with no session store.
-    let withSessionIdleEviction (span: TimeSpan) (c: CommonConfig) = { c with SessionIdleEviction = Some span }
+    let withSessionIdleEviction (span: TimeSpan) (c: CommonConfig) =
+        { c with SessionIdleEviction = Some(requirePositive "idleAfter" span) }
     /// Reclaim an idle chat's dispatcher resources after `timeout` with nothing buffered.
-    let withIdleChatEviction (timeout: TimeSpan) (c: CommonConfig) = { c with IdleChatEviction = Some timeout }
+    let withIdleChatEviction (timeout: TimeSpan) (c: CommonConfig) =
+        { c with IdleChatEviction = Some(requirePositive (nameof timeout) timeout) }
     /// Override the clock expiry/redelivery-dedup decisions read "now" from — defaults to real time.
     let withClock (clock: Clock) (c: CommonConfig) = { c with Clock = Some clock }
     /// Override the interval this bot's background binding-eviction sweep uses — defaults to
     /// `BindingEvictionSweeper`'s own built-in interval. The sweep itself runs regardless of
     /// whether this is ever set.
-    let withBindingEvictionInterval (interval: TimeSpan) (c: CommonConfig) = { c with BindingEvictionInterval = Some interval }
+    let withBindingEvictionInterval (interval: TimeSpan) (c: CommonConfig) =
+        { c with BindingEvictionInterval = Some(requirePositive (nameof interval) interval) }
     /// Answer an incoming user text message with `handler`, run on that message's chat's
     /// dispatcher lane (serialized with that chat's own button presses, in arrival order).
     let withOnMessage (handler: MessageHandler) (c: CommonConfig) = { c with OnMessage = Some handler }
+    let withStartupBarrier (barrier: Task) (c: CommonConfig) = { c with StartupBarrier = Some barrier }
     /// Turn on the streaming coalescing cadence a collaborator built on this bot (e.g. the MAF
     /// bridge) paces its live edits against. `interval` must be strictly positive — zero or
     /// negative would defeat the whole point of coalescing (`IsDue`, `TgLLM.Maf.ReplyCoalescer`,
@@ -253,6 +267,27 @@ type TgWebhookConfig =
       SecretToken: string }
 
     static member create(botToken: string, publicUrl: string, secretToken: string) : TgWebhookConfig =
+        let mutable uri = Unchecked.defaultof<Uri>
+
+        if
+            String.IsNullOrWhiteSpace publicUrl
+            || not (Uri.TryCreate(publicUrl, UriKind.Absolute, &uri))
+            || not (String.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        then
+            invalidArg (nameof publicUrl) "the webhook public URL must be an absolute HTTPS URL"
+
+        if
+            String.IsNullOrWhiteSpace secretToken
+            || secretToken.Length > 256
+            || not (
+                secretToken
+                |> Seq.forall (fun c -> Char.IsAsciiLetterOrDigit c || c = '_' || c = '-')
+            )
+        then
+            invalidArg
+                (nameof secretToken)
+                "the webhook secret token must contain 1-256 ASCII letters, digits, underscores, or hyphens"
+
         { Common = CommonConfig.create botToken
           PublicUrl = publicUrl
           SecretToken = secretToken }
@@ -411,6 +446,10 @@ type TgBot
             ?singleUse: bool,
             ?parseMode: ParseMode
         ) : Task<MessageId> =
+        match expiresIn with
+        | Some span when span <= TimeSpan.Zero -> invalidArg (nameof expiresIn) "binding expiry must be positive"
+        | _ -> ()
+
         if toolDispatch.IsNone && ToolPlan.hasToolButtons plan then
             invalidOp
                 "TgBot.SendKeyboardPlan: this plan has a tool button, but no Tool Router is wired in \
@@ -698,7 +737,8 @@ type TgBot
                 ?toolDispatch = toolDispatch,
                 clock = clock,
                 ?onMessage = common.OnMessage,
-                messageObserver = messageObserver
+                messageObserver = messageObserver,
+                ?startupBarrier = common.StartupBarrier
             )
         let cts = new CancellationTokenSource()
 
@@ -740,8 +780,15 @@ type TgBot
     static member startPolling(config: TgBotConfig) : Task<TgBot> =
         task {
             let client = TgBot.buildClient (config.Common.BotToken, config.Common.BaseUrl)
-            let source = LongPollingUpdateSource(client) :> IUpdateSource
-            return TgBot.wireBot config.Common client source None
+            let source = LongPollingUpdateSource(client)
+            let bot = TgBot.wireBot config.Common client (source :> IUpdateSource) None
+
+            try
+                do! source.Ready
+                return bot
+            with ex ->
+                do! (bot :> IAsyncDisposable).DisposeAsync()
+                return raise ex
         }
 
     /// Start ingesting updates via webhooks. Registers the webhook with Telegram (`setWebhook` with

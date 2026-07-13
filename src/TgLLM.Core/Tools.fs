@@ -339,12 +339,13 @@ type InMemoryToolRegistry() =
 
     interface IToolRegistry with
         member _.Register(name: ToolName, tool: Tool, ?metadata: ToolMetadata) : unit =
-            let isNewName = not (tools.ContainsKey name)
-            tools[name] <- tool
-            metadataByName[name] <- metadata
+            lock orderGate (fun () ->
+                let isNewName = not (tools.ContainsKey name)
+                tools[name] <- tool
+                metadataByName[name] <- metadata
 
-            if isNewName then
-                lock orderGate (fun () -> order.Add name)
+                if isNewName then
+                    order.Add name)
 
         member _.TryResolve(name: ToolName) : Tool voption =
             match tools.TryGetValue name with
@@ -352,21 +353,18 @@ type InMemoryToolRegistry() =
             | false, _ -> ValueNone
 
         member _.Manifest() : ToolManifest =
-            let registeredNames = lock orderGate (fun () -> order |> List.ofSeq)
+            lock orderGate (fun () ->
+                let entries =
+                    order
+                    |> Seq.map (fun toolName ->
+                        let metadata = metadataByName[toolName]
 
-            let entries =
-                registeredNames
-                |> List.map (fun toolName ->
-                    let metadata =
-                        match metadataByName.TryGetValue toolName with
-                        | true, m -> m
-                        | false, _ -> None
+                        { Name = ToolName.value toolName
+                          Description = metadata |> Option.bind (fun m -> m.Description)
+                          Parameters = metadata |> Option.bind (fun m -> m.ArgSchema) })
+                    |> List.ofSeq
 
-                    { Name = ToolName.value toolName
-                      Description = metadata |> Option.bind (fun m -> m.Description)
-                      Parameters = metadata |> Option.bind (fun m -> m.ArgSchema) })
-
-            { Tools = entries }
+                { Tools = entries })
 
 /// Serializable button->tool bindings. In-memory default here; a durable (file-based)
 /// implementation lives in the separate `TgLLM.Persistence` leaf project (Core stays
@@ -489,6 +487,11 @@ type BindingEvictionSweeper(store: IBindingStore, clock: Clock, ?interval: TimeS
     let interval = defaultArg interval (TimeSpan.FromMinutes 5.0)
     let cts = new CancellationTokenSource()
 
+    do
+        if interval <= TimeSpan.Zero then
+            cts.Dispose()
+            invalidArg (nameof interval) "binding eviction interval must be positive"
+
     /// The background loop itself: sweeps once every `interval`, forever, until `cts` is
     /// cancelled (by `DisposeAsync`) — `Task.Delay` throwing `OperationCanceledException` is how
     /// this loop learns to stop, same idiom `UpdateProcessor`'s own watchdog task uses for a
@@ -550,6 +553,15 @@ type BindingEvictionSweeper(store: IBindingStore, clock: Clock, ?interval: TimeS
 type SessionEvictionSweeper(store: ISessionStore, clock: Clock, idleAfter: TimeSpan, ?interval: TimeSpan) =
     let interval = defaultArg interval (TimeSpan.FromHours 1.0)
     let cts = new CancellationTokenSource()
+
+    do
+        if idleAfter <= TimeSpan.Zero then
+            cts.Dispose()
+            invalidArg (nameof idleAfter) "session idle duration must be positive"
+
+        if interval <= TimeSpan.Zero then
+            cts.Dispose()
+            invalidArg (nameof interval) "session eviction interval must be positive"
 
     /// The background loop itself: sweeps once every `interval`, forever, until `cts` is
     /// cancelled (by `DisposeAsync`) — same `Task.Delay`-cancellation idiom as
@@ -632,6 +644,10 @@ type MessageBindingTracker(?capacity: int) =
     /// re-enqueueing).
     let order = Queue<ChatId * MessageId>()
 
+    do
+        if capacity <= 0 then
+            invalidArg (nameof capacity) "message binding tracker capacity must be positive"
+
     let evictOverCapacity () =
         while tokensByMessage.Count > capacity && order.Count > 0 do
             let oldestKey = order.Dequeue()
@@ -640,11 +656,11 @@ type MessageBindingTracker(?capacity: int) =
     /// Record (or overwrite) the tokens currently live for `(chat, messageId)`.
     member _.Record(chat: ChatId, messageId: MessageId, tokens: CallbackToken list) : unit =
         let key = (chat, messageId)
-        let isNewKey = not (tokensByMessage.ContainsKey key)
-        tokensByMessage[key] <- tokens
+        lock gate (fun () ->
+            let isNewKey = not (tokensByMessage.ContainsKey key)
+            tokensByMessage[key] <- tokens
 
-        if isNewKey then
-            lock gate (fun () ->
+            if isNewKey then
                 order.Enqueue key
                 evictOverCapacity ())
 
@@ -682,6 +698,13 @@ type ProcessedQueryTracker(clock: Clock, ?capacity: int, ?ttl: TimeSpan) =
     /// id — an earlier, since-refreshed sighting is a harmless no-op, not a wrongful eviction of
     /// the fresh one.
     let order = Queue<string * DateTimeOffset>()
+
+    do
+        if capacity <= 0 then
+            invalidArg (nameof capacity) "processed-query capacity must be positive"
+
+        if ttl <= TimeSpan.Zero then
+            invalidArg (nameof ttl) "processed-query TTL must be positive"
 
     /// Drops the oldest entries (FIFO by insertion) until back at `capacity`. Only ever called
     /// under `gate`.

@@ -1,7 +1,7 @@
 /// Tests for `FileSessionStore`, the durable, JSON-on-disk `ISessionStore`: covers the plain
 /// `ISessionStore` contract (Save → TryGet, overwrite, Remove, EvictIdle) PLUS the restart
 /// guarantee itself — re-opening the SAME file in a brand-new instance still resolves a session
-/// record saved by a previous instance — and best-effort loading of a corrupt file, mirroring
+/// record saved by a previous instance — and explicit rejection of corrupt durable state, mirroring
 /// `FileBindingStoreTests.fs`/`FileBindingStoreEvictionTests.fs` for the session-store seam.
 module TgLLM.Persistence.Tests.FileSessionStoreTests
 
@@ -212,35 +212,31 @@ let fileSessionStoreTests =
             finally
                 File.Delete path
 
-        testCase "OpenAt on a file with truncated/garbage JSON does not throw and starts empty" <| fun _ ->
+        testCase "OpenAt fails loudly on truncated or garbage JSON" <| fun _ ->
             let path = tempPath ()
 
             try
                 File.WriteAllText(path, "{ this is not valid json at all ]")
-                let store = FileSessionStore.OpenAt path :> ISessionStore
-                let chat = UMX.tag<chatId> 1L
 
-                let result = (store.TryGet(chat, CancellationToken.None)).GetAwaiter().GetResult()
-
-                Expect.equal result ValueNone "a corrupt file on disk must not crash OpenAt — best-effort empty store"
+                Expect.throwsT<InvalidDataException>
+                    (fun () -> FileSessionStore.OpenAt path |> ignore)
+                    "corrupt durable state must not be mistaken for an empty store"
             finally
                 File.Delete path
 
-        testCase "OpenAt on a file containing the JSON literal null does not throw and starts empty" <| fun _ ->
+        testCase "OpenAt fails loudly on the JSON literal null" <| fun _ ->
             let path = tempPath ()
 
             try
                 File.WriteAllText(path, "null")
-                let store = FileSessionStore.OpenAt path :> ISessionStore
-                let chat = UMX.tag<chatId> 1L
 
-                let result = (store.TryGet(chat, CancellationToken.None)).GetAwaiter().GetResult()
-
-                Expect.equal result ValueNone "a JSON `null` payload must not crash OpenAt — best-effort empty store"
+                Expect.throwsT<InvalidDataException>
+                    (fun () -> FileSessionStore.OpenAt path |> ignore)
+                    "JSON null is not a valid durable session collection"
             finally
                 File.Delete path
 
-        testCase "OpenAt on a file with a row whose PayloadBase64 is corrupt skips that row and starts empty" <| fun _ ->
+        testCase "OpenAt fails loudly when PayloadBase64 is corrupt" <| fun _ ->
             let path = tempPath ()
 
             try
@@ -249,16 +245,13 @@ let fileSessionStoreTests =
                     """[{"ChatId":1,"PayloadBase64":"not-valid-base64!!","LastActivityAt":"2026-01-01T00:00:00+00:00"}]"""
                 )
 
-                let store = FileSessionStore.OpenAt path :> ISessionStore
-                let chat = UMX.tag<chatId> 1L
-
-                let result = (store.TryGet(chat, CancellationToken.None)).GetAwaiter().GetResult()
-
-                Expect.equal result ValueNone "a row with unparsable Base64 is skipped, best-effort, rather than crashing OpenAt"
+                Expect.throwsT<InvalidDataException>
+                    (fun () -> FileSessionStore.OpenAt path |> ignore)
+                    "an invalid payload must fail the whole durable load"
             finally
                 File.Delete path
 
-        testCase "OpenAt on a file with a row whose PayloadBase64 is JSON null skips that row and still loads a good row" <| fun _ ->
+        testCase "OpenAt rejects a null payload row instead of partially loading good rows" <| fun _ ->
             let path = tempPath ()
 
             try
@@ -267,23 +260,9 @@ let fileSessionStoreTests =
                     """[{"ChatId":1,"PayloadBase64":null,"LastActivityAt":"2026-01-01T00:00:00+00:00"},{"ChatId":2,"PayloadBase64":"AQID","LastActivityAt":"2026-01-01T00:00:00+00:00"}]"""
                 )
 
-                let store = FileSessionStore.OpenAt path :> ISessionStore
-                let nullPayloadChat = UMX.tag<chatId> 1L
-                let goodChat = UMX.tag<chatId> 2L
-
-                let nullPayloadResult = (store.TryGet(nullPayloadChat, CancellationToken.None)).GetAwaiter().GetResult()
-                let goodResult = (store.TryGet(goodChat, CancellationToken.None)).GetAwaiter().GetResult()
-
-                Expect.equal
-                    nullPayloadResult
-                    ValueNone
-                    "a row with a JSON `null` PayloadBase64 is skipped, best-effort, rather than crashing OpenAt"
-
-                let expectedGoodRecord: SessionRecord =
-                    { Payload = [| 1uy; 2uy; 3uy |]
-                      LastActivityAt = DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) }
-
-                Expect.equal goodResult (ValueSome expectedGoodRecord) "the good row still loads despite the bad row alongside it"
+                Expect.throwsT<InvalidDataException>
+                    (fun () -> FileSessionStore.OpenAt path |> ignore)
+                    "one corrupt row must fail the whole load rather than create partial state"
             finally
                 File.Delete path
     ]

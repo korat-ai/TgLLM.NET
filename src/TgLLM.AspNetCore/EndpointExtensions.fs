@@ -3,8 +3,8 @@
 /// `[<Extension>]` method so BOTH C# and F# callers can write `app.MapTelegramWebhook(...)`. It
 /// follows Microsoft's library-author guidance (extends `IEndpointRouteBuilder`, returns the mapped
 /// endpoint's convention builder). The handler verifies the secret-token header, parses the body,
-/// hands the update to the source, and returns 200 immediately (so Telegram doesn't retry a slow
-/// endpoint; the processor drains events separately).
+/// and hands the update to the source without waiting for processing: accepted updates return 200,
+/// while a saturated bounded queue returns 503 so Telegram can retry.
 namespace TgLLM.AspNetCore
 
 open System
@@ -20,13 +20,15 @@ open TgLLM.Webhooks
 type TelegramWebhookEndpointExtensions =
 
     /// Map `POST {pattern}` to receive Telegram webhook updates for `source`. `secretToken` must
-    /// match the value passed to `setWebhook` (null/empty disables verification).
+    /// be non-empty and match the value passed to `setWebhook`.
     [<Extension>]
     static member MapTelegramWebhook
         (endpoints: IEndpointRouteBuilder, pattern: string, source: WebhookUpdateSource, secretToken: string)
         : IEndpointConventionBuilder =
-        let expected =
-            if String.IsNullOrEmpty secretToken then None else Some secretToken
+        if String.IsNullOrWhiteSpace secretToken then
+            invalidArg (nameof secretToken) "a webhook secret token is required"
+
+        let expected = Some secretToken
 
         endpoints.MapPost(
             pattern,
@@ -43,8 +45,10 @@ type TelegramWebhookEndpointExtensions =
                         use reader = new StreamReader(ctx.Request.Body)
                         let! body = reader.ReadToEndAsync ctx.RequestAborted
                         let update = Webhook.parseUpdate body
-                        do! source.Ingest(update, ctx.RequestAborted)
-                        ctx.Response.StatusCode <- StatusCodes.Status200OK
+                        if source.TryIngest update then
+                            ctx.Response.StatusCode <- StatusCodes.Status200OK
+                        else
+                            ctx.Response.StatusCode <- StatusCodes.Status503ServiceUnavailable
                 }
                 :> Task)
         )

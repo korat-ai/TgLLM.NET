@@ -1,14 +1,7 @@
 /// FsCheck round-trip property for `LiteDbBindingStore`/`BindingDocument`: an ARBITRARY
 /// `ToolBinding`, saved and re-read through the REAL embedded LiteDB engine (not just the pure
 /// `BindingDocument.ofDomain`/`toDomain` mapping functions composed in memory), must reproduce the
-/// original binding exactly — modulo two DOCUMENTED, empirically-verified LiteDB caveats (both
-/// normalized identically before comparison, never silently ignored):
-///   - `ExpiresAt` truncates to millisecond precision (BSON's native date type; see
-///     `LiteDbBindingStoreTests.fs`'s own `truncateToMilliseconds` helper).
-///   - `Arg`/`DeniedNotice` are trimmed, and collapse to `None` if that trim leaves them empty
-///     (`BindingDocument`'s own doc comment, LiteDbBindingStore.fs) — `LiteDB.BsonMapper`'s
-///     `TrimWhitespace`/`EmptyStringToNull` both default to `true`, and this store never overrides
-///     either.
+/// original binding exactly, modulo `ExpiresAt` truncating to BSON's native millisecond precision.
 /// This is the shape of property that would have caught the `DateTimeKind` mismatch
 /// `BindingDocument.toDomain`'s own doc comment describes and fixes (LiteDB's default engine
 /// re-hydrates a stored date as `DateTimeKind.Local`) — that bug was only observable by actually
@@ -60,18 +53,9 @@ let private arbitraryBinding
         SingleUse = singleUse
         DeniedNotice = deniedNotice }
 
-/// `LiteDB.BsonMapper.TrimWhitespace`/`.EmptyStringToNull` (both default `true`, this store never
-/// overrides either) applied to one optional string field.
-let private asBsonMapperWouldStoreIt (value: string option) : string option =
-    value |> Option.map (fun s -> s.Trim()) |> Option.filter (fun s -> s <> "")
-
-/// Applies BOTH documented LiteDB caveats (this type's own doc comment above) to `binding`, so the
-/// property compares against what `LiteDbBindingStore` can EVER actually durably represent, not a
-/// precision/shape the on-disk format never promised.
+/// Applies the one BSON precision limitation before exact comparison.
 let private asLiteDbCanRepresent (binding: ToolBinding) : ToolBinding =
     { binding with
-        Arg = binding.Arg |> asBsonMapperWouldStoreIt
-        DeniedNotice = binding.DeniedNotice |> asBsonMapperWouldStoreIt
         ExpiresAt = binding.ExpiresAt |> Option.map truncateToMilliseconds }
 
 [<Tests>]
@@ -84,7 +68,7 @@ let bindingDocumentRoundTripTests =
         // engine-level mismatch like the historical DateTimeKind bug.
         testPropertyWithConfig
             { FsCheckConfig.defaultConfig with maxTest = 40 }
-            "Save then TryGet, through the REAL LiteDbBindingStore, reproduces the original binding exactly modulo the two documented LiteDB caveats"
+            "Save then TryGet, through the REAL LiteDbBindingStore, reproduces the original binding exactly modulo BSON date precision"
         <| fun (guid: Guid) (toolNameSuffix: string) (arg: string option) (ownerId: int64 option) (expirySeconds: int64 option) (singleUse: bool) (deniedNotice: string option) ->
             let binding = arbitraryBinding guid toolNameSuffix arg ownerId expirySeconds singleUse deniedNotice
             let path = tempPath ()

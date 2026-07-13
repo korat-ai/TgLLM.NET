@@ -59,12 +59,8 @@ module BindingDto =
           SingleUse = binding.SingleUse
           DeniedNotice = binding.DeniedNotice |> Option.toObj }
 
-    /// `None` for a row this store could never have written itself (a hand-edited or corrupted
-    /// file) — skipped on load rather than failing the whole `openAt` call. There is no caller here
-    /// to hand a `Result`/exception to (this runs at file-open time, not in response to a request),
-    /// so "best-effort load, drop what doesn't parse" is the only sensible contract, mirroring how
-    /// `CallbackToken.tryParse` is itself total or how `Mapping.toAgentEvent` skips an unparsable
-    /// update rather than throwing.
+    /// `None` for a row this store could never have written itself. `openAt` treats that as file
+    /// corruption and fails the whole load so partial durable state is never accepted silently.
     let toDomain (dto: BindingDto) : ToolBinding option =
         match CallbackToken.tryParse dto.Token, ToolName.create dto.ToolName with
         | ValueSome token, Ok toolName ->
@@ -161,20 +157,22 @@ type FileBindingStore
         if File.Exists path then
             let json = File.ReadAllText path
 
-            if not (String.IsNullOrWhiteSpace json) then
-                // Best-effort load (mirrors `BindingDto.toDomain`'s own per-row contract above): a
-                // truncated write (crash mid-`persist`, before the atomicity fix) or a hand-edited
-                // file can leave genuinely-unparsable JSON, or the JSON literal `null` (STJ then
-                // returns a null array reference, Always-Rule 5) — either way there is no caller
-                // here to hand a `Result`/exception to, so start empty rather than crash the bot.
-                try
-                    match JsonSerializer.Deserialize<BindingDto[]> json |> Option.ofObj with
-                    | None -> ()
-                    | Some dtos ->
-                        for dto in dtos do
-                            match BindingDto.toDomain dto with
-                            | Some binding -> initial[binding.Token] <- binding
-                            | None -> ()
-                with :? JsonException -> ()
+            if String.IsNullOrWhiteSpace json then
+                raise (InvalidDataException($"Binding store '{path}' is empty or whitespace."))
+
+            try
+                match JsonSerializer.Deserialize<BindingDto[]> json |> Option.ofObj with
+                | None -> raise (InvalidDataException($"Binding store '{path}' contains JSON null."))
+                | Some dtos ->
+                    for dto in dtos do
+                        if isNull (box dto) then
+                            raise (InvalidDataException($"Binding store '{path}' contains a null row."))
+
+                        match BindingDto.toDomain dto with
+                        | Some binding -> initial[binding.Token] <- binding
+                        | None ->
+                            raise (InvalidDataException($"Binding store '{path}' contains an invalid binding row."))
+            with :? JsonException as ex ->
+                raise (InvalidDataException($"Binding store '{path}' is not valid JSON.", ex))
 
         FileBindingStore(path, initial)

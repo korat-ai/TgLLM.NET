@@ -56,6 +56,15 @@ type PerChatChannelDispatcher(?shutdownBudget: TimeSpan, ?idleTimeout: TimeSpan)
     /// fallback-cancellation path fast.
     let shutdownBudget = defaultArg shutdownBudget (TimeSpan.FromSeconds 30.0)
 
+    do
+        if shutdownBudget <= TimeSpan.Zero then
+            invalidArg (nameof shutdownBudget) "dispatcher shutdown budget must be positive"
+
+        match idleTimeout with
+        | Some timeout when timeout <= TimeSpan.Zero ->
+            invalidArg (nameof idleTimeout) "dispatcher idle timeout must be positive"
+        | _ -> ()
+
     /// Waits for this chat's next item, distinguishing "an item arrived" from "idle beyond the
     /// deadline" from "shut down" — see `WaitOutcome`'s own doc comment. With no `idleTimeout`
     /// configured, this is exactly the original `WaitToReadAsync` wait, unchanged.
@@ -185,15 +194,17 @@ type PerChatChannelDispatcher(?shutdownBudget: TimeSpan, ?idleTimeout: TimeSpan)
                     do! Task.WhenAny(allDrained, Task.Delay shutdownBudget) :> Task
 
                     // Fallback: cancel anything still running/still draining past the budget, then
-                    // give it one more (unbounded) chance to unwind before disposing `cts`.
+                    // give it one more bounded chance to unwind.
                     cts.Cancel()
 
-                    for KeyValue(_, (_, consumerTask)) in channels do
+                    do! Task.WhenAny(allDrained, Task.Delay shutdownBudget) :> Task
+
+                    if allDrained.IsCompleted then
                         try
-                            do! consumerTask
+                            do! allDrained
                         with _ ->
                             ()
 
-                    cts.Dispose()
+                        cts.Dispose()
                 }
             )

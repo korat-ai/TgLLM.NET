@@ -47,4 +47,13 @@ let processedQueryTrackerTests =
             // to make room, so it is treated as unseen again — this is what makes the bounded
             // eviction observable from the outside.
             Expect.isTrue (tracker.TryBegin "q1") "q1 was evicted once the bound was exceeded, so it's treated as unseen again"
+
+        testCase "non-positive capacity and TTL are rejected" <| fun _ ->
+            Expect.throwsT<ArgumentException>
+                (fun () -> ProcessedQueryTracker((fun () -> DateTimeOffset.UnixEpoch), capacity = 0) |> ignore)
+                "a zero-sized dedup set cannot provide at-most-once behavior"
+
+            Expect.throwsT<ArgumentException>
+                (fun () -> ProcessedQueryTracker((fun () -> DateTimeOffset.UnixEpoch), ttl = TimeSpan.Zero) |> ignore)
+                "a zero TTL would never deduplicate a redelivery"
     ]
